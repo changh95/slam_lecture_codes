@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>slam_tutorial</name>
+  <version>1.0.0</version>
+  <description>ROS1 SLAM Tutorial Package</description>
+
+  <maintainer email="user@example.com">User</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+</package>
