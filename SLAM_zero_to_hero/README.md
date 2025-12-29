@@ -26,14 +26,14 @@ echo "xhost +local:docker" >> ~/.profile
   - 1.6 Applications of SLAM
   - 1.7 Tips for studying SLAM
   - 1.8 C++ and SLAM
-  - 1.9 Basic C++ programming
-  - 1.10 Building C++ libraries
-  - 1.11 C++ CPU profiler
-  - 1.12 C++ memory profiler
+  - 1.9 [Basic C++ programming](1_9)
+  - 1.10 [Building C++ libraries](1_10)
+  - 1.11 [C++ CPU profiler](1_11)
+  - 1.12 [C++ memory profiler](1_12)
   - 1.13 Python basics
-  - 1.14 Basic Python programming
-  - 1.15 PyBind
-  - 1.16 ROS fundamentals
+  - 1.14 [Basic Python programming](1_14)
+  - 1.15 [PyBind](1_15)
+  - 1.16 [ROS fundamentals](1_16)
   - 1.17 Rotation and translation in 3D space
   - 1.18 Homogeneous coordinates
   - 1.19 Lie Group
