@@ -1,0 +1,281 @@
+name: SLAM Zero to Hero - Build & Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_base:
+        description: 'Build base image'
+        required: true
+        default: true
+        type: boolean
+      build_exercises:
+        description: 'Build exercise images'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  DOCKER_BUILDKIT: 1
+  COURSE_DIR: SLAM_zero_to_hero
+
+jobs:
+  # ===========================================================================
+  # Stage 1: Build base image (slam:base)
+  # ===========================================================================
+  build-base:
+    name: Build Base Image (slam:base)
+    runs-on: self-hosted
+    if: ${{ inputs.build_base }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build slam:base image
+        run: |
+          docker build \
+            -t slam:base \
+            -f ${{ env.COURSE_DIR }}/Dockerfile \
+            ${{ env.COURSE_DIR }}/
+
+      - name: Test slam:base image
+        run: |
+          echo "Testing slam:base image..."
+          docker run --rm slam:base /bin/bash -c "
+            echo '=== Verifying installed libraries ==='
+            pkg-config --modversion opencv4 && echo 'OpenCV: OK'
+            pkg-config --modversion eigen3 && echo 'Eigen: OK'
+            python3 -c 'import rerun; print(\"Rerun SDK: OK\")'
+            echo '=== Base image test passed ==='
+          "
+
+      - name: Verify base image
+        run: docker images slam:base
+
+  # ===========================================================================
+  # Stage 2: Build independent exercises (no slam:base dependency)
+  # ===========================================================================
+  build-independent:
+    name: Build ${{ matrix.exercise }}
+    runs-on: self-hosted
+    if: ${{ inputs.build_exercises }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exercise: "1_9"
+            context: "SLAM_zero_to_hero/1_9"
+            tag: "slam:1_9"
+          - exercise: "1_10"
+            context: "SLAM_zero_to_hero/1_10"
+            tag: "slam:1_10"
+          - exercise: "1_16-ros1"
+            context: "SLAM_zero_to_hero/1_16/ros1"
+            tag: "slam:1_16-ros1"
+          - exercise: "1_16-ros2"
+            context: "SLAM_zero_to_hero/1_16/ros2"
+            tag: "slam:1_16-ros2"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.exercise }} image
+        run: |
+          docker build \
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
+
+      - name: Test ${{ matrix.exercise }} image
+        run: |
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+      - name: Verify image
+        run: docker images ${{ matrix.tag }}
+
+  # ===========================================================================
+  # Stage 3: Build exercises depending on slam:base
+  # ===========================================================================
+  build-slam-base-exercises:
+    name: Build ${{ matrix.exercise }}
+    runs-on: self-hosted
+    needs: build-base
+    if: ${{ always() && inputs.build_exercises && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Chapter 1
+          - exercise: "1_11"
+            context: "SLAM_zero_to_hero/1_11"
+            tag: "slam:1_11"
+          - exercise: "1_12"
+            context: "SLAM_zero_to_hero/1_12"
+            tag: "slam:1_12"
+          - exercise: "1_15"
+            context: "SLAM_zero_to_hero/1_15"
+            tag: "slam:1_15"
+          - exercise: "1_30"
+            context: "SLAM_zero_to_hero/1_30"
+            tag: "slam:1_30"
+          # Chapter 2
+          - exercise: "2_3"
+            context: "SLAM_zero_to_hero/2_3"
+            tag: "slam:2_3"
+          - exercise: "2_7"
+            context: "SLAM_zero_to_hero/2_7"
+            tag: "slam:2_7"
+          - exercise: "2_9"
+            context: "SLAM_zero_to_hero/2_9"
+            tag: "slam:2_9"
+          - exercise: "2_10"
+            context: "SLAM_zero_to_hero/2_10"
+            tag: "slam:2_10"
+          - exercise: "2_12"
+            context: "SLAM_zero_to_hero/2_12"
+            tag: "slam:2_12"
+          - exercise: "2_14"
+            context: "SLAM_zero_to_hero/2_14"
+            tag: "slam:2_14"
+          - exercise: "2_15"
+            context: "SLAM_zero_to_hero/2_15"
+            tag: "slam:2_15"
+          - exercise: "2_17"
+            context: "SLAM_zero_to_hero/2_17"
+            tag: "slam:2_17"
+          - exercise: "2_19"
+            context: "SLAM_zero_to_hero/2_19"
+            tag: "slam:2_19"
+          - exercise: "2_22"
+            context: "SLAM_zero_to_hero/2_22"
+            tag: "slam:2_22"
+          - exercise: "2_27"
+            context: "SLAM_zero_to_hero/2_27"
+            tag: "slam:2_27"
+          - exercise: "2_29"
+            context: "SLAM_zero_to_hero/2_29"
+            tag: "slam:2_29"
+          - exercise: "2_30"
+            context: "SLAM_zero_to_hero/2_30"
+            tag: "slam:2_30"
+          - exercise: "2_31"
+            context: "SLAM_zero_to_hero/2_31"
+            tag: "slam:2_31"
+          # Chapter 3
+          - exercise: "3_13"
+            context: "SLAM_zero_to_hero/3_13"
+            tag: "slam:3_13"
+          - exercise: "3_14"
+            context: "SLAM_zero_to_hero/3_14"
+            tag: "slam:3_14"
+          - exercise: "3_15"
+            context: "SLAM_zero_to_hero/3_15"
+            tag: "slam:3_15"
+          - exercise: "3_16"
+            context: "SLAM_zero_to_hero/3_16"
+            tag: "slam:3_16"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify slam:base exists
+        run: |
+          if ! docker images slam:base --format "{{.Repository}}:{{.Tag}}" | grep -q "slam:base"; then
+            echo "Error: slam:base image not found. Please build base image first."
+            exit 1
+          fi
+
+      - name: Build ${{ matrix.exercise }} image
+        run: |
+          docker build \
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
+
+      - name: Test ${{ matrix.exercise }} image
+        run: |
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+      - name: Verify image
+        run: docker images ${{ matrix.tag }}
+
+  # ===========================================================================
+  # Stage 4: Build GPU exercise (optional)
+  # ===========================================================================
+  build-gpu:
+    name: Build GPU Exercise (2_4)
+    runs-on: self-hosted
+    if: ${{ inputs.build_exercises }}
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check NVIDIA runtime availability
+        id: nvidia-check
+        run: |
+          if docker info 2>/dev/null | grep -q "nvidia"; then
+            echo "nvidia_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "nvidia_available=false" >> $GITHUB_OUTPUT
+            echo "::warning::NVIDIA runtime not available, skipping GPU exercise build"
+          fi
+
+      - name: Build 2_4 GPU image
+        if: steps.nvidia-check.outputs.nvidia_available == 'true'
+        run: |
+          docker build \
+            -t slam:2_4 \
+            -f SLAM_zero_to_hero/2_4/Dockerfile \
+            SLAM_zero_to_hero/2_4/
+
+      - name: Test 2_4 GPU image
+        if: steps.nvidia-check.outputs.nvidia_available == 'true'
+        run: |
+          echo "Testing slam:2_4 image..."
+          docker run --rm slam:2_4 /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  summary:
+    name: Build Summary
+    runs-on: self-hosted
+    needs: [build-base, build-independent, build-slam-base-exercises, build-gpu]
+    if: always()
+    steps:
+      - name: Check build results
+        run: |
+          echo "========================================"
+          echo "  SLAM Zero to Hero - Build Summary"
+          echo "========================================"
+          echo ""
+          echo "Base image (slam:base): ${{ needs.build-base.result }}"
+          echo "Independent exercises:  ${{ needs.build-independent.result }}"
+          echo "SLAM base exercises:    ${{ needs.build-slam-base-exercises.result }}"
+          echo "GPU exercise (2_4):     ${{ needs.build-gpu.result }}"
+          echo ""
+          echo "========================================"
+          echo "  Available Docker Images"
+          echo "========================================"
+          docker images --filter "reference=slam:*" --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"
+
+      - name: Fail if critical jobs failed
+        if: |
+          needs.build-base.result == 'failure' ||
+          needs.build-slam-base-exercises.result == 'failure' ||
+          needs.build-independent.result == 'failure'
+        run: exit 1

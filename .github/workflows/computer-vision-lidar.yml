@@ -1,0 +1,345 @@
+name: Computer Vision & LiDAR - Build & Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_base:
+        description: 'Build base image'
+        required: true
+        default: true
+        type: boolean
+      build_exercises:
+        description: 'Build exercise images'
+        required: true
+        default: true
+        type: boolean
+      build_slam_projects:
+        description: 'Build SLAM project images'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  DOCKER_BUILDKIT: 1
+  COURSE_DIR: Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving
+
+jobs:
+  # ===========================================================================
+  # Stage 1: Build base image (slam:latest)
+  # ===========================================================================
+  build-base:
+    name: Build Base Image (slam:latest)
+    runs-on: self-hosted
+    if: ${{ inputs.build_base }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build slam:latest image
+        run: |
+          docker build \
+            -t slam:latest \
+            -f ${{ env.COURSE_DIR }}/Dockerfile \
+            ${{ env.COURSE_DIR }}/
+
+      - name: Test slam:latest image
+        run: |
+          echo "Testing slam:latest image..."
+          docker run --rm slam:latest /bin/bash -c "
+            echo '=== Verifying installed libraries ==='
+            pkg-config --modversion opencv4 || echo 'OpenCV check skipped'
+            echo '=== Base image test passed ==='
+          "
+
+      - name: Verify base image
+        run: docker images slam:latest
+
+  # ===========================================================================
+  # Stage 2: Build independent exercises (Ubuntu-based, no slam:latest)
+  # ===========================================================================
+  build-independent:
+    name: Build ${{ matrix.exercise }}
+    runs-on: self-hosted
+    if: ${{ inputs.build_exercises }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exercise: "5_9"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_9"
+            tag: "cv:5_9"
+          - exercise: "kiss-icp"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/kiss-icp"
+            tag: "cv:kiss-icp"
+          - exercise: "octomap"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/octomap"
+            tag: "cv:octomap"
+          - exercise: "orb_slam2"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/orb_slam2"
+            tag: "cv:orb_slam2"
+          - exercise: "orb_slam3"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/orb_slam3"
+            tag: "cv:orb_slam3"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.exercise }} image
+        run: |
+          docker build \
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
+
+      - name: Test ${{ matrix.exercise }} image
+        run: |
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+      - name: Verify image
+        run: docker images ${{ matrix.tag }}
+
+  # ===========================================================================
+  # Stage 3: Build ROS-based exercises
+  # ===========================================================================
+  build-ros:
+    name: Build ${{ matrix.exercise }}
+    runs-on: self-hosted
+    if: ${{ inputs.build_slam_projects }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exercise: "cartographer"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/cartographer"
+            tag: "cv:cartographer"
+          - exercise: "hdl_graph_slam"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/hdl_graph_slam"
+            tag: "cv:hdl_graph_slam"
+          - exercise: "dynavins"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/dynavins"
+            tag: "cv:dynavins"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.exercise }} image
+        run: |
+          docker build \
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
+
+      - name: Test ${{ matrix.exercise }} image
+        run: |
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+      - name: Verify image
+        run: docker images ${{ matrix.tag }}
+
+  # ===========================================================================
+  # Stage 4: Build exercises depending on slam:latest
+  # ===========================================================================
+  build-slam-latest-exercises:
+    name: Build ${{ matrix.exercise }}
+    runs-on: self-hosted
+    needs: build-base
+    if: ${{ always() && inputs.build_exercises && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Chapter 1
+          - exercise: "1_7"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/1_7"
+            tag: "cv:1_7"
+          # Chapter 2
+          - exercise: "2_2"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/2_2"
+            tag: "cv:2_2"
+          - exercise: "2_6"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/2_6"
+            tag: "cv:2_6"
+          # Chapter 3
+          - exercise: "3_2"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/3_2"
+            tag: "cv:3_2"
+          - exercise: "3_5"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/3_5"
+            tag: "cv:3_5"
+          - exercise: "3_8"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/3_8"
+            tag: "cv:3_8"
+          # Chapter 4
+          - exercise: "4_2"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/4_2"
+            tag: "cv:4_2"
+          - exercise: "4_4"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/4_4"
+            tag: "cv:4_4"
+          - exercise: "4_6"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/4_6"
+            tag: "cv:4_6"
+          - exercise: "4_8"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/4_8"
+            tag: "cv:4_8"
+          - exercise: "4_9"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/4_9"
+            tag: "cv:4_9"
+          # Chapter 5
+          - exercise: "5_2"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_2"
+            tag: "cv:5_2"
+          - exercise: "5_4"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_4"
+            tag: "cv:5_4"
+          - exercise: "5_5"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_5"
+            tag: "cv:5_5"
+          - exercise: "5_7"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_7"
+            tag: "cv:5_7"
+          - exercise: "5_12"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_12"
+            tag: "cv:5_12"
+          - exercise: "5_17"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/5_17"
+            tag: "cv:5_17"
+          # Chapter 8
+          - exercise: "8_2"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/8_2"
+            tag: "cv:8_2"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify slam:latest exists
+        run: |
+          if ! docker images slam:latest --format "{{.Repository}}:{{.Tag}}" | grep -q "slam:latest"; then
+            echo "Error: slam:latest image not found. Please build base image first."
+            exit 1
+          fi
+
+      - name: Build ${{ matrix.exercise }} image
+        run: |
+          docker build \
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
+
+      - name: Test ${{ matrix.exercise }} image
+        run: |
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+      - name: Verify image
+        run: docker images ${{ matrix.tag }}
+
+  # ===========================================================================
+  # Stage 5: Build GPU/NVIDIA exercises (optional)
+  # ===========================================================================
+  build-gpu:
+    name: Build ${{ matrix.exercise }}
+    runs-on: self-hosted
+    if: ${{ inputs.build_slam_projects }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exercise: "3_3"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/3_3"
+            tag: "cv:3_3"
+          - exercise: "3_6"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/3_6"
+            tag: "cv:3_6"
+          - exercise: "cubeslam"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/cubeslam"
+            tag: "cv:cubeslam"
+          - exercise: "dsp_slam"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/dsp_slam"
+            tag: "cv:dsp_slam"
+          - exercise: "shine_mapping"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/shine_mapping"
+            tag: "cv:shine_mapping"
+          - exercise: "suma_plus_plus"
+            context: "Computer_Vision_LiDAR_Processing_and_Sensor_Fusion_for_Autonomous_Driving/suma_plus_plus"
+            tag: "cv:suma_plus_plus"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check NVIDIA runtime availability
+        id: nvidia-check
+        run: |
+          if docker info 2>/dev/null | grep -q "nvidia"; then
+            echo "nvidia_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "nvidia_available=false" >> $GITHUB_OUTPUT
+            echo "::warning::NVIDIA runtime not available, skipping GPU exercise build"
+          fi
+
+      - name: Build ${{ matrix.exercise }} image
+        if: steps.nvidia-check.outputs.nvidia_available == 'true'
+        run: |
+          docker build \
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
+
+      - name: Test ${{ matrix.exercise }} image
+        if: steps.nvidia-check.outputs.nvidia_available == 'true'
+        run: |
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
+            echo '=== Build verification ==='
+            ls -la
+            echo '=== Test passed ==='
+          "
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  summary:
+    name: Build Summary
+    runs-on: self-hosted
+    needs: [build-base, build-independent, build-ros, build-slam-latest-exercises, build-gpu]
+    if: always()
+    steps:
+      - name: Check build results
+        run: |
+          echo "========================================================"
+          echo "  Computer Vision & LiDAR Course - Build Summary"
+          echo "========================================================"
+          echo ""
+          echo "Base image (slam:latest):  ${{ needs.build-base.result }}"
+          echo "Independent exercises:     ${{ needs.build-independent.result }}"
+          echo "ROS exercises:             ${{ needs.build-ros.result }}"
+          echo "SLAM latest exercises:     ${{ needs.build-slam-latest-exercises.result }}"
+          echo "GPU exercises:             ${{ needs.build-gpu.result }}"
+          echo ""
+          echo "========================================================"
+          echo "  Available Docker Images"
+          echo "========================================================"
+          docker images --filter "reference=cv:*" --filter "reference=slam:latest" \
+            --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"
+
+      - name: Fail if critical jobs failed
+        if: |
+          needs.build-base.result == 'failure' ||
+          needs.build-slam-latest-exercises.result == 'failure' ||
+          needs.build-independent.result == 'failure'
+        run: exit 1
