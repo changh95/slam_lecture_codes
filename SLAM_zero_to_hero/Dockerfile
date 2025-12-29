@@ -98,6 +98,16 @@ RUN wget https://github.com/stevenlovegrove/Pangolin/archive/refs/tags/v0.9.4.zi
 # PCL
 RUN apt-get install -y libpcl-dev
 
+# easy_profiler (CPU profiler with GUI visualization)
+RUN git clone https://github.com/yse/easy_profiler.git &&\
+    cd easy_profiler &&\
+    mkdir build && cd build &&\
+    cmake .. -DEASY_PROFILER_NO_GUI=ON &&\
+    make -j4 &&\
+    make install &&\
+    ldconfig &&\
+    cd ../../
+
 # g2o [Use latest main branch for Eigen 5.0.0 support]
 RUN git clone https://github.com/RainerKuemmerle/g2o.git &&\
     cd g2o &&\
