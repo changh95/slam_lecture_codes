@@ -14,6 +14,7 @@ RUN apt-get install build-essential -y && \
     apt-get install software-properties-common -y && \
     apt-get install python3 -y && \
     apt-get install python3-pip -y && \
+    apt-get install python3-dev -y && \
     apt-get install -y ssh && \
     apt-get install -y gcc && \
     apt-get install -y g++ && \
@@ -23,8 +24,13 @@ RUN apt-get install build-essential -y && \
     apt-get install -y tar && \
     apt-get install -y x11-utils && \
     apt-get install -y x11-apps && \
-    apt-get install -y zip &&\
+    apt-get install -y zip && \
+    apt-get install -y libfmt-dev && \
+    apt-get install -y libspdlog-dev && \
     apt-get clean
+
+# Rerun (3D viewer for robotics)
+RUN pip3 install rerun-sdk --break-system-packages
 
 # OpenCV
 RUN apt-get install -y cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
@@ -33,7 +39,7 @@ RUN wget https://github.com/opencv/opencv/archive/refs/tags/4.12.0.zip &&\
     cd opencv-4.12.0 &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j8 &&\
+    make -j4 &&\
     make install &&\
     cd ../../
 
@@ -43,7 +49,7 @@ RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.zip &&\
     cd eigen-5.0.0 &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j8 &&\
+    make -j4 &&\
     make install &&\
     cd ../../
 
@@ -53,7 +59,7 @@ RUN apt-get install -y libgoogle-glog-dev libgflags-dev libatlas-base-dev libsui
     cd ceres-solver && \
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j8 &&\
+    make -j4 &&\
     make install &&\
     cd ../../
 
@@ -64,7 +70,7 @@ RUN wget https://github.com/strasdat/Sophus/archive/refs/tags/1.24.6.zip &&\
     sed -i 's/find_package(Eigen3 3.4.0/find_package(Eigen3/g' CMakeLists.txt &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j8 &&\
+    make -j4 &&\
     make install && \
     cd ../../
 
@@ -85,12 +91,39 @@ RUN wget https://github.com/stevenlovegrove/Pangolin/archive/refs/tags/v0.9.4.zi
     cd Pangolin-0.9.4 &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j8 &&\
+    make -j4 &&\
     make install &&\
     cd ../../
     
 # PCL
 RUN apt-get install -y libpcl-dev
 
+# g2o [Use latest main branch for Eigen 5.0.0 support]
+RUN git clone https://github.com/RainerKuemmerle/g2o.git &&\
+    cd g2o &&\
+    mkdir build && cd build &&\
+    cmake .. &&\
+    make -j4 &&\
+    make install &&\
+    cd ../../
+
+# GTSAM [Use 4.3a1 for Eigen 5.0.0 support]
+RUN apt-get install -y libtbb-dev &&\
+    git clone https://github.com/borglab/gtsam.git -b 4.3a1 &&\
+    cd gtsam &&\
+    mkdir build && cd build &&\
+    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON &&\
+    make -j4 &&\
+    make install &&\
+    cd ../../
+
+# SymForce
+RUN git clone https://github.com/symforce-org/symforce.git &&\
+    cd symforce &&\
+    mkdir build && cd build &&\
+    cmake .. -DSYMFORCE_BUILD_SYMENGINE=ON &&\
+    make -j4 &&\
+    make install &&\
+    cd ../../
 
 RUN git clone https://github.com/changh95/fastcampus_slam_codes.git

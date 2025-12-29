@@ -16,3 +16,5 @@ When Claude makes any changes to the code, the following sub-agents will operate
 2. Source Code Inspector: Any updates to the code, the Source Code Inspector will see if any related source code needs to be updated (e.g. header file, nanobind, CMakeLists.txt).
 3. Dockerfile Inspector: Any updates to the code, the Dockerfile Inspector will see if the Dockerfile needs to be updated.
 4. Testor: Any updates to the code, the Testor will build the Dockerfile and see if the code actually runs without issues.
+5. Cross-Reference Checker: Ensure folder names (e.g. 2_3, 3_14) match README table of contents entries, and hyperlinks point to existing folders.
+6. Exercise Template Generator: For hands-on exercises, create consistent structure (README with instructions, starter code, solution folder, sample data paths).
