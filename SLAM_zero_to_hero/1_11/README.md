@@ -4,67 +4,34 @@ This tutorial demonstrates how to profile C++ code using [easy_profiler](https:/
 
 We'll profile OpenCV feature detection algorithms (FAST, SIFT) across multiple CPU threads - a common scenario in SLAM systems.
 
-## How to build
+## Quick Start (Docker)
 
-Dependencies: OpenCV, easy_profiler
-
-Local build:
 ```bash
-mkdir build
-cd build
-cmake ..
-make -j
-```
-
-Docker build:
-```bash
+# 1. Build the Docker image
 docker build . -t slam_zero_to_hero:1_11
-```
 
-## How to run
-
-Local:
-```bash
-# Run the profiler example (generates profile.prof)
-./build/profile_features
-
-# View the profile (requires easy_profiler GUI on host)
-profiler_gui profile.prof
-```
-
-Docker:
-```bash
-# Run and copy profile output
-docker run -it --rm -v $(pwd)/output:/output slam_zero_to_hero:1_11
-
-# Then open profile.prof with easy_profiler GUI on your host machine
-```
-
-Docker with GUI (X11 forwarding):
-```bash
-# Allow X11 connections
+# 2. Run profiler and visualize (all-in-one)
 xhost +local:docker
-
-# Run profiler and open GUI inside container
 docker run -it --rm \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v $(pwd)/output:/output \
-    slam:base \
-    bash -c "cd /output && profiler_gui profile.prof"
+    slam_zero_to_hero:1_11
+
+# 3. The GUI will open automatically with the profile results
 ```
 
-## Installing easy_profiler GUI (on host machine)
+> **Note**: The `xhost +local:docker` command allows Docker to access your display. Run `xhost -local:docker` afterwards to revoke access if desired.
+
+## Local Build (without Docker)
 
 ```bash
-# Ubuntu
-sudo apt install easy-profiler
+# Dependencies: OpenCV, easy_profiler
+mkdir build && cd build
+cmake .. && make -j
 
-# Or build from source with GUI
-git clone https://github.com/yse/easy_profiler.git
-cd easy_profiler && mkdir build && cd build
-cmake .. -DEASY_PROFILER_NO_GUI=OFF
-make -j && sudo make install
+# Run and visualize
+./profile_features
+profiler_gui profile.prof
 ```
 
 ---
