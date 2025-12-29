@@ -38,7 +38,7 @@ echo "xhost +local:docker" >> ~/.profile
   - 1.18 Homogeneous coordinates
   - 1.19 Lie Group
   - 1.20 Basics of Lie algebra
-  - 1.21 Eigen + Sophus library hands-on
+  - 1.21 [Eigen + Sophus library hands-on](1_21)
   - 1.22 Continuous-time representation
   - 1.23 Camera basics for robotics
   - 1.24 Camera models
@@ -47,39 +47,39 @@ echo "xhost +local:docker" >> ~/.profile
   - 1.27 Radar basics
   - 1.28 Forward/Inverse kinematics
   - 1.29 Sensor calibration
-  - 1.30 Kalibr package hands-on
+  - 1.30 [Kalibr package hands-on](1_30)
 - Chapter 2: Dive into SLAM (Front-end)
   - 2.1 Part 2 introduction
   - 2.2 Local feature detection
-  - 2.3 Classical local feature detection hands-on
-  - 2.4 Deep local feature detection hands-on
+  - 2.3 [Classical local feature detection hands-on](2_3)
+  - 2.4 [Deep local feature detection hands-on](2_4)
   - 2.5 Feature tracking basics
   - 2.6 Advanced feature tracking in practice
-  - 2.7 Feature tracking hands-on
+  - 2.7 [Feature tracking hands-on](2_7)
   - 2.8 Global feature detection
-  - 2.9 Global feature detection hands-on
-  - 2.10 Deep global feature detection hands-on
+  - 2.9 [Global feature detection hands-on](2_9)
+  - 2.10 [Deep global feature detection hands-on](2_10)
   - 2.11 Epipolar geometry
-  - 2.12 Epipolar geometry hands-on
+  - 2.12 [Epipolar geometry hands-on](2_12)
   - 2.13 Homography
-  - 2.14 Homography hands-on
-  - 2.15 MonoVO hands-on
+  - 2.14 [Homography hands-on](2_14)
+  - 2.15 [MonoVO hands-on](2_15)
   - 2.16 Triangulation
-  - 2.17 Triangulation hands-on
+  - 2.17 [Triangulation hands-on](2_17)
   - 2.18 Perspective-n-points
-  - 2.19 Perspective-n-points hands-on
+  - 2.19 [Perspective-n-points hands-on](2_19)
   - 2.20 RANSAC
   - 2.21 Advanced RANSAC
-  - 2.22 RANSAC hands-on
+  - 2.22 [RANSAC hands-on](2_22)
   - 2.23 M-estimator & MAXCON
   - 2.24 What is point cloud?
   - 2.25 Introduction to PCL library
   - 2.26 Point cloud preprocessing
-  - 2.27 Point cloud preprocessing hands-on
+  - 2.27 [Point cloud preprocessing hands-on](2_27)
   - 2.28 ICP
-  - 2.29 ICP hands-on
-  - 2.30 Advanced ICP hands-on
-  - 2.31 Octree, Octomap, Bonxai hands-on
+  - 2.29 [ICP hands-on](2_29)
+  - 2.30 [Advanced ICP hands-on](2_30)
+  - 2.31 [Octree, Octomap, Bonxai hands-on](2_31)
 - Chapter 3: Dive into SLAM (Back-end)
   - 3.1 Part 3 introduction
   - 3.2 Factor graph
@@ -93,10 +93,10 @@ echo "xhost +local:docker" >> ~/.profile
   - 3.10 Sparsity in SLAM
   - 3.11 Bundle adjustment
   - 3.12 Nonlinear solvers
-  - 3.13 g2o hands-on
-  - 3.14 GTSAM hands-on
-  - 3.15 Ceres-solver hands-on
-  - 3.16 SymForce hands-on
+  - 3.13 [g2o hands-on](3_13)
+  - 3.14 [GTSAM hands-on](3_14)
+  - 3.15 [Ceres-solver hands-on](3_15)
+  - 3.16 [SymForce hands-on](3_16)
   - 3.17 SLAM systems
   - 3.18 Various map representations
   - 3.19 VSLAM system architecture
@@ -150,9 +150,9 @@ echo "xhost +local:docker" >> ~/.profile
   - 5.26 Characteristics of auto-labeling / data-crunching SLAM
   - 5.27 C++ build configuration optimization
   - 5.28 SIMD acceleration and CPU optimization techniques
-  - 5.29 SIMD acceleration hands-on
+  - 5.29 [SIMD acceleration hands-on](5_29)
   - 5.30 Introduction to NVIDIA Jetson
-  - 5.31 CUDA acceleration hands-on
+  - 5.31 [CUDA acceleration hands-on](5_31)
 - Final projects
   - Project 1: SLAM for autonomous driving
   - Project 2: SLAM for drones
