@@ -10,6 +10,3 @@ RUN cd /workspace/2_3 && \
     make -j4
 
 WORKDIR /workspace/2_3/build
-
-# Default command: run feature detection demo
-CMD ["./feature_detection"]

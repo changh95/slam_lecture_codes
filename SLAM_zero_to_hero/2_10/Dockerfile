@@ -9,4 +9,3 @@ RUN cd /workspace/2_10 && \
     make -j4
 
 WORKDIR /workspace/2_10/build
-CMD ["sh", "-c", "./icp_point_to_point && echo '' && ./icp_point_to_plane && echo '' && ./icp_convergence"]

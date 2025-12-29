@@ -13,6 +13,3 @@ RUN cd /workspace/2_14 && \
 RUN mkdir -p /output
 
 WORKDIR /workspace/2_14/build
-
-# Run the essential/fundamental matrix estimation example
-CMD ["sh", "-c", "./essential_fundamental_estimation && cp -f epipolar_lines.png /output/ 2>/dev/null; echo 'Done! Check /output for visualization results.'"]

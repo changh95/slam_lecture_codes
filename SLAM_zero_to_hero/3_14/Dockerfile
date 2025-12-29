@@ -15,11 +15,3 @@ RUN cd /workspace/3_14/build && \
     bunzip2 problem-49-7776-pre.txt.bz2 || true
 
 WORKDIR /workspace/3_14/build
-
-CMD ["sh", "-c", "echo '=== GTSAM Tutorial ===' && \
-    echo '' && \
-    echo '1. Running 2D pose graph optimization:' && \
-    ./gtsam_basics && \
-    echo '' && \
-    echo '2. Running bundle adjustment (if BAL data available):' && \
-    if [ -f problem-49-7776-pre.txt ]; then ./gtsam_bundle_adjustment problem-49-7776-pre.txt; else echo 'No BAL dataset found'; fi"]

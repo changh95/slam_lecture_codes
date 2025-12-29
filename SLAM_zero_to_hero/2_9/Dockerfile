@@ -9,4 +9,3 @@ RUN cd /workspace/2_9 && \
     make -j4
 
 WORKDIR /workspace/2_9/build
-CMD ["./point_cloud_preprocessing"]

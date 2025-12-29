@@ -86,13 +86,3 @@ RUN cd /workspace/superpointglue && \
 # ==============================================================================
 
 WORKDIR /workspace/superpointglue
-
-# Default command - show usage
-CMD ["bash", "-c", "echo 'SuperPoint + SuperGlue TensorRT Demo' && \
-    echo '' && \
-    echo 'Usage:' && \
-    echo '  ./build/superpointglue_image config/config.yaml image1.png image2.png' && \
-    echo '  ./build/superpointglue_sequence config/config.yaml /path/to/image/folder/' && \
-    echo '' && \
-    echo 'Note: First run will build TensorRT engines (~10-20 min)' && \
-    /bin/bash"]

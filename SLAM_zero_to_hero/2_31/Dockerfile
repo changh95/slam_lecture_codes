@@ -28,22 +28,3 @@ RUN cd /workspace/2_31 && \
     ninja
 
 WORKDIR /workspace/2_31/build
-
-# Default command: show available executables and run demos
-CMD ["sh", "-c", "echo '=== Spatial Data Structures Tutorial ===' && \
-    echo '' && \
-    echo 'Available executables:' && \
-    echo '  ./octree_demo         - PCL Octree spatial search' && \
-    echo '  ./octomap_demo        - OctoMap probabilistic mapping' && \
-    echo '  ./octomap_navigation  - Path planning with OctoMap' && \
-    echo '  ./bonxai_demo         - Bonxai high-performance voxels' && \
-    echo '  ./comparison          - Compare all three methods' && \
-    echo '' && \
-    echo '--- Running Octree Demo ---' && \
-    ./octree_demo && \
-    echo '' && \
-    echo '--- Running OctoMap Demo ---' && \
-    ./octomap_demo && \
-    echo '' && \
-    echo '--- Running Comparison ---' && \
-    ./comparison"]

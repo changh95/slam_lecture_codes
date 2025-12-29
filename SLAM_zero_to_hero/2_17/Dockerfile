@@ -9,5 +9,3 @@ RUN cd /workspace/2_17 && \
     make -j4
 
 WORKDIR /workspace/2_17/build
-
-CMD ["./triangulation_demo"]

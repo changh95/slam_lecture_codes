@@ -20,12 +20,5 @@ RUN mkdir -p /output
 
 WORKDIR /workspace/1_15
 
-# Set Python path and run examples
+# Set Python path for running examples
 ENV PYTHONPATH=/workspace/1_15/build:${PYTHONPATH}
-
-CMD ["sh", "-c", "echo '=== Testing nanobind SLAM bindings ===' && \
-    python3 examples/test_bindings.py && \
-    echo '' && \
-    echo 'Build artifacts:' && \
-    ls -la build/slam_bindings*.so && \
-    cp build/slam_bindings*.so /output/ 2>/dev/null || true"]
