@@ -1,0 +1,12 @@
+FROM slam:octomap
+
+MAINTAINER changh95
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -y
+RUN apt-get install -y libbenchmark-dev lz4 libeigen3-dev libpcl-dev
+
+RUN git clone https://github.com/facontidavide/Bonxai.git &&\
+    cd Bonxai &&\
+    mkdir build && cd build &&\
+    cmake .. && make -j

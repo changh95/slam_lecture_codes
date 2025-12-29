@@ -75,6 +75,16 @@ jobs:
           - exercise: "1_16-ros2"
             context: "SLAM_zero_to_hero/1_16/ros2"
             tag: "slam:1_16-ros2"
+          # SLAM Projects (independent base images)
+          - exercise: "octomap"
+            context: "SLAM_zero_to_hero/octomap"
+            tag: "slam:octomap"
+          - exercise: "orb_slam2"
+            context: "SLAM_zero_to_hero/orb_slam2"
+            tag: "slam:orb_slam2"
+          - exercise: "cartographer"
+            context: "SLAM_zero_to_hero/cartographer"
+            tag: "slam:cartographer"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -224,14 +234,24 @@ jobs:
           echo "Cleanup complete."
 
   # ===========================================================================
-  # Stage 3: Build GPU exercise (after all other exercises)
+  # Stage 3: Build GPU exercises (after all other exercises)
   # ===========================================================================
   build-gpu:
-    name: Build GPU Exercise (2_4)
+    name: Build GPU ${{ matrix.exercise }}
     runs-on: self-hosted
     needs: [build-independent, build-slam-base-exercises]
     if: ${{ always() && inputs.build_exercises && (needs.build-independent.result == 'success' || needs.build-independent.result == 'skipped') && (needs.build-slam-base-exercises.result == 'success' || needs.build-slam-base-exercises.result == 'skipped') }}
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exercise: "2_4"
+            context: "SLAM_zero_to_hero/2_4"
+            tag: "slam:2_4"
+          - exercise: "dsp_slam"
+            context: "SLAM_zero_to_hero/dsp_slam"
+            tag: "slam:dsp_slam"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -246,29 +266,29 @@ jobs:
             echo "::warning::NVIDIA runtime not available, skipping GPU exercise build"
           fi
 
-      - name: Build 2_4 GPU image
+      - name: Build ${{ matrix.exercise }} GPU image
         if: steps.nvidia-check.outputs.nvidia_available == 'true'
         run: |
           docker build \
-            -t slam:2_4 \
-            -f SLAM_zero_to_hero/2_4/Dockerfile \
-            SLAM_zero_to_hero/2_4/
+            -t ${{ matrix.tag }} \
+            -f ${{ matrix.context }}/Dockerfile \
+            ${{ matrix.context }}/
 
-      - name: Test 2_4 GPU image
+      - name: Test ${{ matrix.exercise }} GPU image
         if: steps.nvidia-check.outputs.nvidia_available == 'true'
         run: |
-          echo "Testing slam:2_4 image..."
-          docker run --rm slam:2_4 /bin/bash -c "
+          echo "Testing ${{ matrix.tag }} image..."
+          docker run --rm ${{ matrix.tag }} /bin/bash -c "
             echo '=== Build verification ==='
             ls -la
             echo '=== Test passed ==='
           "
 
-      - name: Cleanup 2_4 GPU image and cache
+      - name: Cleanup ${{ matrix.exercise }} GPU image and cache
         if: steps.nvidia-check.outputs.nvidia_available == 'true'
         run: |
-          echo "Removing slam:2_4 image..."
-          docker rmi -f slam:2_4
+          echo "Removing ${{ matrix.tag }} image..."
+          docker rmi -f ${{ matrix.tag }}
           docker builder prune -f --filter "until=1h"
           echo "Cleanup complete."
 
@@ -290,7 +310,7 @@ jobs:
           echo "Base image (slam:base): ${{ needs.build-base.result }}"
           echo "Independent exercises:  ${{ needs.build-independent.result }}"
           echo "SLAM base exercises:    ${{ needs.build-slam-base-exercises.result }}"
-          echo "GPU exercise (2_4):     ${{ needs.build-gpu.result }}"
+          echo "GPU exercises:          ${{ needs.build-gpu.result }}"
           echo ""
           echo "========================================"
           echo "  Available Docker Images"
