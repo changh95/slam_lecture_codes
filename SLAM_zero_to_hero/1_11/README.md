@@ -40,6 +40,20 @@ docker run -it --rm -v $(pwd)/output:/output slam_zero_to_hero:1_11
 # Then open profile.prof with easy_profiler GUI on your host machine
 ```
 
+Docker with GUI (X11 forwarding):
+```bash
+# Allow X11 connections
+xhost +local:docker
+
+# Run profiler and open GUI inside container
+docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v $(pwd)/output:/output \
+    slam:base \
+    bash -c "cd /output && profiler_gui profile.prof"
+```
+
 ## Installing easy_profiler GUI (on host machine)
 
 ```bash

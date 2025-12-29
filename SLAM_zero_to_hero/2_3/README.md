@@ -155,7 +155,7 @@ make -j4
 
 ```bash
 # Build base image first (from SLAM_zero_to_hero root)
-docker build . -t slam_zero_to_hero:base
+docker build . -t slam:base
 
 # Build this tutorial
 cd 2_3

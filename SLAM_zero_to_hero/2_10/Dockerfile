@@ -1,4 +1,4 @@
-FROM slam_zero_to_hero:base
+FROM slam:base
 
 WORKDIR /workspace
 COPY . /workspace/2_10

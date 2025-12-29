@@ -1,4 +1,4 @@
-FROM slam_zero_to_hero:base
+FROM slam:base
 
 # Install SymForce Python package
 RUN pip3 install symforce --break-system-packages

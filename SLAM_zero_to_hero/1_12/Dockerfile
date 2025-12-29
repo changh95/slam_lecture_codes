@@ -1,4 +1,4 @@
-FROM slam_zero_to_hero:base
+FROM slam:base
 
 # Install Valgrind and visualization tools
 RUN apt-get update && apt-get install -y \

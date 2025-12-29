@@ -11,7 +11,7 @@ Most of the code exercises are based on the base docker image. The base docker i
 You can build the base docker image using the following command.
 
 ```shell
-docker build . --tag slam_zero_to_hero:base --progress=plain
+docker build . --tag slam:base --progress=plain
 echo "xhost +local:docker" >> ~/.profile
 ```
 

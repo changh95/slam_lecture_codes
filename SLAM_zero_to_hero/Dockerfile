@@ -3,9 +3,8 @@ FROM --platform=linux/amd64 ubuntu:noble
 MAINTAINER changh95
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update -y && apt-get upgrade -y
-
-RUN apt-get install build-essential -y && \
+RUN apt-get update -y && apt-get upgrade -y && \
+    apt-get install build-essential -y && \
     apt-get install cmake -y && \
     apt-get install git -y && \
     apt-get install sudo -y && \
@@ -39,7 +38,7 @@ RUN wget https://github.com/opencv/opencv/archive/refs/tags/4.12.0.zip &&\
     cd opencv-4.12.0 &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j4 &&\
+    make -j16 &&\
     make install &&\
     cd ../../
 
@@ -49,7 +48,7 @@ RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.zip &&\
     cd eigen-5.0.0 &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j4 &&\
+    make -j16 &&\
     make install &&\
     cd ../../
 
@@ -59,7 +58,7 @@ RUN apt-get install -y libgoogle-glog-dev libgflags-dev libatlas-base-dev libsui
     cd ceres-solver && \
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j4 &&\
+    make -j16 &&\
     make install &&\
     cd ../../
 
@@ -70,7 +69,7 @@ RUN wget https://github.com/strasdat/Sophus/archive/refs/tags/1.24.6.zip &&\
     sed -i 's/find_package(Eigen3 3.4.0/find_package(Eigen3/g' CMakeLists.txt &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j4 &&\
+    make -j16 &&\
     make install && \
     cd ../../
 
@@ -91,7 +90,7 @@ RUN wget https://github.com/stevenlovegrove/Pangolin/archive/refs/tags/v0.9.4.zi
     cd Pangolin-0.9.4 &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j4 &&\
+    make -j16 &&\
     make install &&\
     cd ../../
     
@@ -99,11 +98,12 @@ RUN wget https://github.com/stevenlovegrove/Pangolin/archive/refs/tags/v0.9.4.zi
 RUN apt-get install -y libpcl-dev
 
 # easy_profiler (CPU profiler with GUI visualization)
-RUN git clone https://github.com/yse/easy_profiler.git &&\
+RUN apt-get install -y qtbase5-dev libqt5widgets5 &&\
+    git clone https://github.com/yse/easy_profiler.git &&\
     cd easy_profiler &&\
     mkdir build && cd build &&\
-    cmake .. -DEASY_PROFILER_NO_GUI=ON &&\
-    make -j4 &&\
+    cmake .. -DEASY_PROFILER_NO_GUI=OFF &&\
+    make -j16 &&\
     make install &&\
     ldconfig &&\
     cd ../../
@@ -113,27 +113,28 @@ RUN git clone https://github.com/RainerKuemmerle/g2o.git &&\
     cd g2o &&\
     mkdir build && cd build &&\
     cmake .. &&\
-    make -j4 &&\
+    make -j16 &&\
     make install &&\
     cd ../../
 
 # GTSAM [Use 4.3a1 for Eigen 5.0.0 support]
+# Patch: Add missing #include <cassert> in SL4.cpp
+# Disable warnings-as-errors for Eigen 5.0.0 compatibility (uninitialized variable warnings)
 RUN apt-get install -y libtbb-dev &&\
     git clone https://github.com/borglab/gtsam.git -b 4.3a1 &&\
     cd gtsam &&\
+    sed -i '1i #include <cassert>' gtsam/geometry/SL4.cpp &&\
     mkdir build && cd build &&\
-    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON &&\
-    make -j4 &&\
+    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized" &&\
+    make -j16 &&\
     make install &&\
     cd ../../
 
-# SymForce
-RUN git clone https://github.com/symforce-org/symforce.git &&\
+# SymForce (requires libgmp-dev for SymEngine)
+RUN apt-get install -y libgmp-dev &&\
+    git clone https://github.com/symforce-org/symforce.git &&\
     cd symforce &&\
-    mkdir build && cd build &&\
-    cmake .. -DSYMFORCE_BUILD_SYMENGINE=ON &&\
-    make -j4 &&\
-    make install &&\
-    cd ../../
+    pip3 install . --break-system-packages &&\
+    cd ../
 
 RUN git clone https://github.com/changh95/fastcampus_slam_codes.git

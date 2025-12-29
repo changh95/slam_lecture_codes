@@ -1,4 +1,4 @@
-FROM slam_zero_to_hero:base
+FROM slam:base
 
 # nanobind requires Python development headers (already in base)
 # Additional tools for building
