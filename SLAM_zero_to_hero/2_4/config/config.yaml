@@ -1,0 +1,72 @@
+# SuperPoint + SuperGlue Configuration
+# =====================================
+#
+# This file configures both the SuperPoint detector and SuperGlue matcher.
+# Model weights must be placed in the 'weights/' directory.
+
+# -----------------------------------------------------------------------------
+# SuperPoint Configuration
+# -----------------------------------------------------------------------------
+# SuperPoint: Self-supervised interest point detection and description
+# Paper: https://arxiv.org/abs/1712.07629
+#
+superpoint:
+  # Maximum number of keypoints to detect per image
+  # Set to -1 for unlimited (not recommended for real-time applications)
+  max_keypoints: 300
+
+  # Minimum keypoint detection score threshold
+  # Lower values detect more keypoints but may include noise
+  # Recommended range: 0.001 - 0.01
+  keypoint_threshold: 0.004
+
+  # Border margin in pixels to exclude keypoints
+  # Keypoints too close to borders may have unreliable descriptors
+  remove_borders: 4
+
+  # TensorRT input/output tensor names (must match ONNX model)
+  input_tensor_names:
+    - "input"
+  output_tensor_names:
+    - "scores"
+    - "descriptors"
+
+  # Model file paths (relative to model_dir)
+  onnx_file: "superpoint_v1_sim_int32.onnx"
+  engine_file: "superpoint_v1_sim_int32.engine"
+
+  # DLA core for NVIDIA Jetson (-1 to disable DLA, use GPU only)
+  dla_core: -1
+
+# -----------------------------------------------------------------------------
+# SuperGlue Configuration
+# -----------------------------------------------------------------------------
+# SuperGlue: Learning feature matching with graph neural networks
+# Paper: https://arxiv.org/abs/1911.11763
+#
+superglue:
+  # Image dimensions for keypoint normalization
+  # Images will be resized to these dimensions before processing
+  image_width: 640
+  image_height: 480
+
+  # TensorRT input/output tensor names (must match ONNX model)
+  input_tensor_names:
+    - "keypoints_0"
+    - "scores_0"
+    - "descriptors_0"
+    - "keypoints_1"
+    - "scores_1"
+    - "descriptors_1"
+  output_tensor_names:
+    - "scores"
+
+  # Model file paths (relative to model_dir)
+  # Available pre-trained weights:
+  #   - superglue_indoor: trained on ScanNet (indoor scenes)
+  #   - superglue_outdoor: trained on MegaDepth (outdoor scenes)
+  onnx_file: "superglue_indoor_sim_int32.onnx"
+  engine_file: "superglue_indoor_sim_int32.engine"
+
+  # DLA core for NVIDIA Jetson (-1 to disable DLA, use GPU only)
+  dla_core: -1

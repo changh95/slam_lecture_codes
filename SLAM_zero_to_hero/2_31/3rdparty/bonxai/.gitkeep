@@ -1,0 +1,13 @@
+# Bonxai Header-Only Library
+#
+# Bonxai is a high-performance voxel container for 3D maps.
+# It is header-only and needs to be cloned here.
+#
+# To set up Bonxai locally:
+#   cd 3rdparty
+#   git clone https://github.com/facontidavide/Bonxai.git bonxai_repo
+#   cp -r bonxai_repo/bonxai_core/include/bonxai .
+#
+# Or the Dockerfile will handle this automatically during build.
+#
+# Repository: https://github.com/facontidavide/Bonxai

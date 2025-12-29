@@ -12,6 +12,7 @@ This tutorial covers fundamental Python programming concepts essential for robot
 | `04_classes.py` | Classes, inheritance, magic methods, dataclasses |
 | `05_file_io.py` | File I/O, JSON, CSV, exceptions, context managers |
 | `06_modules_venv.py` | Modules, packages, virtual environments (venv) |
+| `07_rustlike_python.py` | Rust-inspired patterns: type hints, dataclasses, ADTs |
 
 ---
 

@@ -1,0 +1,86 @@
+cmake_minimum_required(VERSION 3.14)
+project(learning_based_global_features LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Build type
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Find OpenCV
+find_package(OpenCV REQUIRED)
+if(OpenCV_FOUND)
+    message(STATUS "OpenCV found: ${OpenCV_VERSION}")
+    include_directories(${OpenCV_INCLUDE_DIRS})
+else()
+    message(FATAL_ERROR "OpenCV not found!")
+endif()
+
+# Find ONNX Runtime (optional, for C++ inference)
+# Install: pip install onnxruntime or download from https://onnxruntime.ai/
+set(ONNXRUNTIME_ROOT "" CACHE PATH "Path to ONNX Runtime installation")
+
+if(ONNXRUNTIME_ROOT)
+    set(ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_ROOT}/include")
+    if(WIN32)
+        set(ONNXRUNTIME_LIBS "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+    else()
+        set(ONNXRUNTIME_LIBS "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so")
+    endif()
+
+    if(EXISTS ${ONNXRUNTIME_LIBS})
+        set(ONNXRUNTIME_FOUND TRUE)
+        message(STATUS "ONNX Runtime found: ${ONNXRUNTIME_ROOT}")
+        include_directories(${ONNXRUNTIME_INCLUDE_DIRS})
+    else()
+        message(WARNING "ONNX Runtime library not found at ${ONNXRUNTIME_LIBS}")
+        set(ONNXRUNTIME_FOUND FALSE)
+    endif()
+else()
+    # Try to find ONNX Runtime in system paths
+    find_library(ONNXRUNTIME_LIBS onnxruntime)
+    if(ONNXRUNTIME_LIBS)
+        set(ONNXRUNTIME_FOUND TRUE)
+        message(STATUS "ONNX Runtime found: ${ONNXRUNTIME_LIBS}")
+    else()
+        set(ONNXRUNTIME_FOUND FALSE)
+        message(STATUS "ONNX Runtime not found - C++ inference will not be built")
+        message(STATUS "Set ONNXRUNTIME_ROOT to enable C++ inference")
+    endif()
+endif()
+
+# ONNX Runtime inference example (only if ONNX Runtime found)
+if(ONNXRUNTIME_FOUND)
+    add_executable(onnx_inference examples/onnx_inference.cpp)
+    target_link_libraries(onnx_inference
+        ${OpenCV_LIBS}
+        ${ONNXRUNTIME_LIBS}
+    )
+    target_compile_definitions(onnx_inference PRIVATE ONNXRUNTIME_AVAILABLE)
+endif()
+
+# Print build summary
+message(STATUS "")
+message(STATUS "=== Learning-based Global Features Tutorial ===")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "OpenCV version: ${OpenCV_VERSION}")
+message(STATUS "")
+message(STATUS "This tutorial is primarily Python-based:")
+message(STATUS "  - examples/netvlad_pytorch.py     NetVLAD with PyTorch")
+message(STATUS "  - examples/gem_pooling.py         GeM pooling implementation")
+message(STATUS "  - examples/cosplace_demo.py       CosPlace place recognition")
+message(STATUS "  - examples/export_onnx.py         Export models to ONNX")
+message(STATUS "")
+if(ONNXRUNTIME_FOUND)
+    message(STATUS "C++ Executables (ONNX Runtime enabled):")
+    message(STATUS "  - onnx_inference               C++ inference with ONNX")
+else()
+    message(STATUS "C++ inference disabled (ONNX Runtime not found)")
+    message(STATUS "To enable: cmake -DONNXRUNTIME_ROOT=/path/to/onnxruntime ..")
+endif()
+message(STATUS "")
+message(STATUS "Python dependencies:")
+message(STATUS "  pip install torch torchvision numpy opencv-python onnx onnxruntime")
+message(STATUS "")

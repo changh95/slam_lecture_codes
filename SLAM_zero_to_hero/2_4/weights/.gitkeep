@@ -1,0 +1,20 @@
+# Placeholder for ONNX and TensorRT engine files
+#
+# Place your model files here:
+# - superpoint_v1_sim_int32.onnx
+# - superglue_indoor_sim_int32.onnx
+#
+# TensorRT engine files (.engine) will be generated automatically
+# on first inference run. Note that engine files are GPU-specific
+# and cannot be shared across different GPU architectures.
+#
+# To obtain ONNX models:
+# 1. Download pretrained weights from:
+#    https://github.com/magicleap/SuperGluePretrainedNetwork
+#
+# 2. Use the conversion scripts in convert2onnx/:
+#    python convert_superpoint_to_onnx.py --weights superpoint_v1.pth --output superpoint_v1.onnx --simplify
+#    python convert_superglue_to_onnx.py --weights superglue_indoor.pth --output superglue_indoor.onnx --simplify
+#
+# Or use pre-converted models from:
+#    https://github.com/yuefanhao/SuperPoint-SuperGlue-TensorRT
