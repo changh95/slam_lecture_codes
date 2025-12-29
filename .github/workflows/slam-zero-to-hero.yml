@@ -57,7 +57,8 @@ jobs:
   build-independent:
     name: Build ${{ matrix.exercise }}
     runs-on: self-hosted
-    if: ${{ inputs.build_exercises }}
+    needs: build-base
+    if: ${{ always() && inputs.build_exercises && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -97,8 +98,15 @@ jobs:
       - name: Verify image
         run: docker images ${{ matrix.tag }}
 
+      - name: Cleanup ${{ matrix.exercise }} image and cache
+        run: |
+          echo "Removing ${{ matrix.tag }} image..."
+          docker rmi -f ${{ matrix.tag }}
+          docker builder prune -f --filter "until=1h"
+          echo "Cleanup complete."
+
   # ===========================================================================
-  # Stage 3: Build exercises depending on slam:base
+  # Stage 2: Build exercises depending on slam:base
   # ===========================================================================
   build-slam-base-exercises:
     name: Build ${{ matrix.exercise }}
@@ -208,13 +216,21 @@ jobs:
       - name: Verify image
         run: docker images ${{ matrix.tag }}
 
+      - name: Cleanup ${{ matrix.exercise }} image and cache
+        run: |
+          echo "Removing ${{ matrix.tag }} image..."
+          docker rmi -f ${{ matrix.tag }}
+          docker builder prune -f --filter "until=1h"
+          echo "Cleanup complete."
+
   # ===========================================================================
-  # Stage 4: Build GPU exercise (optional)
+  # Stage 3: Build GPU exercise (after all other exercises)
   # ===========================================================================
   build-gpu:
     name: Build GPU Exercise (2_4)
     runs-on: self-hosted
-    if: ${{ inputs.build_exercises }}
+    needs: [build-independent, build-slam-base-exercises]
+    if: ${{ always() && inputs.build_exercises && (needs.build-independent.result == 'success' || needs.build-independent.result == 'skipped') && (needs.build-slam-base-exercises.result == 'success' || needs.build-slam-base-exercises.result == 'skipped') }}
     continue-on-error: true
     steps:
       - name: Checkout repository
@@ -248,8 +264,16 @@ jobs:
             echo '=== Test passed ==='
           "
 
+      - name: Cleanup 2_4 GPU image and cache
+        if: steps.nvidia-check.outputs.nvidia_available == 'true'
+        run: |
+          echo "Removing slam:2_4 image..."
+          docker rmi -f slam:2_4
+          docker builder prune -f --filter "until=1h"
+          echo "Cleanup complete."
+
   # ===========================================================================
-  # Summary
+  # Stage 4: Summary
   # ===========================================================================
   summary:
     name: Build Summary
