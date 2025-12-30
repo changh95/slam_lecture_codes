@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(nanobind)
 find_package(Eigen3 REQUIRED)
 
 message(STATUS "Python: ${Python_EXECUTABLE}")
-message(STATUS "Eigen3: ${EIGEN3_INCLUDE_DIR}")
+message(STATUS "Eigen3: ${Eigen3_DIR}")
 
 # Build the nanobind module
 nanobind_add_module(
@@ -32,8 +32,8 @@ nanobind_add_module(
     src/slam_bindings.cpp
 )
 
-target_include_directories(slam_bindings PRIVATE
-    ${EIGEN3_INCLUDE_DIR}
+target_link_libraries(slam_bindings PRIVATE
+    Eigen3::Eigen
 )
 
 # Install to current directory for easy testing
