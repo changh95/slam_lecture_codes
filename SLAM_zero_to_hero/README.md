@@ -6,7 +6,7 @@ This repository contains code exercises for the lecture series - ['SLAM for Robo
 
 ## How to use
 
-Most of the code exercises are based on the base docker image. The base docker image contains numerous C++ libraries for SLAM, such as OpenCV, Eigen, Sophus, PCL, and ceres-solver.
+Most of the code exercises are based on the base docker image. The base docker image contains numerous C++ libraries for SLAM.
 
 You can build the base docker image using the following command.
 
@@ -14,6 +14,24 @@ You can build the base docker image using the following command.
 docker build . --tag slam:base --progress=plain
 echo "xhost +local:docker" >> ~/.profile
 ```
+
+## Libraries in Base Image
+
+| Library | Description |
+|---------|-------------|
+| **OpenCV 4.12** (with contrib) | Computer vision, feature detection (ORB, SIFT, TEBLID), ArUco markers |
+| **Eigen 5.0** | Linear algebra, matrix operations |
+| **Sophus** | Lie groups (SO3, SE3) for robotics |
+| **Ceres Solver** | Nonlinear least squares optimization |
+| **g2o** | Graph-based optimization for SLAM |
+| **GTSAM** | Factor graph optimization |
+| **PoseLib** | Minimal pose solvers (P3P, 5-point, homography) |
+| **OpenGV** | Geometric vision algorithms (relative/absolute pose, triangulation) |
+| **PCL** | Point cloud processing |
+| **Pangolin** | 3D visualization |
+| **easy_profiler** | CPU profiling with GUI |
+| **SymForce** | Symbolic computation for robotics |
+| **Rerun** | Modern 3D visualization for robotics |
 
 ## Table of contents
 
