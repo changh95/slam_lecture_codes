@@ -31,13 +31,21 @@ RUN apt-get update -y && apt-get upgrade -y && \
 # Rerun (3D viewer for robotics)
 RUN pip3 install rerun-sdk --break-system-packages
 
-# OpenCV
+# OpenCV with contrib modules (for ArUco, xfeatures2d/TEBLID, etc.)
 RUN apt-get install -y cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
 RUN wget https://github.com/opencv/opencv/archive/refs/tags/4.12.0.zip &&\
+    wget https://github.com/opencv/opencv_contrib/archive/refs/tags/4.12.0.zip -O opencv_contrib-4.12.0.zip &&\
     unzip 4.12.0.zip &&\
+    unzip opencv_contrib-4.12.0.zip &&\
     cd opencv-4.12.0 &&\
     mkdir build && cd build &&\
-    cmake .. &&\
+    cmake .. \
+        -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib-4.12.0/modules \
+        -DOPENCV_ENABLE_NONFREE=ON \
+        -DBUILD_opencv_python3=OFF \
+        -DBUILD_TESTS=OFF \
+        -DBUILD_PERF_TESTS=OFF \
+        -DBUILD_EXAMPLES=OFF &&\
     make -j16 &&\
     make install &&\
     cd ../../
