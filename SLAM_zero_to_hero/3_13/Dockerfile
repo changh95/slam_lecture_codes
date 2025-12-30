@@ -3,9 +3,9 @@ FROM slam:base
 WORKDIR /workspace
 COPY . /workspace/3_13
 
-# Fix VTK MPI dependency issue
+# Fix VTK MPI dependency and install fmt library
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libopenmpi-dev && \
+    apt-get install -y --no-install-recommends libopenmpi-dev libfmt-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Build
