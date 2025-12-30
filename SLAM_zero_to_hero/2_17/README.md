@@ -145,13 +145,46 @@ docker build . -t slam_zero_to_hero:2_17
 
 ### Local
 ```bash
+# DLT, midpoint, stereo depth methods
 ./build/triangulation_demo
+
+# OpenGV triangulation methods
+./build/triangulation_opengv
 ```
 
 ### Docker
 ```bash
 docker run -it --rm slam_zero_to_hero:2_17
 ```
+
+---
+
+## OpenGV Triangulation
+
+[OpenGV](https://laurentkneip.github.io/opengv/) provides efficient triangulation methods:
+
+```cpp
+#include <opengv/triangulation/methods.hpp>
+#include <opengv/relative_pose/CentralRelativeAdapter.hpp>
+
+// Create adapter with bearing vectors and relative pose
+opengv::relative_pose::CentralRelativeAdapter adapter(bearings1, bearings2, t12, R12);
+
+// Linear triangulation
+opengv::point_t pt = opengv::triangulation::triangulate(adapter, index);
+
+// Optimal L2 triangulation (Lee & Civera)
+opengv::point_t pt2 = opengv::triangulation::triangulate2(adapter, index);
+```
+
+### Triangulation Methods Comparison
+
+| Method | Library | Description |
+|--------|---------|-------------|
+| DLT | OpenCV/Custom | Linear, fast, not optimal |
+| Mid-point | Custom | Geometrically intuitive |
+| triangulate | OpenGV | Linear method |
+| triangulate2 | OpenGV | Optimal L2 (Lee & Civera) |
 
 ---
 
