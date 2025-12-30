@@ -111,12 +111,37 @@ Ground Plane Assumption:
 ├── CMakeLists.txt
 ├── Dockerfile
 └── examples/
-    ├── homography_estimation.cpp      # Estimate H from correspondences
-    ├── homography_decomposition.cpp   # Decompose H into R, t, n
+    ├── homography_demo.cpp            # Homography estimation and decomposition
+    ├── homography_poselib.cpp         # 4-point homography using PoseLib
     ├── bev_projection.cpp             # Bird's eye view transform
-    ├── image_stitching.cpp            # Panorama stitching
-    └── ar_marker_overlay.cpp          # AR overlay on planar markers
+    └── bev_lane_detection.cpp         # Lane detection from BEV
 ```
+
+---
+
+## PoseLib Homography
+
+[PoseLib](https://github.com/PoseLib/PoseLib) provides a minimal 4-point homography solver:
+
+```cpp
+#include <PoseLib/PoseLib.h>
+
+// 4-point homography solver (minimal)
+std::vector<Eigen::Vector3d> x1(pts1.begin(), pts1.begin() + 4);
+std::vector<Eigen::Vector3d> x2(pts2.begin(), pts2.begin() + 4);
+
+Eigen::Matrix3d H;
+int num_solutions = poselib::homography_4pt(x1, x2, &H);
+```
+
+### Key Differences
+
+| Feature | OpenCV | PoseLib |
+|---------|--------|---------|
+| Min points | 4 | 4 (minimal) |
+| RANSAC | Built-in | Separate |
+| Decomposition | decomposeHomographyMat | Manual |
+| Input | Pixel coords | Homogeneous (normalized) |
 
 ---
 
@@ -146,17 +171,17 @@ docker build . -t slam_zero_to_hero:2_14
 ### Local
 
 ```bash
-# Homography estimation
-./build/homography_estimation image1.jpg image2.jpg
+# Homography estimation and decomposition (OpenCV)
+./build/homography_demo
+
+# 4-point homography using PoseLib
+./build/homography_poselib
 
 # BEV projection
-./build/bev_projection driving_image.jpg
+./build/bev_projection [driving_image.jpg]
 
-# Image stitching
-./build/image_stitching left.jpg right.jpg -o panorama.jpg
-
-# AR overlay
-./build/ar_marker_overlay camera_image.jpg overlay.png
+# Lane detection from BEV
+./build/bev_lane_detection [driving_image.jpg]
 ```
 
 ### Docker
