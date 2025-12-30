@@ -94,6 +94,9 @@ RUN wget https://github.com/stevenlovegrove/Pangolin/archive/refs/tags/v0.9.4.zi
     make install &&\
     cd ../../
     
+# MPI (required by VTK for PCL visualization)
+RUN apt-get install -y libopenmpi-dev
+
 # PCL
 RUN apt-get install -y libpcl-dev
 
