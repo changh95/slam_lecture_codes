@@ -276,7 +276,7 @@ int main(int argc, char* argv[]) {
 
     // Rotation error (Frobenius norm)
     cv::Mat R_diff = R_recovered - R;
-    double rot_error = cv::norm(R_diff, cv::NORM_FRO);
+    double rot_error = cv::norm(R_diff, cv::NORM_L2);
     std::cout << "Rotation error (Frobenius): " << rot_error << std::endl;
 
     // Translation direction error (since scale is unknown)
@@ -294,16 +294,16 @@ int main(int argc, char* argv[]) {
     cv::Mat E_from_F = K.t() * F_ransac * K;
 
     // Normalize for comparison (Essential matrix is defined up to scale)
-    E_from_F = E_from_F / cv::norm(E_from_F, cv::NORM_FRO);
-    cv::Mat E_5point_norm = E_5point / cv::norm(E_5point, cv::NORM_FRO);
+    E_from_F = E_from_F / cv::norm(E_from_F, cv::NORM_L2);
+    cv::Mat E_5point_norm = E_5point / cv::norm(E_5point, cv::NORM_L2);
 
     std::cout << "E from F (normalized):\n" << E_from_F << std::endl;
     std::cout << "E from 5-point (normalized):\n" << E_5point_norm << std::endl;
 
     cv::Mat E_diff = E_from_F - E_5point_norm;
     // Handle sign ambiguity
-    double diff1 = cv::norm(E_diff, cv::NORM_FRO);
-    double diff2 = cv::norm(E_from_F + E_5point_norm, cv::NORM_FRO);
+    double diff1 = cv::norm(E_diff, cv::NORM_L2);
+    double diff2 = cv::norm(E_from_F + E_5point_norm, cv::NORM_L2);
     double min_diff = std::min(diff1, diff2);
 
     std::cout << "Difference (Frobenius): " << min_diff << std::endl;
