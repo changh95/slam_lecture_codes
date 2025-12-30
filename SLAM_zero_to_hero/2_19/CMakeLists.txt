@@ -37,6 +37,22 @@ message(STATUS "OpenCV libraries: ${OpenCV_LIBS}")
 find_package(Eigen3 REQUIRED)
 message(STATUS "Eigen3 version: ${Eigen3_VERSION}")
 
+# PoseLib (minimal pose estimation solvers)
+find_package(PoseLib QUIET)
+if(PoseLib_FOUND)
+    message(STATUS "PoseLib found")
+else()
+    message(STATUS "PoseLib not found - pnp_poselib will not be built")
+endif()
+
+# OpenGV (geometric vision algorithms)
+find_package(opengv QUIET)
+if(opengv_FOUND)
+    message(STATUS "OpenGV found")
+else()
+    message(STATUS "OpenGV not found - pnp_opengv will not be built")
+endif()
+
 # ============================================================
 # EXAMPLES - Main tutorial examples
 # ============================================================
@@ -63,7 +79,35 @@ target_include_directories(pnp_ransac_demo PRIVATE
     ${EIGEN3_INCLUDE_DIR}
 )
 
-# 3. Marker Detection - ArUco marker detection and generation
+# 3. PnP PoseLib - P3P using PoseLib minimal solver
+if(PoseLib_FOUND)
+    add_executable(pnp_poselib examples/pnp_poselib.cpp)
+    target_link_libraries(pnp_poselib PRIVATE
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        PoseLib::PoseLib
+    )
+    target_include_directories(pnp_poselib PRIVATE
+        ${OpenCV_INCLUDE_DIRS}
+        ${EIGEN3_INCLUDE_DIR}
+    )
+endif()
+
+# 4. PnP OpenGV - P3P using OpenGV solvers
+if(opengv_FOUND)
+    add_executable(pnp_opengv examples/pnp_opengv.cpp)
+    target_link_libraries(pnp_opengv PRIVATE
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        opengv
+    )
+    target_include_directories(pnp_opengv PRIVATE
+        ${OpenCV_INCLUDE_DIRS}
+        ${EIGEN3_INCLUDE_DIR}
+    )
+endif()
+
+# 5. Marker Detection - ArUco marker detection and generation
 add_executable(marker_detection examples/marker_detection.cpp)
 target_link_libraries(marker_detection PRIVATE ${OpenCV_LIBS})
 target_include_directories(marker_detection PRIVATE ${OpenCV_INCLUDE_DIRS})
@@ -129,6 +173,12 @@ message(STATUS "")
 message(STATUS "PnP Examples:")
 message(STATUS "  pnp_demo              - Compare PnP algorithms (P3P, EPnP, DLS, SQPnP)")
 message(STATUS "  pnp_ransac_demo       - Robust PnP estimation with RANSAC")
+if(PoseLib_FOUND)
+    message(STATUS "  pnp_poselib           - P3P using PoseLib minimal solver")
+endif()
+if(opengv_FOUND)
+    message(STATUS "  pnp_opengv            - P3P using OpenGV solvers (Kneip, Gao, EPnP)")
+endif()
 message(STATUS "")
 message(STATUS "Marker Examples:")
 message(STATUS "  marker_detection      - ArUco marker detection and generation")

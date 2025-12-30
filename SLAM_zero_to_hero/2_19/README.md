@@ -93,11 +93,63 @@ Fiducial markers are visual patterns designed for easy detection and identificat
 └── examples/
     ├── pnp_demo.cpp                # PnP algorithms comparison
     ├── pnp_ransac_demo.cpp         # Robust PnP with outliers
+    ├── pnp_poselib.cpp             # P3P using PoseLib minimal solver
+    ├── pnp_opengv.cpp              # P3P using OpenGV (Kneip, Gao, EPnP)
     ├── marker_detection.cpp        # ArUco marker detection
     ├── marker_pose_estimation.cpp  # 6-DoF pose from markers
     ├── charuco_calibration.cpp     # Camera calibration with ChArUco
     └── ground_truth_collection.cpp # Collect GT for SLAM evaluation
 ```
+
+---
+
+## Alternative Libraries: PoseLib and OpenGV
+
+In addition to OpenCV, this exercise includes examples using **PoseLib** and **OpenGV**:
+
+### PoseLib
+
+[PoseLib](https://github.com/PoseLib/PoseLib) provides minimal solvers for camera pose estimation:
+
+```cpp
+#include <PoseLib/PoseLib.h>
+
+// P3P solver (returns up to 4 solutions)
+std::vector<poselib::CameraPose> solutions;
+int num_solutions = poselib::p3p(bearings, points3d, &solutions);
+
+// Access solution
+Eigen::Quaterniond q(pose.q[0], pose.q[1], pose.q[2], pose.q[3]);
+Eigen::Matrix3d R = q.toRotationMatrix();
+Eigen::Vector3d t = pose.t;
+```
+
+### OpenGV
+
+[OpenGV](https://laurentkneip.github.io/opengv/) provides geometric vision algorithms:
+
+```cpp
+#include <opengv/absolute_pose/methods.hpp>
+#include <opengv/absolute_pose/CentralAbsoluteAdapter.hpp>
+
+// Create adapter with bearing vectors and 3D points
+opengv::absolute_pose::CentralAbsoluteAdapter adapter(bearings, points);
+
+// P3P Kneip solver
+opengv::transformations_t solutions = opengv::absolute_pose::p3p_kneip(adapter);
+
+// EPnP (uses all points)
+opengv::transformation_t T = opengv::absolute_pose::epnp(adapter);
+```
+
+### Key Differences
+
+| Feature | OpenCV | PoseLib | OpenGV |
+|---------|--------|---------|--------|
+| Input format | Pixel coords | Bearing vectors | Bearing vectors |
+| Intrinsics | Required | Already applied | Already applied |
+| P3P solutions | Single (disambiguated) | All 4 | All 4 |
+| RANSAC | Built-in | Separate | Separate |
 
 ---
 
@@ -128,11 +180,17 @@ docker build . -t slam_zero_to_hero:2_19
 ### PnP Examples
 
 ```bash
-# Compare PnP methods
+# Compare PnP methods (OpenCV)
 ./build/pnp_demo
 
 # Robust PnP with RANSAC
 ./build/pnp_ransac_demo
+
+# PoseLib P3P (minimal solver)
+./build/pnp_poselib
+
+# OpenGV P3P (Kneip, Gao, EPnP)
+./build/pnp_opengv
 ```
 
 ### Marker Examples
