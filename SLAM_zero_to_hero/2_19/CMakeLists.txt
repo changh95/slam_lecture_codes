@@ -19,8 +19,7 @@ message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 # DEPENDENCIES
 # ============================================================
 
-# OpenCV (with aruco module from opencv_contrib)
-# Note: aruco is part of objdetect in OpenCV 4.7+, but also available in contrib
+# OpenCV (aruco is part of objdetect in OpenCV 4.7+)
 find_package(OpenCV 4.0 REQUIRED COMPONENTS
     core
     imgproc
@@ -28,7 +27,6 @@ find_package(OpenCV 4.0 REQUIRED COMPONENTS
     videoio
     highgui
     calib3d
-    aruco
     objdetect
 )
 
