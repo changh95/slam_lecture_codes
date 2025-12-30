@@ -141,6 +141,26 @@ RUN apt-get install -y libtbb-dev &&\
     make install &&\
     cd ../../
 
+# PoseLib (minimal pose estimation solvers)
+RUN git clone https://github.com/PoseLib/PoseLib.git &&\
+    cd PoseLib &&\
+    mkdir build && cd build &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release &&\
+    make -j16 &&\
+    make install &&\
+    ldconfig &&\
+    cd ../../
+
+# OpenGV (geometric vision algorithms)
+RUN git clone https://github.com/laurentkneip/opengv.git &&\
+    cd opengv &&\
+    mkdir build && cd build &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release &&\
+    make -j16 &&\
+    make install &&\
+    ldconfig &&\
+    cd ../../
+
 # SymForce (requires libgmp-dev for SymEngine)
 RUN apt-get install -y libgmp-dev &&\
     git clone https://github.com/symforce-org/symforce.git &&\
