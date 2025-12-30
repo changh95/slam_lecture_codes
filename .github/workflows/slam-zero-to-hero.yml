@@ -33,6 +33,7 @@ jobs:
       - name: Build slam:base image
         run: |
           docker build \
+            --no-cache \
             -t slam:base \
             -f ${{ env.COURSE_DIR }}/Dockerfile \
             ${{ env.COURSE_DIR }}/
@@ -323,3 +324,11 @@ jobs:
           needs.build-slam-base-exercises.result == 'failure' ||
           needs.build-independent.result == 'failure'
         run: exit 1
+
+      - name: Cleanup base image and cache
+        if: always()
+        run: |
+          echo "Removing slam:base image..."
+          docker rmi -f slam:base || true
+          docker builder prune -f --filter "until=1h"
+          echo "Cleanup complete."
