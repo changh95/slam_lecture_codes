@@ -181,11 +181,61 @@ Minimal solver for calibrated cameras:
 ├── CMakeLists.txt
 ├── Dockerfile
 └── examples/
-    ├── fundamental_estimation.cpp     # F matrix estimation
-    ├── essential_estimation.cpp       # E matrix and pose recovery
+    ├── essential_fundamental_demo.cpp # Essential & Fundamental matrix estimation
+    ├── pose_recovery.cpp              # Recover rotation and translation from E
     ├── epipolar_visualization.cpp     # Visualize epipolar lines
-    └── two_view_reconstruction.cpp    # Full pipeline: E -> R,t -> triangulation
+    ├── relpose_poselib.cpp            # 5-point solver using PoseLib
+    └── relpose_opengv.cpp             # 5-point solver using OpenGV
 ```
+
+---
+
+## Alternative Libraries: PoseLib and OpenGV
+
+In addition to OpenCV, this exercise includes examples using **PoseLib** and **OpenGV**:
+
+### PoseLib
+
+[PoseLib](https://github.com/PoseLib/PoseLib) provides minimal solvers for relative pose estimation:
+
+```cpp
+#include <PoseLib/PoseLib.h>
+
+// 5-point relative pose solver (returns up to 10 solutions)
+std::vector<poselib::CameraPose> solutions;
+int num_solutions = poselib::relpose_5pt(bearings1, bearings2, &solutions);
+
+// Access solution
+Eigen::Quaterniond q(pose.q[0], pose.q[1], pose.q[2], pose.q[3]);
+Eigen::Matrix3d R = q.toRotationMatrix();
+Eigen::Vector3d t = pose.t;  // Up to scale
+```
+
+### OpenGV
+
+[OpenGV](https://laurentkneip.github.io/opengv/) provides 5-point relative pose solvers:
+
+```cpp
+#include <opengv/relative_pose/methods.hpp>
+#include <opengv/relative_pose/CentralRelativeAdapter.hpp>
+
+// Create adapter with bearing vectors from both cameras
+opengv::relative_pose::CentralRelativeAdapter adapter(bearings1, bearings2);
+
+// Nister 5-point solver
+opengv::essentials_t E_solutions = opengv::relative_pose::fivept_nister(adapter);
+
+// Stewenius 5-point solver
+opengv::essentials_t E_solutions2 = opengv::relative_pose::fivept_stewenius(adapter);
+```
+
+### Key Differences
+
+| Feature | OpenCV | PoseLib | OpenGV |
+|---------|--------|---------|--------|
+| Input format | Pixel coords | Bearing vectors | Bearing vectors |
+| Output | (R, t) directly | CameraPose | Essential matrix |
+| Disambiguation | Built-in | Manual | Manual decomposition |
 
 ---
 
@@ -216,17 +266,20 @@ docker build . -t slam_zero_to_hero:2_12
 ### Local
 
 ```bash
-# Fundamental matrix estimation
-./build/fundamental_estimation image1.jpg image2.jpg
+# Essential & Fundamental matrix estimation
+./build/essential_fundamental_demo
 
-# Essential matrix and pose recovery
-./build/essential_estimation image1.jpg image2.jpg --focal 718.856 --cx 607.19 --cy 185.22
+# Pose recovery from Essential matrix
+./build/pose_recovery image1.jpg image2.jpg
 
 # Epipolar line visualization
 ./build/epipolar_visualization image1.jpg image2.jpg
 
-# Two-view reconstruction
-./build/two_view_reconstruction image1.jpg image2.jpg -o points3d.ply
+# PoseLib 5-point relative pose
+./build/relpose_poselib
+
+# OpenGV 5-point relative pose (Nister, Stewenius)
+./build/relpose_opengv
 ```
 
 ### Docker

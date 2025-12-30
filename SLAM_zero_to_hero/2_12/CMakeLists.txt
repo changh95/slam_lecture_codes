@@ -24,12 +24,26 @@ message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-# Find Eigen3 (optional, for matrix operations)
-find_package(Eigen3 QUIET)
-if(EIGEN3_FOUND)
-    message(STATUS "Eigen3 found: ${EIGEN3_INCLUDE_DIR}")
-    include_directories(${EIGEN3_INCLUDE_DIR})
-    add_definitions(-DHAVE_EIGEN)
+# Find Eigen3 (required for PoseLib and OpenGV)
+find_package(Eigen3 REQUIRED)
+message(STATUS "Eigen3 found: ${EIGEN3_INCLUDE_DIR}")
+include_directories(${EIGEN3_INCLUDE_DIR})
+add_definitions(-DHAVE_EIGEN)
+
+# PoseLib (minimal pose estimation solvers)
+find_package(PoseLib QUIET)
+if(PoseLib_FOUND)
+    message(STATUS "PoseLib found")
+else()
+    message(STATUS "PoseLib not found - relpose_poselib will not be built")
+endif()
+
+# OpenGV (geometric vision algorithms)
+find_package(opengv QUIET)
+if(opengv_FOUND)
+    message(STATUS "OpenGV found")
+else()
+    message(STATUS "OpenGV not found - relpose_opengv will not be built")
 endif()
 
 # Essential and Fundamental Matrix Estimation
@@ -44,6 +58,26 @@ target_link_libraries(pose_recovery ${OpenCV_LIBS})
 add_executable(epipolar_visualization examples/epipolar_visualization.cpp)
 target_link_libraries(epipolar_visualization ${OpenCV_LIBS})
 
+# PoseLib 5-point relative pose solver
+if(PoseLib_FOUND)
+    add_executable(relpose_poselib examples/relpose_poselib.cpp)
+    target_link_libraries(relpose_poselib
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        PoseLib::PoseLib
+    )
+endif()
+
+# OpenGV 5-point relative pose solvers
+if(opengv_FOUND)
+    add_executable(relpose_opengv examples/relpose_opengv.cpp)
+    target_link_libraries(relpose_opengv
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        opengv
+    )
+endif()
+
 # Print build summary
 message(STATUS "")
 message(STATUS "=== Epipolar Geometry Tutorial ===")
@@ -53,6 +87,12 @@ message(STATUS "Executables:")
 message(STATUS "  essential_fundamental_demo - Essential & Fundamental matrix estimation")
 message(STATUS "  pose_recovery             - Recover rotation and translation from E")
 message(STATUS "  epipolar_visualization    - Visualize epipolar lines")
+if(PoseLib_FOUND)
+    message(STATUS "  relpose_poselib           - 5-point solver using PoseLib")
+endif()
+if(opengv_FOUND)
+    message(STATUS "  relpose_opengv            - 5-point solver using OpenGV")
+endif()
 message(STATUS "")
 message(STATUS "Usage:")
 message(STATUS "  ./essential_fundamental_demo")
