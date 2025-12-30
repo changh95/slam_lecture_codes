@@ -15,9 +15,12 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <numeric>
+#include <random>
 #include <vector>
 
 // Timing helper
@@ -80,7 +83,8 @@ void generateSyntheticData(std::vector<cv::Point2f>& pts1,
     // Shuffle points
     std::vector<size_t> indices(pts1.size());
     std::iota(indices.begin(), indices.end(), 0);
-    std::random_shuffle(indices.begin(), indices.end());
+    std::mt19937 rng(42);
+    std::shuffle(indices.begin(), indices.end(), rng);
 
     std::vector<cv::Point2f> shuffled1, shuffled2;
     for (size_t idx : indices) {
