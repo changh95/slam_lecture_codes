@@ -3,6 +3,11 @@ FROM slam:base
 WORKDIR /workspace
 COPY . /workspace/3_14
 
+# Fix VTK MPI dependency issue
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libopenmpi-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 # Build
 RUN cd /workspace/3_14 && \
     mkdir build && cd build && \
