@@ -26,6 +26,7 @@ target_link_libraries(g2o_basics
     g2o::stuff
     g2o::types_slam2d
     g2o::solver_dense
+    fmt
 )
 
 # Bundle Adjustment example
@@ -36,6 +37,7 @@ target_link_libraries(g2o_bundle_adjustment
     g2o::types_sba
     g2o::solver_dense
     g2o::solver_eigen
+    fmt
 )
 
 message(STATUS "")
