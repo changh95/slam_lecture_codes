@@ -17,61 +17,6 @@
 #include <chrono>
 #include <iostream>
 #include <iomanip>
-#include <random>
-
-/**
- * @brief Generate a synthetic test image with distinct features
- */
-cv::Mat generateTestImage(int width, int height, int seed = 42) {
-    cv::Mat image(height, width, CV_8UC1, cv::Scalar(128));
-    cv::RNG rng(seed);
-
-    // Add rectangles
-    for (int i = 0; i < 15; i++) {
-        cv::Point pt1(rng.uniform(20, width - 80), rng.uniform(20, height - 80));
-        cv::Point pt2(pt1.x + rng.uniform(30, 60), pt1.y + rng.uniform(30, 60));
-        cv::rectangle(image, pt1, pt2, cv::Scalar(rng.uniform(50, 200)), -1);
-        cv::rectangle(image, pt1, pt2, cv::Scalar(rng.uniform(0, 50)), 2);
-    }
-
-    // Add circles
-    for (int i = 0; i < 10; i++) {
-        cv::Point center(rng.uniform(40, width - 40), rng.uniform(40, height - 40));
-        int radius = rng.uniform(15, 35);
-        cv::circle(image, center, radius, cv::Scalar(rng.uniform(100, 255)), -1);
-        cv::circle(image, center, radius, cv::Scalar(rng.uniform(0, 80)), 2);
-    }
-
-    // Add noise
-    cv::Mat noise(height, width, CV_8UC1);
-    rng.fill(noise, cv::RNG::NORMAL, 0, 10);
-    image += noise;
-
-    return image;
-}
-
-/**
- * @brief Apply a simulated camera motion (rotation + translation + scale)
- *
- * This simulates the transformation between consecutive SLAM frames.
- */
-cv::Mat applySimulatedMotion(const cv::Mat& image, double angle_deg = 5.0,
-                              double tx = 20, double ty = 10, double scale = 0.95) {
-    cv::Point2f center(image.cols / 2.0f, image.rows / 2.0f);
-
-    // Create transformation matrix (rotation + scale + translation)
-    cv::Mat M = cv::getRotationMatrix2D(center, angle_deg, scale);
-    M.at<double>(0, 2) += tx;
-    M.at<double>(1, 2) += ty;
-
-    cv::Mat result;
-    cv::warpAffine(image, result, M, image.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-
-    // Add slight brightness change (simulates lighting variation)
-    result = result * 0.95 + 5;
-
-    return result;
-}
 
 /**
  * @brief Measure execution time
@@ -281,25 +226,23 @@ void demoSIFTMatching(const cv::Mat& img1, const cv::Mat& img2) {
 }
 
 /**
- * @brief Demo: Matching between images with significant viewpoint change
+ * @brief Demo: Matching with stricter ratio test (loop closure scenario)
  *
- * Tests robustness to larger transformations, similar to loop closure scenarios.
+ * Uses a tighter ratio threshold for more reliable matches,
+ * as would be needed for loop closure detection.
  */
 void demoLoopClosureMatching(const cv::Mat& img1, const cv::Mat& img2) {
     std::cout << "\n===== Loop Closure Scenario =====" << std::endl;
-    std::cout << "(Larger viewpoint change)" << std::endl;
+    std::cout << "(Stricter matching for reliability)" << std::endl;
     std::cout << "-------------------------------------------" << std::endl;
 
-    // Apply larger transformation
-    cv::Mat img2_transformed = applySimulatedMotion(img2, 15.0, 50, 30, 0.85);
-
-    // Use SIFT for better performance with viewpoint changes
+    // Use SIFT with more features for loop closure
     cv::Ptr<cv::SIFT> sift = cv::SIFT::create(1000);
     std::vector<cv::KeyPoint> kp1, kp2;
     cv::Mat desc1, desc2;
 
     sift->detectAndCompute(img1, cv::Mat(), kp1, desc1);
-    sift->detectAndCompute(img2_transformed, cv::Mat(), kp2, desc2);
+    sift->detectAndCompute(img2, cv::Mat(), kp2, desc2);
 
     std::cout << "Detected: " << kp1.size() << " and " << kp2.size() << " keypoints" << std::endl;
 
@@ -308,7 +251,7 @@ void demoLoopClosureMatching(const cv::Mat& img1, const cv::Mat& img2) {
         return;
     }
 
-    // Match with ratio test
+    // Match with stricter ratio test (0.7 instead of 0.75)
     cv::Ptr<cv::BFMatcher> bf = cv::BFMatcher::create(cv::NORM_L2);
     std::vector<std::vector<cv::DMatch>> knn_matches;
     bf->knnMatch(desc1, desc2, knn_matches, 2);
@@ -318,10 +261,10 @@ void demoLoopClosureMatching(const cv::Mat& img1, const cv::Mat& img2) {
 
     // Visualize
     cv::Mat img_matches;
-    cv::drawMatches(img1, kp1, img2_transformed, kp2, good_matches, img_matches,
+    cv::drawMatches(img1, kp1, img2, kp2, good_matches, img_matches,
                     cv::Scalar(0, 255, 0), cv::Scalar(255, 0, 0),
                     std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
-    cv::putText(img_matches, "Loop Closure Matching (Large Transform)", cv::Point(10, 30),
+    cv::putText(img_matches, "Loop Closure Matching (Strict Ratio)", cv::Point(10, 30),
                 cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
     cv::imshow("Loop Closure Matching", img_matches);
     cv::imwrite("loop_closure_matching_result.png", img_matches);
@@ -336,23 +279,19 @@ int main(int argc, char** argv) {
 
     cv::Mat img1, img2;
 
-    if (argc >= 3) {
-        // Load provided images
-        img1 = cv::imread(argv[1], cv::IMREAD_GRAYSCALE);
-        img2 = cv::imread(argv[2], cv::IMREAD_GRAYSCALE);
-        if (img1.empty() || img2.empty()) {
-            std::cerr << "Error: Could not load images" << std::endl;
-            return 1;
-        }
-        std::cout << "Loaded images: " << argv[1] << " and " << argv[2] << std::endl;
-    } else {
-        // Generate synthetic image pair
-        std::cout << "Generating synthetic image pair..." << std::endl;
-        img1 = generateTestImage(640, 480, 42);
-        // Apply small transformation to simulate frame-to-frame motion
-        img2 = applySimulatedMotion(img1, 3.0, 15, 8, 0.98);
-        std::cout << "Applied simulated camera motion (3 deg rotation, 15px translation)" << std::endl;
+    // Default to data folder images
+    std::string img1_path = (argc >= 3) ? argv[1] : "../data/1.jpg";
+    std::string img2_path = (argc >= 3) ? argv[2] : "../data/2.jpg";
+
+    img1 = cv::imread(img1_path, cv::IMREAD_GRAYSCALE);
+    img2 = cv::imread(img2_path, cv::IMREAD_GRAYSCALE);
+
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: Could not load images from " << img1_path << " and " << img2_path << std::endl;
+        std::cerr << "Usage: " << argv[0] << " [image1] [image2]" << std::endl;
+        return 1;
     }
+    std::cout << "Loaded: " << img1_path << " and " << img2_path << std::endl;
 
     std::cout << "Image size: " << img1.cols << "x" << img1.rows << std::endl;
 

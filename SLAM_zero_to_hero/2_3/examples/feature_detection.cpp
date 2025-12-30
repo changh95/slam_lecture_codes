@@ -18,51 +18,6 @@
 #include <iomanip>
 
 /**
- * @brief Generate a synthetic test image with features
- *
- * Creates an image with corners, edges, and texture - typical visual features
- * found in indoor/outdoor SLAM environments.
- */
-cv::Mat generateTestImage(int width, int height, int seed = 42) {
-    cv::Mat image(height, width, CV_8UC1);
-    cv::RNG rng(seed);
-
-    // Create gradient background (simulates illumination variation)
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            image.at<uchar>(y, x) = static_cast<uchar>((x + y) % 256);
-        }
-    }
-
-    // Add rectangles (simulate windows, doors, buildings)
-    for (int i = 0; i < 20; i++) {
-        cv::Point pt1(rng.uniform(0, width - 50), rng.uniform(0, height - 50));
-        cv::Point pt2(pt1.x + rng.uniform(20, 80), pt1.y + rng.uniform(20, 80));
-        cv::rectangle(image, pt1, pt2, cv::Scalar(rng.uniform(50, 200)), -1);
-        // Add border for corner features
-        cv::rectangle(image, pt1, pt2, cv::Scalar(rng.uniform(0, 50)), 2);
-    }
-
-    // Add circles (simulate round objects, wheels, etc.)
-    for (int i = 0; i < 15; i++) {
-        cv::Point center(rng.uniform(30, width - 30), rng.uniform(30, height - 30));
-        int radius = rng.uniform(10, 40);
-        cv::circle(image, center, radius, cv::Scalar(rng.uniform(100, 255)), -1);
-        cv::circle(image, center, radius, cv::Scalar(rng.uniform(0, 100)), 2);
-    }
-
-    // Add some noise (simulates sensor noise)
-    cv::Mat noise(height, width, CV_8UC1);
-    rng.fill(noise, cv::RNG::NORMAL, 0, 15);
-    image += noise;
-
-    // Apply slight blur (simulates camera blur)
-    cv::GaussianBlur(image, image, cv::Size(3, 3), 0.5);
-
-    return image;
-}
-
-/**
  * @brief Measure execution time of a function
  */
 template <typename Func>
@@ -198,19 +153,16 @@ int main(int argc, char** argv) {
     std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
     std::cout << std::endl;
 
-    // Generate or load test image
-    cv::Mat image;
-    if (argc > 1) {
-        image = cv::imread(argv[1], cv::IMREAD_GRAYSCALE);
-        if (image.empty()) {
-            std::cerr << "Error: Could not load image: " << argv[1] << std::endl;
-            return 1;
-        }
-        std::cout << "Loaded image: " << argv[1] << std::endl;
-    } else {
-        std::cout << "Generating synthetic test image (640x480)..." << std::endl;
-        image = generateTestImage(640, 480, 42);
+    // Load test image (default to data/1.jpg)
+    std::string image_path = (argc > 1) ? argv[1] : "../data/1.jpg";
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
+
+    if (image.empty()) {
+        std::cerr << "Error: Could not load image: " << image_path << std::endl;
+        std::cerr << "Usage: " << argv[0] << " [image_path]" << std::endl;
+        return 1;
     }
+    std::cout << "Loaded image: " << image_path << std::endl;
     std::cout << "Image size: " << image.cols << "x" << image.rows << std::endl;
     std::cout << std::endl;
 

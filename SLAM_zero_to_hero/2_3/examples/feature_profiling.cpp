@@ -25,58 +25,6 @@
 #include <algorithm>
 
 /**
- * @brief Generate a synthetic test image with features
- */
-cv::Mat generateTestImage(int width, int height, int seed = 42) {
-    EASY_FUNCTION(profiler::colors::Yellow);
-
-    cv::Mat image(height, width, CV_8UC1, cv::Scalar(128));
-    cv::RNG rng(seed);
-
-    // Add rectangles (corners)
-    for (int i = 0; i < 20; i++) {
-        cv::Point pt1(rng.uniform(20, width - 80), rng.uniform(20, height - 80));
-        cv::Point pt2(pt1.x + rng.uniform(30, 70), pt1.y + rng.uniform(30, 70));
-        cv::rectangle(image, pt1, pt2, cv::Scalar(rng.uniform(50, 200)), -1);
-        cv::rectangle(image, pt1, pt2, cv::Scalar(rng.uniform(0, 50)), 2);
-    }
-
-    // Add circles
-    for (int i = 0; i < 15; i++) {
-        cv::Point center(rng.uniform(40, width - 40), rng.uniform(40, height - 40));
-        int radius = rng.uniform(10, 35);
-        cv::circle(image, center, radius, cv::Scalar(rng.uniform(100, 255)), -1);
-        cv::circle(image, center, radius, cv::Scalar(rng.uniform(0, 80)), 2);
-    }
-
-    // Add noise
-    cv::Mat noise(height, width, CV_8UC1);
-    rng.fill(noise, cv::RNG::NORMAL, 0, 10);
-    image += noise;
-
-    return image;
-}
-
-/**
- * @brief Apply simulated camera motion
- */
-cv::Mat applySimulatedMotion(const cv::Mat& image, double angle_deg = 5.0,
-                              double tx = 20, double ty = 10, double scale = 0.95) {
-    EASY_FUNCTION(profiler::colors::Yellow100);
-
-    cv::Point2f center(image.cols / 2.0f, image.rows / 2.0f);
-    cv::Mat M = cv::getRotationMatrix2D(center, angle_deg, scale);
-    M.at<double>(0, 2) += tx;
-    M.at<double>(1, 2) += ty;
-
-    cv::Mat result;
-    cv::warpAffine(image, result, M, image.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-    result = result * 0.95 + 5;  // Slight brightness change
-
-    return result;
-}
-
-/**
  * @brief Apply Lowe's ratio test
  */
 std::vector<cv::DMatch> applyRatioTest(const std::vector<std::vector<cv::DMatch>>& knn_matches,
@@ -297,22 +245,22 @@ int main(int argc, char** argv) {
 
     cv::Mat img1, img2;
 
-    if (argc >= 3) {
+    // Default to data folder images
+    std::string img1_path = (argc >= 3) ? argv[1] : "../data/1.jpg";
+    std::string img2_path = (argc >= 3) ? argv[2] : "../data/2.jpg";
+
+    {
         EASY_BLOCK("LoadImages", profiler::colors::Cyan);
-        img1 = cv::imread(argv[1], cv::IMREAD_GRAYSCALE);
-        img2 = cv::imread(argv[2], cv::IMREAD_GRAYSCALE);
-        if (img1.empty() || img2.empty()) {
-            std::cerr << "Error: Could not load images" << std::endl;
-            return 1;
-        }
-        std::cout << "Loaded images: " << argv[1] << " and " << argv[2] << std::endl;
-    } else {
-        EASY_BLOCK("GenerateImages", profiler::colors::Cyan);
-        std::cout << "Generating synthetic image pair..." << std::endl;
-        img1 = generateTestImage(640, 480, 42);
-        img2 = applySimulatedMotion(img1, 5.0, 20, 10, 0.95);
-        std::cout << "Applied simulated camera motion" << std::endl;
+        img1 = cv::imread(img1_path, cv::IMREAD_GRAYSCALE);
+        img2 = cv::imread(img2_path, cv::IMREAD_GRAYSCALE);
     }
+
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: Could not load images from " << img1_path << " and " << img2_path << std::endl;
+        std::cerr << "Usage: " << argv[0] << " [image1] [image2]" << std::endl;
+        return 1;
+    }
+    std::cout << "Loaded: " << img1_path << " and " << img2_path << std::endl;
 
     std::cout << "Image size: " << img1.cols << "x" << img1.rows << std::endl;
     std::cout << std::endl;
