@@ -76,6 +76,26 @@ SIFT detects blob-like features and computes a highly distinctive 128-dimensiona
 
 **SLAM Usage**: Structure-from-Motion, offline 3D reconstruction, loop closure
 
+### 4. TEBLID (Trained Binary Local Image Descriptor)
+
+**Type**: Binary descriptor (requires separate detector like FAST)
+
+TEBLID uses machine learning to select optimal binary tests, achieving better accuracy than hand-crafted binary descriptors like BRIEF/ORB.
+
+**How it works**:
+1. Use FAST or other detector for keypoints
+2. Extract patch around each keypoint
+3. Apply learned binary tests (boosting-selected)
+4. Output 256-bit or 512-bit binary descriptor
+
+**Characteristics**:
+- Binary descriptor - fast Hamming distance matching
+- Better accuracy than ORB's BRIEF descriptor
+- Approaches SIFT-like matching quality
+- Requires OpenCV contrib modules (xfeatures2d)
+
+**SLAM Usage**: Real-time SLAM where ORB accuracy is insufficient but SIFT is too slow
+
 ---
 
 ## Feature Matching
@@ -137,11 +157,18 @@ Demonstrates feature matching between image pairs using:
 - FLANN-based matching
 - Cross-check matching
 
+### 3. `feature_profiling.cpp`
+Comprehensive profiling comparing ORB, SIFT, and FAST+TEBLID using **easy_profiler**:
+- Detailed timing breakdown (Create, Detect, Compute, Match, Visualize)
+- Matching quality comparison
+- Saves profiling data to `feature_profiling.prof` (view with `profiler_gui`)
+- Generates visualization images for each method
+
 ---
 
 ## How to Build
 
-**Dependencies**: OpenCV 4.x (included in base image)
+**Dependencies**: OpenCV 4.x with contrib, easy_profiler (included in base image)
 
 ### Local Build
 
@@ -175,8 +202,12 @@ docker build . -t slam_zero_to_hero:2_3
 # Feature matching demo (uses synthetic images)
 ./build/feature_matching
 
+# Feature profiling (ORB vs SIFT vs FAST+TEBLID)
+./build/feature_profiling
+
 # With custom images (optional)
 ./build/feature_matching /path/to/image1.png /path/to/image2.png
+./build/feature_profiling /path/to/image1.png /path/to/image2.png
 ```
 
 ### Docker
@@ -191,6 +222,7 @@ docker run -it --rm \
 # Inside container
 ./feature_detection
 ./feature_matching
+./feature_profiling
 ```
 
 ---
@@ -248,11 +280,14 @@ After matching, use geometric verification:
 
 ## Performance Comparison
 
-| Feature | Detection Speed | Descriptor Size | Matching Speed | Distinctiveness |
-|---------|----------------|-----------------|----------------|-----------------|
-| FAST    | Very Fast      | N/A             | N/A            | Low             |
-| ORB     | Fast           | 32 bytes        | Fast (Hamming) | Medium          |
-| SIFT    | Slow           | 512 bytes       | Slower (L2)    | High            |
+| Feature      | Detection Speed | Descriptor Size | Matching Speed | Distinctiveness |
+|--------------|-----------------|-----------------|----------------|-----------------|
+| FAST         | Very Fast       | N/A             | N/A            | Low             |
+| ORB          | Fast            | 32 bytes        | Fast (Hamming) | Medium          |
+| FAST+TEBLID  | Fast            | 32 bytes        | Fast (Hamming) | Medium-High     |
+| SIFT         | Slow            | 512 bytes       | Slower (L2)    | High            |
+
+**Note**: FAST+TEBLID combines the speed of binary descriptors with improved matching accuracy, making it an excellent choice for real-time SLAM applications where ORB's accuracy is insufficient.
 
 ---
 
@@ -261,4 +296,6 @@ After matching, use geometric verification:
 - [ORB-SLAM Paper](https://arxiv.org/abs/1502.00956)
 - [SIFT Paper (Lowe, 2004)](https://www.cs.ubc.ca/~lowe/papers/ijcv04.pdf)
 - [FAST Paper](https://www.edwardrosten.com/work/fast.html)
+- [TEBLID Paper](https://arxiv.org/abs/2002.06271) - Boosted Local Image Descriptors
 - [OpenCV Feature Detection Tutorial](https://docs.opencv.org/4.x/db/d27/tutorial_py_table_of_contents_feature2d.html)
+- [OpenCV xfeatures2d (contrib)](https://docs.opencv.org/4.x/d2/dca/group__xfeatures2d.html)
