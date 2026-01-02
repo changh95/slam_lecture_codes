@@ -142,20 +142,45 @@ RUN apt-get install -y libtbb-dev &&\
     cd ../../
 
 # PoseLib (minimal pose estimation solvers)
+# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
 RUN git clone https://github.com/PoseLib/PoseLib.git &&\
     cd PoseLib &&\
     mkdir build && cd build &&\
-    cmake .. -DCMAKE_BUILD_TYPE=Release &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
     make -j16 &&\
     make install &&\
     ldconfig &&\
     cd ../../
 
 # OpenGV (geometric vision algorithms)
+# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
 RUN git clone https://github.com/laurentkneip/opengv.git &&\
     cd opengv &&\
     mkdir build && cd build &&\
-    cmake .. -DCMAKE_BUILD_TYPE=Release &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
+    make -j16 &&\
+    make install &&\
+    ldconfig &&\
+    cd ../../
+
+# RansacLib (header-only RANSAC library for education)
+# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
+RUN git clone https://github.com/tsattler/RansacLib.git &&\
+    cd RansacLib &&\
+    mkdir build && cd build &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
+    make -j16 &&\
+    make install &&\
+    ldconfig &&\
+    cd ../../
+
+# MAGSAC (state-of-the-art threshold-free robust estimation)
+# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
+RUN apt-get install -y libgflags-dev &&\
+    git clone https://github.com/danini/magsac.git --recursive &&\
+    cd magsac &&\
+    mkdir build && cd build &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCREATE_SAMPLE_PROJECT=OFF -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
     make -j16 &&\
     make install &&\
     ldconfig &&\
