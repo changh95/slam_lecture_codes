@@ -1,18 +1,17 @@
-# Homography and Bird's Eye View (BEV) Projection using OpenCV
+# Homography for Visual SLAM
 
-This tutorial covers homography estimation and its application to Bird's Eye View (BEV) projection - fundamental techniques in autonomous driving, augmented reality, and image stitching.
+This tutorial covers homography estimation and its applications in Visual SLAM - focusing on H/F model selection for SLAM initialization and image stitching for panorama creation.
 
 ---
 
 ## Overview
 
-A **homography** is a projective transformation that maps points from one plane to another. It's represented by a 3x3 matrix and is essential for:
+**Homography** is a projective transformation that maps points from one plane to another. In Visual SLAM, it's essential for:
 
-- **Image Stitching**: Aligning overlapping images for panoramas
-- **Augmented Reality**: Projecting virtual content onto planar surfaces
-- **Bird's Eye View**: Transforming road scenes for lane detection
-- **Document Scanning**: Rectifying perspective distortion
-- **Planar Object Tracking**: Following markers and patterns
+- **SLAM Initialization**: Deciding between planar (H) vs 3D (F) scene structure
+- **Image Stitching**: Creating panoramas from overlapping images
+- **AR Marker Tracking**: Estimating pose from planar fiducials
+- **Planar Surface Reconstruction**: Detecting and mapping planar structures
 
 ---
 
@@ -57,48 +56,38 @@ Where:
 
 ---
 
-## Types of Planar Transformations
+## Homography vs Essential/Fundamental Matrix
 
-```
-Euclidean ⊂ Similarity ⊂ Affine ⊂ Projective (Homography)
-```
-
-| Transform | DoF | Preserves | Matrix Form |
-|-----------|-----|-----------|-------------|
-| Euclidean | 3 | Distances, angles | [R, t; 0, 1] |
-| Similarity | 4 | Angles, ratios | [sR, t; 0, 1] |
-| Affine | 6 | Parallelism | [A, t; 0, 1] |
-| Projective | 8 | Lines | Full 3x3 |
+| Scenario | Use | Reason |
+|----------|-----|--------|
+| Planar scene | Homography | Exact transformation |
+| 3D scene | Essential/Fundamental | General epipolar geometry |
+| Pure rotation | Homography | E/F degenerate |
+| AR markers | Homography | Markers are planar |
+| SLAM initialization | Both | Compare models |
 
 ---
 
-## Bird's Eye View (BEV) Projection
+## H/F Model Selection (ORB-SLAM Style)
 
-### What is BEV?
+Modern SLAM systems compute both H and F in parallel and select based on score ratio:
 
-BEV transforms a camera's perspective view to a top-down view, as if looking from directly above.
+```cpp
+// Compute both models
+cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, mask_H);
+cv::Mat F = cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, 3.0, 0.99, mask_F);
 
-```
-Perspective View (Camera)          Bird's Eye View (Top-down)
-         _____                           _______
-        /     \                         |       |
-       /       \                        |       |
-      /    |    \                       |   |   |
-     /     |     \                      |   |   |
-    /______|______\                     |___|___|
-    (road appears                       (road appears
-     to converge)                        parallel)
-```
+// Compute errors
+double score_H = computeSymmetricTransferError(pts1, pts2, H, mask_H);
+double score_F = computeSampsonError(pts1, pts2, F, mask_F);
 
-### Inverse Perspective Mapping (IPM)
-
-IPM "inverts" the perspective projection by assuming the road is a flat plane:
-
-```
-Ground Plane Assumption:
-- Road is planar (Z = 0)
-- Camera height and pitch are known
-- Ground plane normal: n = [0, 1, 0]^T
+// Select model
+double ratio = score_H / (score_H + score_F);
+if (ratio > 0.45) {
+    // Planar scene - use homography initialization
+} else {
+    // 3D scene - use essential matrix initialization
+}
 ```
 
 ---
@@ -111,24 +100,27 @@ Ground Plane Assumption:
 ├── CMakeLists.txt
 ├── Dockerfile
 └── examples/
-    ├── homography_demo.cpp            # Homography estimation and decomposition
-    ├── homography_poselib.cpp         # 4-point homography using PoseLib
-    ├── bev_projection.cpp             # Bird's eye view transform
-    └── bev_lane_detection.cpp         # Lane detection from BEV
+    ├── homography_demo.cpp           # Homography estimation and decomposition
+    ├── hf_model_selection.cpp        # H/F model selection (OpenCV)
+    ├── hf_model_selection_poselib.cpp # H/F model selection (PoseLib)
+    ├── image_stitching.cpp           # Image stitching (OpenCV)
+    └── image_stitching_poselib.cpp   # Image stitching (PoseLib)
 ```
 
 ---
 
-## PoseLib Homography
+## Alternative Libraries: PoseLib
 
-[PoseLib](https://github.com/PoseLib/PoseLib) provides a minimal 4-point homography solver:
+In addition to OpenCV, this exercise includes examples using **PoseLib** for minimal solvers:
+
+### PoseLib Homography
 
 ```cpp
 #include <PoseLib/PoseLib.h>
 
 // 4-point homography solver (minimal)
-std::vector<Eigen::Vector3d> x1(pts1.begin(), pts1.begin() + 4);
-std::vector<Eigen::Vector3d> x2(pts2.begin(), pts2.begin() + 4);
+std::vector<Eigen::Vector3d> x1(bearings1.begin(), bearings1.begin() + 4);
+std::vector<Eigen::Vector3d> x2(bearings2.begin(), bearings2.begin() + 4);
 
 Eigen::Matrix3d H;
 int num_solutions = poselib::homography_4pt(x1, x2, &H);
@@ -140,8 +132,8 @@ int num_solutions = poselib::homography_4pt(x1, x2, &H);
 |---------|--------|---------|
 | Min points | 4 | 4 (minimal) |
 | RANSAC | Built-in | Separate |
-| Decomposition | decomposeHomographyMat | Manual |
-| Input | Pixel coords | Homogeneous (normalized) |
+| Input | Pixel coords | Bearing vectors |
+| Output | cv::Mat | Eigen::Matrix3d |
 
 ---
 
@@ -149,6 +141,8 @@ int num_solutions = poselib::homography_4pt(x1, x2, &H);
 
 ### Dependencies
 - OpenCV 4.x
+- Eigen3
+- PoseLib (optional)
 
 ### Local Build
 
@@ -171,17 +165,20 @@ docker build . -t slam_zero_to_hero:2_14
 ### Local
 
 ```bash
-# Homography estimation and decomposition (OpenCV)
+# Homography estimation and decomposition
 ./build/homography_demo
 
-# 4-point homography using PoseLib
-./build/homography_poselib
+# H/F model selection (OpenCV)
+./build/hf_model_selection
 
-# BEV projection
-./build/bev_projection [driving_image.jpg]
+# H/F model selection (PoseLib)
+./build/hf_model_selection_poselib
 
-# Lane detection from BEV
-./build/bev_lane_detection [driving_image.jpg]
+# Image stitching (OpenCV)
+./build/image_stitching [image1.jpg image2.jpg]
+
+# Image stitching (PoseLib)
+./build/image_stitching_poselib [image1.jpg image2.jpg]
 ```
 
 ### Docker
@@ -204,278 +201,149 @@ docker run -it --rm \
 #include <opencv2/opencv.hpp>
 #include <opencv2/calib3d.hpp>
 
-// Method 1: From 4+ point correspondences
-std::vector<cv::Point2f> src_points = {
-    {100, 100}, {400, 100}, {400, 300}, {100, 300}
-};
-std::vector<cv::Point2f> dst_points = {
-    {120, 80}, {380, 120}, {420, 280}, {80, 320}
-};
+// From point correspondences
+std::vector<cv::Point2f> pts1 = { ... };
+std::vector<cv::Point2f> pts2 = { ... };
 
-cv::Mat H = cv::findHomography(src_points, dst_points);
-std::cout << "Homography:\n" << H << std::endl;
+// DLT (no RANSAC)
+cv::Mat H_dlt = cv::findHomography(pts1, pts2, 0);
 
-// Method 2: With RANSAC for robustness
+// With RANSAC
 cv::Mat mask;
-cv::Mat H_ransac = cv::findHomography(src_points, dst_points, cv::RANSAC, 3.0, mask);
+cv::Mat H_ransac = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, mask);
 
-// Method 3: Exact 4-point solution
-cv::Mat H_exact = cv::getPerspectiveTransform(src_points, dst_points);
+// Exact 4-point solution
+cv::Mat H_exact = cv::getPerspectiveTransform(pts1, pts2);
 ```
 
-### 2. Applying Homography
+### 2. Symmetric Transfer Error
 
 ```cpp
-// Warp entire image
-cv::Mat warped;
-cv::warpPerspective(src_image, warped, H, cv::Size(800, 600));
+double computeSymmetricTransferError(
+    const std::vector<cv::Point2f>& pts1,
+    const std::vector<cv::Point2f>& pts2,
+    const cv::Mat& H) {
 
-// Transform individual points
-std::vector<cv::Point2f> points_in = {{100, 100}, {200, 150}};
-std::vector<cv::Point2f> points_out;
-cv::perspectiveTransform(points_in, points_out, H);
+    cv::Mat H_inv = H.inv();
+    double total_error = 0;
+
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        // Forward: pts1 -> pts2
+        cv::Mat p1 = (cv::Mat_<double>(3,1) << pts1[i].x, pts1[i].y, 1.0);
+        cv::Mat p2_proj = H * p1;
+        p2_proj /= p2_proj.at<double>(2);
+
+        double e_fwd = std::pow(p2_proj.at<double>(0) - pts2[i].x, 2) +
+                       std::pow(p2_proj.at<double>(1) - pts2[i].y, 2);
+
+        // Backward: pts2 -> pts1
+        cv::Mat p2 = (cv::Mat_<double>(3,1) << pts2[i].x, pts2[i].y, 1.0);
+        cv::Mat p1_proj = H_inv * p2;
+        p1_proj /= p1_proj.at<double>(2);
+
+        double e_bwd = std::pow(p1_proj.at<double>(0) - pts1[i].x, 2) +
+                       std::pow(p1_proj.at<double>(1) - pts1[i].y, 2);
+
+        total_error += e_fwd + e_bwd;
+    }
+
+    return total_error / pts1.size();
+}
 ```
 
-### 3. Bird's Eye View Projection
+### 3. Sampson Error (for Fundamental Matrix)
 
 ```cpp
-// Define trapezoidal ROI on road (perspective view)
-std::vector<cv::Point2f> src_pts = {
-    {200, 720},   // bottom-left
-    {595, 450},   // top-left
-    {685, 450},   // top-right
-    {1080, 720}   // bottom-right
-};
+double computeSampsonError(
+    const std::vector<cv::Point2f>& pts1,
+    const std::vector<cv::Point2f>& pts2,
+    const cv::Mat& F) {
 
-// Define rectangular destination (BEV)
-std::vector<cv::Point2f> dst_pts = {
-    {300, 720},   // bottom-left
-    {300, 0},     // top-left
-    {980, 0},     // top-right
-    {980, 720}    // bottom-right
-};
+    double total_error = 0;
 
-// Compute homography
-cv::Mat H = cv::getPerspectiveTransform(src_pts, dst_pts);
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        cv::Mat x1 = (cv::Mat_<double>(3,1) << pts1[i].x, pts1[i].y, 1.0);
+        cv::Mat x2 = (cv::Mat_<double>(3,1) << pts2[i].x, pts2[i].y, 1.0);
 
-// Apply transformation
-cv::Mat bev_image;
-cv::warpPerspective(input_image, bev_image, H, input_image.size());
+        cv::Mat Fx1 = F * x1;
+        cv::Mat Ftx2 = F.t() * x2;
+        double x2tFx1 = x2.dot(Fx1);
 
-// Compute inverse for mapping back
-cv::Mat H_inv = cv::getPerspectiveTransform(dst_pts, src_pts);
+        double error = (x2tFx1 * x2tFx1) /
+                       (Fx1.at<double>(0)*Fx1.at<double>(0) +
+                        Fx1.at<double>(1)*Fx1.at<double>(1) +
+                        Ftx2.at<double>(0)*Ftx2.at<double>(0) +
+                        Ftx2.at<double>(1)*Ftx2.at<double>(1));
+
+        total_error += error;
+    }
+
+    return total_error / pts1.size();
+}
 ```
 
-### 4. Homography from Features
+### 4. Homography Decomposition
 
 ```cpp
-// Detect and match features
+// Camera intrinsics
+cv::Mat K = (cv::Mat_<double>(3,3) <<
+    fx, 0, cx,
+    0, fy, cy,
+    0, 0, 1);
+
+// Decompose homography
+std::vector<cv::Mat> Rs, ts, normals;
+int num_solutions = cv::decomposeHomographyMat(H, K, Rs, ts, normals);
+
+// Select valid solution (normal pointing toward camera)
+for (int i = 0; i < num_solutions; ++i) {
+    if (normals[i].at<double>(2) > 0) {
+        // This solution is physically valid
+        cv::Mat R = Rs[i];
+        cv::Mat t = ts[i];
+        cv::Mat n = normals[i];
+    }
+}
+```
+
+### 5. Image Stitching
+
+```cpp
+// Detect features
 cv::Ptr<cv::ORB> orb = cv::ORB::create(2000);
 std::vector<cv::KeyPoint> kp1, kp2;
 cv::Mat desc1, desc2;
 orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
 orb->detectAndCompute(img2, cv::noArray(), kp2, desc2);
 
+// Match features
 cv::BFMatcher matcher(cv::NORM_HAMMING);
-std::vector<cv::DMatch> matches;
-matcher.match(desc1, desc2, matches);
+std::vector<std::vector<cv::DMatch>> knn_matches;
+matcher.knnMatch(desc1, desc2, knn_matches, 2);
 
-// Extract points
+// Ratio test
 std::vector<cv::Point2f> pts1, pts2;
-for (const auto& m : matches) {
-    pts1.push_back(kp1[m.queryIdx].pt);
-    pts2.push_back(kp2[m.trainIdx].pt);
+for (const auto& m : knn_matches) {
+    if (m[0].distance < 0.75f * m[1].distance) {
+        pts1.push_back(kp1[m[0].queryIdx].pt);
+        pts2.push_back(kp2[m[0].trainIdx].pt);
+    }
 }
 
-// Estimate homography with RANSAC
-cv::Mat mask;
-cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, mask);
-
-// Count inliers
-int inliers = cv::countNonZero(mask);
-std::cout << "Inliers: " << inliers << "/" << pts1.size() << std::endl;
-```
-
-### 5. Homography Decomposition
-
-```cpp
-// Camera intrinsics
-cv::Mat K = (cv::Mat_<double>(3,3) <<
-    718.856, 0, 607.19,
-    0, 718.856, 185.22,
-    0, 0, 1);
-
-// Decompose homography
-std::vector<cv::Mat> rotations, translations, normals;
-int solutions = cv::decomposeHomographyMat(H, K, rotations, translations, normals);
-
-std::cout << "Number of solutions: " << solutions << std::endl;
-for (int i = 0; i < solutions; i++) {
-    std::cout << "Solution " << i << ":\n";
-    std::cout << "  R:\n" << rotations[i] << std::endl;
-    std::cout << "  t: " << translations[i].t() << std::endl;
-    std::cout << "  n: " << normals[i].t() << std::endl;
-}
-```
-
-### 6. Image Stitching (Panorama)
-
-```cpp
-// Compute homography from image2 to image1
+// Compute homography (img2 -> img1)
 cv::Mat H = cv::findHomography(pts2, pts1, cv::RANSAC, 3.0);
 
-// Determine output size
-std::vector<cv::Point2f> corners = {
-    {0, 0}, {(float)img2.cols, 0},
-    {(float)img2.cols, (float)img2.rows}, {0, (float)img2.rows}
-};
-std::vector<cv::Point2f> corners_warped;
-cv::perspectiveTransform(corners, corners_warped, H);
-
-// Find bounding box
-cv::Rect2f bounds = cv::boundingRect(corners_warped);
-int width = std::max(img1.cols, (int)(bounds.x + bounds.width));
-int height = std::max(img1.rows, (int)(bounds.y + bounds.height));
-
-// Warp image2 and blend
-cv::Mat result = cv::Mat::zeros(height, width, img1.type());
-img1.copyTo(result(cv::Rect(0, 0, img1.cols, img1.rows)));
-
-cv::Mat warped;
-cv::warpPerspective(img2, warped, H, cv::Size(width, height));
-
-// Simple blending (can use more sophisticated methods)
-cv::Mat mask = (warped != 0);
-warped.copyTo(result, mask);
+// Warp and blend
+cv::Mat panorama;
+cv::warpPerspective(img2, panorama, H, cv::Size(img1.cols + img2.cols, img1.rows));
+img1.copyTo(panorama(cv::Rect(0, 0, img1.cols, img1.rows)));
 ```
-
----
-
-## Homography vs Fundamental Matrix
-
-When should you use homography vs fundamental matrix?
-
-| Scenario | Use | Reason |
-|----------|-----|--------|
-| Planar scene | Homography | Exact transformation |
-| 3D scene | Fundamental Matrix | General epipolar geometry |
-| Pure rotation | Homography | F is degenerate |
-| AR on markers | Homography | Markers are planar |
-| SLAM initialization | Both | Compare models |
-
-### Model Selection (like ORB-SLAM)
-
-```cpp
-// Compute both models in parallel
-cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, mask_H);
-cv::Mat F = cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, 3.0, 0.99, mask_F);
-
-// Compute reprojection errors
-double score_H = computeSymmetricTransferError(pts1, pts2, H, mask_H);
-double score_F = computeEpipolarError(pts1, pts2, F, mask_F);
-
-// Select model
-double ratio = score_H / (score_H + score_F);
-if (ratio > 0.45) {
-    // Planar scene - use homography
-    // Initialize from homography decomposition
-} else {
-    // 3D scene - use essential matrix
-    // Initialize from E decomposition
-}
-```
-
----
-
-## BEV Applications in Autonomous Driving
-
-### 1. Lane Detection
-
-```
-Perspective View         BEV
-    \_____/         |_____|_____|
-     \   /          |     |     |
-      \_/           |     |     |
-
-Curved lanes appear   Lanes are parallel
-to converge           and easier to detect
-```
-
-### 2. Path Planning
-
-- Distances are metric in BEV (if calibrated)
-- Easier to plan trajectories
-- Direct interface with LiDAR-based maps
-
-### 3. Parking Assistance
-
-- Accurate space measurement
-- Easy visualization for drivers
-- Simple geometric calculations
-
----
-
-## BEV in Modern SLAM Systems
-
-Many modern perception systems use BEV representations:
-
-| System | Description |
-|--------|-------------|
-| **Tesla FSD** | Multi-camera BEV fusion |
-| **BEVFormer** | Transformer-based BEV generation |
-| **HDMapNet** | BEV for HD map construction |
-| **LSS (Lift-Splat-Shoot)** | Learned depth + BEV projection |
-
----
-
-## Calibration for Accurate BEV
-
-For accurate metric BEV, you need:
-
-1. **Camera intrinsics** (fx, fy, cx, cy)
-2. **Camera extrinsics** (height h, pitch θ, roll φ, yaw ψ)
-3. **Ground plane model** (assumed flat or measured)
-
-```cpp
-// Compute homography from camera parameters
-cv::Mat computeIPM_Homography(double h, double theta,
-                               double fx, double fy,
-                               double cx, double cy,
-                               double output_scale) {
-    // Rotation matrix for camera pitch
-    cv::Mat R = (cv::Mat_<double>(3,3) <<
-        1, 0, 0,
-        0, cos(theta), -sin(theta),
-        0, sin(theta), cos(theta));
-
-    // Homography for ground plane at height h
-    // ... (full derivation in code)
-
-    return H;
-}
-```
-
----
-
-## Common Issues
-
-### 1. Inaccurate BEV near Image Edges
-- **Cause**: Large perspective distortion
-- **Solution**: Use narrower FOV or crop edges
-
-### 2. Objects Appear Stretched
-- **Cause**: Non-planar objects (cars, pedestrians)
-- **Solution**: Only use BEV for ground plane features
-
-### 3. Wrong Scale
-- **Cause**: Incorrect camera height calibration
-- **Solution**: Verify extrinsic calibration
 
 ---
 
 ## References
 
 - Hartley & Zisserman, "Multiple View Geometry", Chapter 4
-- [OpenCV getPerspectiveTransform](https://docs.opencv.org/4.x/da/d54/group__imgproc__transform.html)
+- Mur-Artal et al., "ORB-SLAM: A Versatile and Accurate Monocular SLAM System"
 - [OpenCV findHomography](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html)
-- Bertozzi & Broggi, "GOLD: A Parallel Real-Time Stereo Vision System for Generic Obstacle and Lane Detection"
+- [PoseLib](https://github.com/PoseLib/PoseLib)

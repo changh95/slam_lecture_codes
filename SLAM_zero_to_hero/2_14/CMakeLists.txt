@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(homography_bev LANGUAGES CXX)
+project(homography_vslam LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,46 +31,68 @@ find_package(PoseLib QUIET)
 if(PoseLib_FOUND)
     message(STATUS "PoseLib found")
 else()
-    message(STATUS "PoseLib not found - homography_poselib will not be built")
+    message(STATUS "PoseLib not found - PoseLib examples will not be built")
 endif()
 
-# Homography Estimation Demo
+# =============================================================================
+# OpenCV Examples
+# =============================================================================
+
+# Homography Demo (basic estimation and decomposition)
 add_executable(homography_demo examples/homography_demo.cpp)
 target_link_libraries(homography_demo ${OpenCV_LIBS})
 
-# BEV Projection (Inverse Perspective Mapping)
-add_executable(bev_projection examples/bev_projection.cpp)
-target_link_libraries(bev_projection ${OpenCV_LIBS})
+# H/F Model Selection (ORB-SLAM style)
+add_executable(hf_model_selection examples/hf_model_selection.cpp)
+target_link_libraries(hf_model_selection ${OpenCV_LIBS})
 
-# Lane Detection from BEV
-add_executable(bev_lane_detection examples/bev_lane_detection.cpp)
-target_link_libraries(bev_lane_detection ${OpenCV_LIBS})
+# Image Stitching (panorama)
+add_executable(image_stitching examples/image_stitching.cpp)
+target_link_libraries(image_stitching ${OpenCV_LIBS})
 
-# PoseLib Homography Demo
+# =============================================================================
+# PoseLib Examples
+# =============================================================================
+
 if(PoseLib_FOUND)
-    add_executable(homography_poselib examples/homography_poselib.cpp)
-    target_link_libraries(homography_poselib
+    # H/F Model Selection with PoseLib
+    add_executable(hf_model_selection_poselib examples/hf_model_selection_poselib.cpp)
+    target_link_libraries(hf_model_selection_poselib
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        PoseLib::PoseLib
+    )
+
+    # Image Stitching with PoseLib
+    add_executable(image_stitching_poselib examples/image_stitching_poselib.cpp)
+    target_link_libraries(image_stitching_poselib
         ${OpenCV_LIBS}
         Eigen3::Eigen
         PoseLib::PoseLib
     )
 endif()
 
-# Print build summary
+# =============================================================================
+# Build Summary
+# =============================================================================
+
 message(STATUS "")
-message(STATUS "=== Homography and BEV Projection Tutorial ===")
+message(STATUS "=== Homography for Visual SLAM ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "")
-message(STATUS "Executables:")
-message(STATUS "  homography_demo     - Homography estimation and decomposition")
-message(STATUS "  bev_projection      - Bird's Eye View (IPM) transformation")
-message(STATUS "  bev_lane_detection  - Lane detection from BEV")
+message(STATUS "OpenCV Executables:")
+message(STATUS "  homography_demo      - Homography estimation and decomposition")
+message(STATUS "  hf_model_selection   - H/F model selection (ORB-SLAM style)")
+message(STATUS "  image_stitching      - Image stitching / panorama")
 if(PoseLib_FOUND)
-    message(STATUS "  homography_poselib  - 4-point homography using PoseLib")
+    message(STATUS "")
+    message(STATUS "PoseLib Executables:")
+    message(STATUS "  hf_model_selection_poselib  - H/F model selection with PoseLib")
+    message(STATUS "  image_stitching_poselib     - Image stitching with PoseLib")
 endif()
 message(STATUS "")
 message(STATUS "Usage:")
 message(STATUS "  ./homography_demo")
-message(STATUS "  ./bev_projection [input_image]")
-message(STATUS "  ./bev_lane_detection [input_image]")
+message(STATUS "  ./hf_model_selection")
+message(STATUS "  ./image_stitching [img1.jpg img2.jpg]")
 message(STATUS "")
