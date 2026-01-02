@@ -63,8 +63,8 @@ echo "xhost +local:docker" >> ~/.profile
   - 1.25 LiDAR basics
   - 1.26 IMU basics
   - 1.27 Radar basics
-  - 1.28 Forward/Inverse kinematics
-  - 1.29 Sensor calibration
+  - 1.28 [Forward/Inverse kinematics](1_28)
+  - 1.29 [Sensor calibration](1_29)
   - 1.30 [Kalibr package hands-on](1_30)
 - Chapter 2: Dive into SLAM (Front-end)
   - 2.1 Part 2 introduction
@@ -115,15 +115,16 @@ echo "xhost +local:docker" >> ~/.profile
   - 3.14 [GTSAM hands-on](3_14)
   - 3.15 [Ceres-solver hands-on](3_15)
   - 3.16 [SymForce hands-on](3_16)
-  - 3.17 SLAM systems
-  - 3.18 Various map representations
-  - 3.19 VSLAM system architecture
-  - 3.20 LiDAR SLAM system architecture
-  - 3.21 RADAR SLAM system architecture
-  - 3.22 Event SLAM system architecture
-  - 3.23 Inertial odometry basics
-  - 3.24 Leg odometry basics
-  - 3.25 Sensor fusion
+  - 3.17 [Kimera-RPGO hands-on](3_17)
+  - 3.18 SLAM systems
+  - 3.19 Various map representations
+  - 3.20 VSLAM system architecture
+  - 3.21 LiDAR SLAM system architecture
+  - 3.22 RADAR SLAM system architecture
+  - 3.23 Event SLAM system architecture
+  - 3.24 Inertial odometry basics
+  - 3.25 Leg odometry basics
+  - 3.26 Sensor fusion
 - Chapter 4: Classical SLAM
   - 4.1 Part 4 introduction
   - 4.2 Feature-based VSLAM
