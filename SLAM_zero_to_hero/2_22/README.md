@@ -131,6 +131,81 @@ docker build . -t slam_zero_to_hero:2_22
 
 ---
 
+## Additional RANSAC Libraries
+
+This exercise also includes examples using external RANSAC libraries that provide additional features beyond OpenCV's USAC:
+
+### RansacLib
+
+[RansacLib](https://github.com/tsattler/RansacLib) is a header-only C++ library implementing RANSAC and its variants with a clean, template-based design.
+
+**Key Features:**
+- Template-based design for flexibility
+- Clear separation of Solver, Sampler, and Estimator
+- LO-MSAC (Locally Optimized MSAC) for better accuracy
+- Header-only, easy to integrate
+
+**Example:**
+```cpp
+#include <RansacLib/ransac.h>
+
+// Define custom solver implementing RansacLib interface
+class FundamentalMatrixSolver {
+public:
+    int min_sample_size() const { return 8; }
+    int MinimalSolver(const std::vector<int>& sample, ModelVector* models) const;
+    double EvaluateModelOnPoint(const Model& model, int i) const;
+    // ...
+};
+
+// Configure and run
+ransac_lib::LORansacOptions options;
+options.squared_inlier_threshold_ = threshold * threshold;
+
+ransac_lib::LocallyOptimizedMSAC<Model, ModelVector, Solver> lomsac;
+int inliers = lomsac.EstimateModel(options, solver, &model, &stats);
+```
+
+### MAGSAC / MAGSAC++
+
+[MAGSAC](https://github.com/danini/magsac) is a state-of-the-art robust estimation algorithm that provides threshold-free estimation.
+
+**Key Features:**
+- **Threshold-free**: Marginalizes over noise scale sigma
+- **Sigma-scoring**: Probabilistic scoring instead of binary inlier/outlier
+- **Progressive NAPSAC sampling**: Spatially-aware sampling
+- **MAGSAC++** (2020) is faster than original MAGSAC (2019)
+
+**Example:**
+```cpp
+#include "magsac.h"
+#include "estimators.h"
+#include "samplers/progressive_napsac_sampler.h"
+
+// Create estimator and sampler
+magsac::utils::DefaultFundamentalMatrixEstimator estimator(maxThreshold);
+gcransac::sampler::ProgressiveNapsacSampler<4> sampler(&points, {16, 8, 4, 2},
+    estimator.sampleSize(), {imgW, imgH, imgW, imgH}, 0.5);
+
+// Create MAGSAC++ instance
+MAGSAC<cv::Mat, magsac::utils::DefaultFundamentalMatrixEstimator> magsac(
+    MAGSAC<...>::MAGSAC_PLUS_PLUS);
+magsac.setMaximumThreshold(maxThreshold);
+
+// Run estimation
+magsac.run(points, confidence, estimator, sampler, model, iterations, score);
+```
+
+### Library Comparison
+
+| Library | Type | Key Feature | Use Case |
+|---------|------|-------------|----------|
+| OpenCV USAC | Built-in | All-in-one flags | Quick prototyping |
+| RansacLib | Educational | Template design | Learning RANSAC |
+| MAGSAC/MAGSAC++ | SOTA 2020 | Threshold-free | Production |
+
+---
+
 ## Examples
 
 ### 1. Homography Estimation with RANSAC
@@ -164,10 +239,16 @@ Learn RANSAC internals by implementing it from scratch for line fitting and homo
 ## Running Examples
 
 ```bash
-# Run all examples
+# OpenCV USAC examples
 ./ransac_homography
 ./ransac_fundamental
 ./ransac_custom
+
+# RansacLib example (template-based RANSAC)
+./ransac_ransaclib
+
+# MAGSAC++ example (threshold-free estimation)
+./ransac_magsac
 
 # With Docker
 docker run -it --rm slam_zero_to_hero:2_22
@@ -229,6 +310,9 @@ Formula: `N = log(1 - p) / log(1 - (1 - e)^s)`
 
 - [OpenCV RANSAC Tutorial](https://docs.opencv.org/4.x/d1/de0/tutorial_homography.html)
 - [USAC Paper](https://cmp.felk.cvut.cz/~mishMDES/papers/Mishkin-IJCV2022.pdf)
-- [MAGSAC Paper](https://arxiv.org/abs/1803.07469)
+- [MAGSAC Paper (CVPR 2019)](https://arxiv.org/abs/1803.07469)
+- [MAGSAC++ Paper (CVPR 2020)](https://arxiv.org/abs/1912.05909)
 - [PROSAC Paper](https://www.cv-foundation.org/openaccess/content_cvpr_2005/papers/Chum_Matching_with_PROSAC_2005_CVPR_paper.pdf)
 - [OpenCV UsacParams Documentation](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html)
+- [RansacLib GitHub](https://github.com/tsattler/RansacLib)
+- [MAGSAC GitHub](https://github.com/danini/magsac)

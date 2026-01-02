@@ -39,6 +39,42 @@ target_link_libraries(ransac_fundamental ${OpenCV_LIBS})
 add_executable(ransac_custom examples/ransac_custom.cpp)
 target_link_libraries(ransac_custom ${OpenCV_LIBS})
 
+# Find Eigen (needed for RansacLib and MAGSAC)
+find_package(Eigen3 QUIET)
+if(Eigen3_FOUND)
+    message(STATUS "Found Eigen3: ${EIGEN3_INCLUDE_DIR}")
+endif()
+
+# RansacLib (header-only RANSAC library)
+find_path(RANSACLIB_INCLUDE_DIR RansacLib/ransac.h
+    HINTS /usr/local/include ${CMAKE_INSTALL_PREFIX}/include)
+if(RANSACLIB_INCLUDE_DIR AND Eigen3_FOUND)
+    message(STATUS "Found RansacLib: ${RANSACLIB_INCLUDE_DIR}")
+    add_executable(ransac_ransaclib examples/ransac_ransaclib.cpp)
+    target_include_directories(ransac_ransaclib PRIVATE ${RANSACLIB_INCLUDE_DIR})
+    target_link_libraries(ransac_ransaclib ${OpenCV_LIBS} Eigen3::Eigen)
+else()
+    message(STATUS "RansacLib not found, skipping ransac_ransaclib")
+endif()
+
+# MAGSAC (state-of-the-art threshold-free robust estimation)
+find_path(MAGSAC_INCLUDE_DIR magsac.h
+    HINTS /usr/local/include ${CMAKE_INSTALL_PREFIX}/include
+    PATH_SUFFIXES pymagsac/include)
+find_library(GCRANSAC_LIBRARY NAMES graph_cut_ransac gcransac
+    HINTS /usr/local/lib ${CMAKE_INSTALL_PREFIX}/lib)
+if(MAGSAC_INCLUDE_DIR AND Eigen3_FOUND)
+    message(STATUS "Found MAGSAC: ${MAGSAC_INCLUDE_DIR}")
+    add_executable(ransac_magsac examples/ransac_magsac.cpp)
+    target_include_directories(ransac_magsac PRIVATE ${MAGSAC_INCLUDE_DIR})
+    target_link_libraries(ransac_magsac ${OpenCV_LIBS} Eigen3::Eigen)
+    if(GCRANSAC_LIBRARY)
+        target_link_libraries(ransac_magsac ${GCRANSAC_LIBRARY})
+    endif()
+else()
+    message(STATUS "MAGSAC not found, skipping ransac_magsac")
+endif()
+
 # Install targets (optional)
 install(TARGETS ransac_homography ransac_fundamental ransac_custom
         RUNTIME DESTINATION bin)
