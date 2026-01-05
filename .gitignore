@@ -2,3 +2,4 @@
 cmake-build-*
 .DS_Store
 lecture_scripts/
+slam_lecture_subtitles/
