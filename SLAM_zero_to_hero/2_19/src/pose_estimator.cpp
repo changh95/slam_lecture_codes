@@ -232,10 +232,18 @@ void processFrame(cv::Mat& image, cv::aruco::ArucoDetector& detector,
         // Draw detected markers
         cv::aruco::drawDetectedMarkers(image, markerCorners, markerIds);
 
-        // Estimate pose for each marker
-        std::vector<cv::Vec3d> rvecs, tvecs;
-        cv::aruco::estimatePoseSingleMarkers(markerCorners, markerSize,
-                                             cameraMatrix, distCoeffs, rvecs, tvecs);
+        // Estimate pose for each marker using solvePnP (estimatePoseSingleMarkers removed in OpenCV 4.8+)
+        float half = markerSize / 2.0f;
+        std::vector<cv::Point3f> objPoints = {
+            {-half,  half, 0.0f},
+            { half,  half, 0.0f},
+            { half, -half, 0.0f},
+            {-half, -half, 0.0f}
+        };
+        std::vector<cv::Vec3d> rvecs(markerCorners.size()), tvecs(markerCorners.size());
+        for (size_t i = 0; i < markerCorners.size(); i++) {
+            cv::solvePnP(objPoints, markerCorners[i], cameraMatrix, distCoeffs, rvecs[i], tvecs[i]);
+        }
 
         // Process each detected marker
         for (size_t i = 0; i < markerIds.size(); i++) {

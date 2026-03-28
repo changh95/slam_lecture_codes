@@ -239,9 +239,28 @@ public:
 
         std::vector<cv::Mat> rvecs, tvecs;
 
-        // Run calibration
-        reprojectionError_ = cv::aruco::calibrateCameraCharuco(
-            allCharucoCorners_, allCharucoIds_, *board_, imageSize_,
+        // Build object/image point arrays using matchImagePoints (OpenCV 4.12+)
+        std::vector<std::vector<cv::Point3f>> allObjPoints;
+        std::vector<std::vector<cv::Point2f>> allImgPoints;
+        for (size_t i = 0; i < allCharucoCorners_.size(); ++i) {
+            std::vector<cv::Point3f> objPoints;
+            std::vector<cv::Point2f> imgPoints;
+            board_->matchImagePoints(allCharucoCorners_[i], allCharucoIds_[i],
+                                     objPoints, imgPoints);
+            if (objPoints.size() >= 4) {
+                allObjPoints.push_back(objPoints);
+                allImgPoints.push_back(imgPoints);
+            }
+        }
+
+        if (allObjPoints.size() < 5) {
+            std::cerr << "Error: Not enough valid frames after matching\n";
+            return false;
+        }
+
+        // Run calibration using standard cv::calibrateCamera
+        reprojectionError_ = cv::calibrateCamera(
+            allObjPoints, allImgPoints, imageSize_,
             cameraMatrix_, distCoeffs_, rvecs, tvecs,
             cv::CALIB_FIX_ASPECT_RATIO
         );
