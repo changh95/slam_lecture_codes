@@ -50,31 +50,31 @@ RUN wget https://github.com/opencv/opencv/archive/refs/tags/4.12.0.zip &&\
     make install &&\
     cd ../../
 
-# Eigen
-RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.zip &&\
-    unzip eigen-5.0.0.zip &&\
-    cd eigen-5.0.0 &&\
+# Eigen 3.4.1
+RUN wget https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.zip &&\
+    unzip eigen-3.4.1.zip &&\
+    cd eigen-3.4.1 &&\
     mkdir build && cd build &&\
     cmake .. &&\
     make -j16 &&\
     make install &&\
     cd ../../
 
-# Ceres-solver [Use the latest branch, as latest release (2.2.0) does not support Eigen 5.0.0]
+# Ceres-solver
 RUN apt-get install -y libgoogle-glog-dev libgflags-dev libatlas-base-dev libsuitesparse-dev &&\
-    git clone https://github.com/ceres-solver/ceres-solver.git --recursive &&\
-    cd ceres-solver && \
+    wget https://github.com/ceres-solver/ceres-solver/archive/refs/tags/2.2.0.zip &&\
+    unzip 2.2.0.zip &&\
+    cd ceres-solver-2.2.0 &&\
     mkdir build && cd build &&\
     cmake .. &&\
     make -j16 &&\
     make install &&\
     cd ../../
 
-# Sophus [EDIT: Remove 3.4.0 dependency to enable build with Eigen 5.0.0]
+# Sophus
 RUN wget https://github.com/strasdat/Sophus/archive/refs/tags/1.24.6.zip &&\
     unzip 1.24.6.zip &&\
     cd Sophus-1.24.6 &&\
-    sed -i 's/find_package(Eigen3 3.4.0/find_package(Eigen3/g' CMakeLists.txt &&\
     mkdir build && cd build &&\
     cmake .. &&\
     make -j16 &&\
@@ -101,7 +101,7 @@ RUN wget https://github.com/stevenlovegrove/Pangolin/archive/refs/tags/v0.9.4.zi
     make -j16 &&\
     make install &&\
     cd ../../
-    
+
 # MPI (required by VTK for PCL visualization)
 RUN apt-get install -y libopenmpi-dev
 
@@ -119,7 +119,7 @@ RUN apt-get install -y qtbase5-dev libqt5widgets5 &&\
     ldconfig &&\
     cd ../../
 
-# g2o [Use latest main branch for Eigen 5.0.0 support]
+# g2o
 RUN git clone https://github.com/RainerKuemmerle/g2o.git &&\
     cd g2o &&\
     mkdir build && cd build &&\
@@ -128,59 +128,47 @@ RUN git clone https://github.com/RainerKuemmerle/g2o.git &&\
     make install &&\
     cd ../../
 
-# GTSAM [Use 4.3a1 for Eigen 5.0.0 support]
-# Patch: Add missing #include <cassert> in SL4.cpp
-# Disable warnings-as-errors for Eigen 5.0.0 compatibility (uninitialized variable warnings)
+# GTSAM
 RUN apt-get install -y libtbb-dev &&\
     git clone https://github.com/borglab/gtsam.git -b 4.3a1 &&\
     cd gtsam &&\
-    sed -i '1i #include <cassert>' gtsam/geometry/SL4.cpp &&\
     mkdir build && cd build &&\
-    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized" &&\
+    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON &&\
     make -j16 &&\
     make install &&\
     cd ../../
 
 # PoseLib (minimal pose estimation solvers)
-# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
 RUN git clone https://github.com/PoseLib/PoseLib.git &&\
     cd PoseLib &&\
     mkdir build && cd build &&\
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release &&\
     make -j16 &&\
     make install &&\
     ldconfig &&\
     cd ../../
 
 # OpenGV (geometric vision algorithms)
-# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
 RUN git clone https://github.com/laurentkneip/opengv.git &&\
     cd opengv &&\
     mkdir build && cd build &&\
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release &&\
     make -j16 &&\
     make install &&\
     ldconfig &&\
     cd ../../
 
 # RansacLib (header-only RANSAC library for education)
-# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
+# Examples/bindings are incompatible with modern PoseLib + Ceres APIs, install headers only
 RUN git clone https://github.com/tsattler/RansacLib.git &&\
-    cd RansacLib &&\
-    mkdir build && cd build &&\
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
-    make -j16 &&\
-    make install &&\
-    ldconfig &&\
-    cd ../../
+    cp -r RansacLib/RansacLib /usr/local/include/RansacLib
 
 # MAGSAC (state-of-the-art threshold-free robust estimation)
-# Note: Explicitly set Eigen3_DIR for Eigen 5.0.0 compatibility
 RUN apt-get install -y libgflags-dev &&\
     git clone https://github.com/danini/magsac.git --recursive &&\
     cd magsac &&\
     mkdir build && cd build &&\
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DCREATE_SAMPLE_PROJECT=OFF -DEigen3_DIR=/usr/local/share/eigen3/cmake &&\
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCREATE_SAMPLE_PROJECT=OFF &&\
     make -j16 &&\
     make install &&\
     ldconfig &&\
