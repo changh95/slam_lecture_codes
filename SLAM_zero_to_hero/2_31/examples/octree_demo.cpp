@@ -256,17 +256,17 @@ int main(int argc, char* argv[]) {
 
     int voxel_count = 0;
     for (auto it = octree.begin(); it != octree.end(); ++it) {
-        if (octree.isVoxelOccupiedAtPoint(it.getCurrentOctreeKey())) {
-            pcl::PointXYZ voxel_center;
-            octree.getVoxelBounds(it, voxel_center.x, voxel_center.y, voxel_center.z);
+        // Iterating over leaf nodes gives us occupied voxels directly
+        Eigen::Vector3f min_pt, max_pt;
+        octree.getVoxelBounds(it, min_pt, max_pt);
+        Eigen::Vector3f voxel_center_vec = (min_pt + max_pt) / 2.0f;
 
-            if (voxel_count < 10) {
-                std::cout << "  Voxel " << voxel_count << ": center approximately at ("
-                          << voxel_center.x << ", " << voxel_center.y << ", " << voxel_center.z << ")"
-                          << std::endl;
-            }
-            voxel_count++;
+        if (voxel_count < 10) {
+            std::cout << "  Voxel " << voxel_count << ": center approximately at ("
+                      << voxel_center_vec.x() << ", " << voxel_center_vec.y() << ", " << voxel_center_vec.z() << ")"
+                      << std::endl;
         }
+        voxel_count++;
     }
     std::cout << "  Total occupied voxels: " << octree.getLeafCount() << std::endl;
     std::cout << std::endl;

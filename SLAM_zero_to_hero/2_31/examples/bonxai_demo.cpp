@@ -114,13 +114,13 @@ public:
         double dz = ez - oz;
         double length = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-        if (length < grid_.resolution()) return;
+        if (length < grid_.voxelSize()) return;
 
         dx /= length;
         dy /= length;
         dz /= length;
 
-        for (double t = 0; t < length - grid_.resolution(); t += grid_.resolution()) {
+        for (double t = 0; t < length - grid_.voxelSize(); t += grid_.voxelSize()) {
             updateFree(ox + t*dx, oy + t*dy, oz + t*dz);
         }
     }
@@ -148,7 +148,7 @@ public:
         return count;
     }
 
-    double resolution() const { return grid_.resolution(); }
+    double resolution() const { return grid_.voxelSize(); }
 
     Bonxai::VoxelGrid<ProbabilisticVoxel>& grid() { return grid_; }
     const Bonxai::VoxelGrid<ProbabilisticVoxel>& grid() const { return grid_; }
