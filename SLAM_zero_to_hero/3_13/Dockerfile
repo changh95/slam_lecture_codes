@@ -3,10 +3,16 @@ FROM slam:base
 WORKDIR /workspace
 COPY . /workspace/3_13
 
-# Fix VTK MPI dependency and install fmt library
+# Fix spdlog/fmt version mismatch: system libspdlog.a was compiled against fmt v8
+# but system libfmt-dev provides v10+. Rebuild spdlog from source with bundled fmt.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libopenmpi-dev libfmt-dev && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends libopenmpi-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    git clone https://github.com/gabime/spdlog.git -b v1.12.0 /tmp/spdlog && \
+    cd /tmp/spdlog && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DSPDLOG_FMT_EXTERNAL=OFF && \
+    make -j4 && make install && ldconfig && \
+    rm -rf /tmp/spdlog
 
 # Build
 RUN cd /workspace/3_13 && \

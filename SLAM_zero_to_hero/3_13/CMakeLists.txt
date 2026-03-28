@@ -12,11 +12,10 @@ endif()
 # Find dependencies
 find_package(g2o REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(fmt REQUIRED)
+find_package(spdlog REQUIRED)
 
 message(STATUS "g2o found: ${g2o_FOUND}")
 message(STATUS "Eigen3 found: ${EIGEN3_INCLUDE_DIR}")
-message(STATUS "fmt found: ${fmt_FOUND}")
 
 # Include directories
 include_directories(${EIGEN3_INCLUDE_DIR})
@@ -28,7 +27,7 @@ target_link_libraries(g2o_basics
     g2o::stuff
     g2o::types_slam2d
     g2o::solver_dense
-    fmt::fmt
+    spdlog::spdlog
 )
 
 # Bundle Adjustment example
@@ -39,7 +38,7 @@ target_link_libraries(g2o_bundle_adjustment
     g2o::types_sba
     g2o::solver_dense
     g2o::solver_eigen
-    fmt::fmt
+    spdlog::spdlog
 )
 
 message(STATUS "")
