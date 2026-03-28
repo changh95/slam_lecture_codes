@@ -26,7 +26,7 @@ KITTI_ODOMETRY_URLS = {
     "data_odometry_gray.zip": "https://s3.eu-central-1.amazonaws.com/avg-kitti/data_odometry_gray.zip",
 }
 
-DEST_DIR = Path.home() / "kitti_odometry"
+DEST_DIR = Path.home() / "data" / "kitti_vo_slam"
 
 
 class TqdmDownloadHook:
