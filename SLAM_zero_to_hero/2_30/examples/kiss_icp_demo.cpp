@@ -61,8 +61,10 @@ public:
         int map_size = 20;  // Number of frames in local map
     };
 
-    SimpleKISSICP(const Config& config = Config()) : config_(config) {
+    SimpleKISSICP() : SimpleKISSICP(Config{}) {}
+    SimpleKISSICP(const Config& config) : config_(config) {
         current_pose_ = Eigen::Matrix4f::Identity();
+        last_delta_ = Eigen::Matrix4f::Identity();
         adaptive_threshold_ = config_.initial_threshold;
     }
 
@@ -128,8 +130,8 @@ public:
 
 private:
     Config config_;
-    Eigen::Matrix4f current_pose_ = Eigen::Matrix4f::Identity();
-    Eigen::Matrix4f last_delta_ = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f current_pose_;
+    Eigen::Matrix4f last_delta_;
     CloudT::Ptr local_map_{new CloudT};
     std::deque<CloudT::Ptr> frame_history_;
     int frame_count_ = 0;
