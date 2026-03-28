@@ -17,7 +17,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <PoseLib/PoseLib.h>
+#include <PoseLib/poselib.h>
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/calib3d.hpp>

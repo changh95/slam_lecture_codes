@@ -195,7 +195,13 @@ int main() {
     // =========================================================================
     std::cout << "\n--- OpenGV 5-Point Stewenius Solver ---\n";
 
-    opengv::essentials_t E_stew = opengv::relative_pose::fivept_stewenius(adapter);
+    opengv::complexEssentials_t E_stew_complex = opengv::relative_pose::fivept_stewenius(adapter);
+
+    // Convert complex essentials to real (take real parts)
+    opengv::essentials_t E_stew;
+    for (const auto& E_c : E_stew_complex) {
+        E_stew.push_back(E_c.real());
+    }
 
     std::cout << "Number of essential matrices: " << E_stew.size() << "\n";
 
