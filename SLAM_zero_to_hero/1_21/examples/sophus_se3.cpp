@@ -127,7 +127,7 @@ int main() {
     // Note: T^(-1) = [R^T, -R^T * t]
     cout << "\nManual inverse:" << endl;
     cout << "  R^T:\n" << T_from_Rt.so3().inverse().matrix() << endl;
-    cout << "  -R^T * t: " << (-T_from_Rt.so3().inverse() * T_from_Rt.translation()).transpose() << endl;
+    cout << "  -R^T * t: " << (-T_from_Rt.so3().inverse().matrix() * T_from_Rt.translation()).transpose() << endl;
 
     // =========================================================================
     // 7. Transform a Point
