@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(pcl_point_cloud_tutorial LANGUAGES CXX)
+project(pcl_point_cloud_tutorial LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+# MPI is required by VTK (used by PCL visualization)
+find_package(MPI REQUIRED)
 
 # Find PCL with required components
 find_package(PCL 1.10 REQUIRED COMPONENTS

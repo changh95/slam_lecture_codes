@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(ICP_PCL LANGUAGES CXX)
+project(ICP_PCL LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
+# MPI is required by VTK (used by PCL visualization)
+find_package(MPI REQUIRED)
 
 # Find PCL (with registration component)
 find_package(PCL 1.10 REQUIRED COMPONENTS
