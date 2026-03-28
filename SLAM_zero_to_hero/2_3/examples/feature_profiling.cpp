@@ -182,7 +182,7 @@ void profileFAST_TEBLID(const cv::Mat& img1, const cv::Mat& img2, int nfeatures 
 
     // Keep top N keypoints by response and set size for TEBLID
     {
-        EASY_BLOCK("TEBLID_PrepareKeypoints", profiler::colors::Green250);
+        EASY_BLOCK("TEBLID_PrepareKeypoints", profiler::colors::Green300);
         auto sortAndLimit = [nfeatures](std::vector<cv::KeyPoint>& kps) {
             if (static_cast<int>(kps.size()) > nfeatures) {
                 std::sort(kps.begin(), kps.end(),
