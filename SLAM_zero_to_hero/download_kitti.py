@@ -45,6 +45,10 @@ class TqdmDownloadHook:
                 unit_divisor=1024,
                 desc=f"  ↓ {self.filename}",
                 ncols=100,
+                miniters=1,
+                mininterval=0.5,
+                position=0,
+                leave=True,
             )
         downloaded = block_num * block_size
         if total_size > 0:
