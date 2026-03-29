@@ -33,9 +33,15 @@ RUN apt update && \
     libopencv-dev \
     libfmt-dev \
     ninja-build \
-    libepoxy-dev \
-    libyaml-cpp-dev && \
+    libepoxy-dev && \
   apt clean
+
+# Install yaml-cpp from source (Ubuntu 22.04 version lacks yaml-cpp::yaml-cpp target)
+RUN git clone https://github.com/jbeder/yaml-cpp.git -b 0.8.0 && \
+    cd yaml-cpp && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_TESTS=OFF && \
+    make -j$(nproc) && make install && ldconfig && \
+    cd / && rm -rf yaml-cpp
 
 # Download dataset
 RUN apt-get install -y wget
