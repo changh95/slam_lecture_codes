@@ -19,15 +19,21 @@ RUN git clone https://github.com/borglab/gtsam.git -b 4.2 && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam
 
-# Build OpenGV (bypass custom FindEigen — hardcode Eigen3 path)
+# Install Eigen 3.4.1 from source (provides Eigen3Config.cmake that OpenGV needs)
+RUN wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.zip && \
+    unzip -q eigen-3.4.1.zip && cd eigen-3.4.1 && \
+    mkdir build && cd build && cmake .. && make install && \
+    cd / && rm -rf eigen-3.4.1 eigen-3.4.1.zip
+
+# Build OpenGV (delete broken custom FindEigen, use Eigen3 config from source install)
 RUN git clone https://github.com/laurentkneip/opengv.git && \
-    cd opengv && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release \
-             -DEIGEN_INCLUDE_DIR=/usr/include/eigen3 \
-             -DEIGEN_INCLUDE_DIRS=/usr/include/eigen3 \
-             -DEIGEN_VERSION_OK=TRUE \
-             -DEIGEN_VERSION=3.3.7 \
-             -DCMAKE_MODULE_PATH="" && \
+    cd opengv && \
+    rm -f modules/FindEigen.cmake && \
+    sed -i 's/find_package(Eigen REQUIRED)/find_package(Eigen3 REQUIRED)/' CMakeLists.txt && \
+    sed -i 's/\${EIGEN_INCLUDE_DIRS}/\${EIGEN3_INCLUDE_DIR}/g' CMakeLists.txt && \
+    sed -i 's/\${EIGEN_INCLUDE_DIR}/\${EIGEN3_INCLUDE_DIR}/g' CMakeLists.txt && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf opengv
 

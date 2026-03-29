@@ -16,13 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtest-dev nlohmann-json3-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Build GTSAM (develop branch — glim needs std::shared_ptr support, not in 4.2.0)
-RUN git clone https://github.com/borglab/gtsam.git -b develop && \
+# Build GTSAM 4.2.0 (matches gtsam_points/glim v1.0.0)
+RUN git clone https://github.com/borglab/gtsam.git -b 4.2.0 && \
     cd gtsam && mkdir build && cd build && \
     cmake .. -DGTSAM_BUILD_TESTS=OFF \
              -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
              -DGTSAM_USE_SYSTEM_EIGEN=ON \
-             -DGTSAM_WITH_TBB=OFF \
              -DCMAKE_BUILD_TYPE=Release \
              -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \
@@ -35,16 +34,17 @@ RUN git clone https://github.com/koide3/iridescence.git --recursive && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf iridescence
 
-# Build gtsam_points
-RUN git clone https://github.com/koide3/gtsam_points.git --recursive && \
+# Build gtsam_points (pin to v1.0.0 for GTSAM 4.2.0 compat)
+RUN git clone https://github.com/koide3/gtsam_points.git -b v1.0.0 --recursive && \
     cd gtsam_points && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
-             -DBUILD_WITH_CUDA=ON && \
+             -DBUILD_WITH_CUDA=ON \
+             -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam_points
 
-# Build GLIM
-RUN git clone https://github.com/koide3/glim.git --recursive && \
+# Build GLIM v1.0.0
+RUN git clone https://github.com/koide3/glim.git -b v1.0.0 --recursive && \
     cd glim && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && make install && ldconfig
