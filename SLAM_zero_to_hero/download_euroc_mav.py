@@ -3,7 +3,8 @@
 Download EuRoC MAV dataset to ~/data/euroc_mav/
 with tqdm progress bars, then unzip and remove zip files.
 
-Reference: https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets
+Reference: https://projects.asl.ethz.ch/datasets/euroc-mav/
+Dataset:   https://doi.org/10.3929/ethz-b-000690084
 """
 
 import os
@@ -20,23 +21,15 @@ except ImportError:
     from tqdm import tqdm
 
 
-BASE_URL = "http://robotics.ethz.ch/~asl-datasets/ijrr_euroc_mav_dataset"
+BASE_URL = "https://www.research-collection.ethz.ch/bitstreams"
 
 EUROC_MAV_URLS = {
-    # Machine Hall sequences
-    "MH_01_easy.zip": f"{BASE_URL}/machine_hall/MH_01_easy/MH_01_easy.zip",
-    "MH_02_easy.zip": f"{BASE_URL}/machine_hall/MH_02_easy/MH_02_easy.zip",
-    "MH_03_medium.zip": f"{BASE_URL}/machine_hall/MH_03_medium/MH_03_medium.zip",
-    "MH_04_difficult.zip": f"{BASE_URL}/machine_hall/MH_04_difficult/MH_04_difficult.zip",
-    "MH_05_difficult.zip": f"{BASE_URL}/machine_hall/MH_05_difficult/MH_05_difficult.zip",
-    # Vicon Room 1 sequences
-    "V1_01_easy.zip": f"{BASE_URL}/vicon_room1/V1_01_easy/V1_01_easy.zip",
-    "V1_02_medium.zip": f"{BASE_URL}/vicon_room1/V1_02_medium/V1_02_medium.zip",
-    "V1_03_difficult.zip": f"{BASE_URL}/vicon_room1/V1_03_difficult/V1_03_difficult.zip",
-    # Vicon Room 2 sequences
-    "V2_01_easy.zip": f"{BASE_URL}/vicon_room2/V2_01_easy/V2_01_easy.zip",
-    "V2_02_medium.zip": f"{BASE_URL}/vicon_room2/V2_02_medium/V2_02_medium.zip",
-    "V2_03_difficult.zip": f"{BASE_URL}/vicon_room2/V2_03_difficult/V2_03_difficult.zip",
+    # Machine Hall sequences (MH_01–MH_05)
+    "machine_hall.zip": f"{BASE_URL}/7b2419c1-62b5-4714-b7f8-485e5fe3e5fe/download",
+    # Vicon Room 1 sequences (V1_01–V1_03)
+    "vicon_room1.zip": f"{BASE_URL}/02ecda9a-298f-498b-970c-b7c44334d880/download",
+    # Vicon Room 2 sequences (V2_01–V2_03)
+    "vicon_room2.zip": f"{BASE_URL}/ea12bc01-3677-4b4c-853d-87c7870b8c44/download",
 }
 
 DEST_DIR = Path.home() / "data" / "euroc_mav"
@@ -70,9 +63,9 @@ class TqdmDownloadHook:
             self.pbar.close()
 
 
-def download_file(url: str, dest: Path) -> Path:
+def download_file(url: str, dest: Path, filename: str) -> Path:
     """Download a file with tqdm progress bar. Skips if already exists."""
-    filepath = dest / url.split("/")[-1]
+    filepath = dest / filename
 
     if filepath.exists():
         print(f"  ⏭  {filepath.name} already exists, skipping download.")
@@ -110,7 +103,7 @@ def main():
     print("📥 Downloading files...\n")
     for filename, url in EUROC_MAV_URLS.items():
         try:
-            zf = download_file(url, DEST_DIR)
+            zf = download_file(url, DEST_DIR, filename)
             zip_files.append(zf)
         except Exception as e:
             print(f"  ❌ Failed to download {filename}: {e}")
