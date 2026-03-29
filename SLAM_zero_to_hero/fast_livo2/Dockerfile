@@ -14,7 +14,9 @@ RUN apt-get update -y && apt-get upgrade -y && \
 COPY Sophus /Sophus
 RUN cd /Sophus && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release && \
-    make install && ldconfig
+    make install && ldconfig && \
+    cd /usr/local/include/sophus && \
+    for f in *.hpp; do ln -sf "$f" "${f%.hpp}.h"; done
 
 # Install Livox SDK
 RUN git clone https://github.com/Livox-SDK/Livox-SDK.git && \
