@@ -10,13 +10,8 @@ RUN apt-get update -y && apt-get upgrade -y && \
     ros-noetic-eigen-conversions && \
     apt-get clean
 
-# Install Eigen 3.4.1 (Sophus needs >= 3.4, noetic ships 3.3.7)
-RUN wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.zip && \
-    unzip -q eigen-3.4.1.zip && cd eigen-3.4.1 && \
-    mkdir build && cd build && cmake .. && make install && \
-    cd / && rm -rf eigen-3.4.1 eigen-3.4.1.zip
-
-# Install patched Sophus (with non-templated aliases + .h symlinks)
+# Install patched Sophus 1.22.10 (with non-templated aliases + .h symlinks)
+# Uses system Eigen 3.3.7 from noetic
 COPY Sophus /Sophus
 RUN cd /Sophus && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \

@@ -33,7 +33,8 @@ RUN apt update && \
     libopencv-dev \
     libfmt-dev \
     ninja-build \
-    libepoxy-dev && \
+    libepoxy-dev \
+    libyaml-cpp-dev && \
   apt clean
 
 # Download dataset

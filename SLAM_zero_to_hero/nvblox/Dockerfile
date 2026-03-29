@@ -20,7 +20,8 @@ RUN pip3 install torch torchvision --index-url https://download.pytorch.org/whl/
 RUN git clone https://github.com/nvidia-isaac/nvblox.git --recursive && \
     cd nvblox && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
-             -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" && \
+             -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" \
+             -DTorch_DIR=$(python3 -c "import torch; print(torch.utils.cmake_prefix_path)")/Torch && \
     make -j$(nproc) && make install && ldconfig
 
 WORKDIR /data
