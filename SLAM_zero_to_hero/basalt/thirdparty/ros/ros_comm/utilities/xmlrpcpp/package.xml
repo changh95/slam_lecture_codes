@@ -1,0 +1,32 @@
+<package format="2">
+  <name>xmlrpcpp</name>
+  <version>1.17.3</version>
+  <description>
+    XmlRpc++ is a C++ implementation of the XML-RPC protocol. This version is
+    heavily modified from the package available on SourceForge in order to
+    support roscpp's threading model. As such, we are maintaining our
+    own fork.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>LGPL-2.1</license>
+
+  <url>http://xmlrpcpp.sourceforge.net</url>
+  <author>Chris Morley</author>
+  <author>Konstantin Pilipchuk</author>
+  <author>Morgan Quigley</author>
+  <author>Austin Hendrix</author>
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>cpp_common</depend>
+  <depend version_gte="0.6.9">rostime</depend>
+
+  <test_depend>libboost-thread-dev</test_depend>
+
+  <export>
+    <rosdoc external="http://xmlrpcpp.sourceforge.net/doc/hierarchy.html"/>
+  </export>
+</package>

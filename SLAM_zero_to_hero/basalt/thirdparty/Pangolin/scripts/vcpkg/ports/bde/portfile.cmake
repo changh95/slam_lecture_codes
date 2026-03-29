@@ -1,0 +1,60 @@
+vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
+
+# Acquire Python and add it to PATH
+vcpkg_find_acquire_program(PYTHON3)
+get_filename_component(PYTHON3_EXE_PATH ${PYTHON3} DIRECTORY)
+
+# Acquire BDE Tools and add them to PATH
+set (BDE_TOOLS_VER 4.13.0.0)
+vcpkg_from_github(
+    OUT_SOURCE_PATH TOOLS_PATH
+    REPO "bloomberg/bde-tools"
+    REF "${BDE_TOOLS_VER}"
+    SHA512 6a0eec25889a33fb0302af735ed2fcce38afa5ad2be9202d2589d76509f9fd85f9ddc0a73147df1b6471543f51df3b5b40e8c08d378ab1335d2703d89b5921e6
+    HEAD_REF main
+)
+
+message(STATUS "Configure bde-tools-v${BDE_TOOLS_VERSION}")
+vcpkg_add_to_path("${PYTHON3_EXE_PATH}")
+vcpkg_add_to_path("${TOOLS_PATH}/bin")
+
+# Acquire BDE sources
+vcpkg_from_github(
+    OUT_SOURCE_PATH SOURCE_PATH
+    REPO "bloomberg/bde"
+    REF "${VERSION}"
+    SHA512 d25a17e213c6f50901c6a0e27366d6331c3b0506ef88fb34fd0496bfb214e04308f8adb6b1dd2f9a3821d230c444b04d8158cee730f540a6cb4984bc16d022d5
+    HEAD_REF main
+)
+
+vcpkg_cmake_configure(
+    SOURCE_PATH "${SOURCE_PATH}"
+    OPTIONS 
+        -DBDE_BUILD_TARGET_CPP17=ON
+        -DCMAKE_CXX_STANDARD=17
+        -DCMAKE_CXX_STANDARD_REQUIRED=ON
+        -DCMAKE_CXX_EXTENSIONS=OFF
+        -DBBS_BUILD_SYSTEM=1
+        "-DBdeBuildSystem_DIR:PATH=${TOOLS_PATH}/BdeBuildSystem"
+    OPTIONS_RELEASE
+        -DBDE_BUILD_TARGET_OPT=1
+    OPTIONS_DEBUG
+        -DBDE_BUILD_TARGET_DBG=1
+)
+
+# Build release
+vcpkg_cmake_build()
+
+# Install release
+vcpkg_cmake_install()
+file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
+list(APPEND SUBPACKAGES "ryu" "inteldfp" "pcre2" "s_baltst" "bsl" "bdl" "bal")
+include(GNUInstallDirs) # needed for CMAKE_INSTALL_LIBDIR
+foreach(subpackage IN LISTS SUBPACKAGES)
+    vcpkg_cmake_config_fixup(PACKAGE_NAME ${subpackage} CONFIG_PATH /${CMAKE_INSTALL_LIBDIR}/cmake/${subpackage} DO_NOT_DELETE_PARENT_CONFIG_PATH)
+endforeach()
+file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/${CMAKE_INSTALL_LIBDIR}/cmake" "${CURRENT_PACKAGES_DIR}/debug/${CMAKE_INSTALL_LIBDIR}/cmake")
+
+# Handle copyright
+vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")
+vcpkg_fixup_pkgconfig()

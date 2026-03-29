@@ -1,0 +1,55 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "library",
+      "description": "Minimal release build to produce libbasalt.so implementing VIT symbols",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BASALT_BUILD_SHARED_LIBRARY_ONLY": "on"
+      }
+    },
+    {
+      "name": "ci",
+      "description": "CI build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BASALT_BUILD_SHARED_LIBRARY_ONLY": "on",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "CMAKE_CXX_FLAGS": "-mtune=haswell -march=haswell",
+        "CMAKE_C_FLAGS": "-mtune=haswell -march=haswell"
+      }
+    },
+    {
+      "name": "development",
+      "description": "Release build with extra binaries and debug symbols",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BASALT_BUILD_SHARED_LIBRARY_ONLY": "off"
+      }
+    },
+    {
+      "name": "full",
+      "description": "Release build with extra binaries, debug symbols, tests and double precision pipeline",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BASALT_BUILD_SHARED_LIBRARY_ONLY": "off",
+        "BASALT_INSTANTIATIONS_DOUBLE": "on",
+        "BUILD_TESTS": "on"
+      }
+    }
+  ]
+}

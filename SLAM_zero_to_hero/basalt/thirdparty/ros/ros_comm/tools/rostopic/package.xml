@@ -1,0 +1,36 @@
+<package>
+  <name>rostopic</name>
+  <version>1.17.3</version>
+  <description>
+    rostopic contains the rostopic command-line tool for displaying
+    debug information about
+    ROS <a href="http://wiki.ros.org/Topics">Topics</a>, including
+    publishers, subscribers, publishing rate,
+    and ROS <a href="http://wiki.ros.org/Messages">Messages</a>. It also
+    contains an experimental Python library for getting information about
+    and interacting with topics dynamically. This library is for
+    internal-use only as the code API may change, though it does provide
+    examples of how to implement dynamic subscription and publication
+    behaviors in ROS.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>BSD</license>
+
+  <url>http://ros.org/wiki/rostopic</url>
+  <author>Ken Conley</author>
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend version_gte="0.5.78">catkin</buildtool_depend>
+
+  <build_depend>rostest</build_depend>
+
+  <run_depend version_gte="0.5.4">genpy</run_depend>
+  <run_depend>rosbag</run_depend>
+  <run_depend>rospy</run_depend>
+
+  <export>
+    <rosdoc config="rosdoc.yaml"/>
+  </export>
+</package>

@@ -1,0 +1,6 @@
+BASALT_@VIT_VERSION_MAJOR@.@VIT_VERSION_MINOR@.@VIT_VERSION_PATCH@{
+	global:
+		vit_*;
+	local:
+		*;
+};

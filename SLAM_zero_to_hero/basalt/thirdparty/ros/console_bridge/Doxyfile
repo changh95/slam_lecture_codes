@@ -1,0 +1,24 @@
+# All settings not listed here will use the Doxygen default values.
+
+PROJECT_NAME           = "console_bridge_dev"
+PROJECT_NUMBER         = master
+PROJECT_BRIEF          = "It is a ROS-independent, pure CMake (i.e. non-catkin and non-rosbuild package)\
+ that provides logging calls that mirror those found in rosconsole, but for applications that are \
+ not necessarily using ROS."
+
+INPUT                  = README.md ./include ./QUALITY_DECLARATION.md
+USE_MDFILE_AS_MAINPAGE = README.md
+RECURSIVE              = YES
+OUTPUT_DIRECTORY       = doc_output
+
+EXTRACT_ALL            = YES
+SORT_MEMBER_DOCS       = NO
+
+GENERATE_LATEX         = NO
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+
+# Tag files that do not exist will produce a warning and cross-project linking will not work.
+GENERATE_TAGFILE = "../../../doxygen_tag_files/console_bridge_dev.tag"

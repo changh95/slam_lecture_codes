@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<?xml-model
+  href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rosmsg</name>
+  <version>1.17.3</version>
+  <description>
+    rosmsg contains two command-line tools: <tt>rosmsg</tt> and
+    <tt>rossrv</tt>. <tt>rosmsg</tt> is a command-line tool for
+    displaying information about <a
+    href="http://wiki.ros.org/msg">ROS Message
+    types</a>. <tt>rossrv</tt> is a command-line tool for displaying
+    information about <a href="http://wiki.ros.org/srv">ROS
+    Service types</a>.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>BSD</license>
+
+  <url type="website">http://wiki.ros.org/rosmsg</url>
+  <url type="bugtracker">https://github.com/ros/ros_comm/issues</url>
+  <url type="repository">https://github.com/ros/ros_comm</url>
+  <author>Ken Conley</author>
+  <author>Tully Foote</author>
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend version_gte="0.6.4">catkin</exec_depend>
+  <exec_depend>genmsg</exec_depend>
+  <exec_depend version_gte="0.6.5">genpy</exec_depend>
+  <exec_depend condition="$ROS_PYTHON_VERSION == 2">python-rospkg</exec_depend>
+  <exec_depend condition="$ROS_PYTHON_VERSION == 3">python3-rospkg</exec_depend>
+  <exec_depend>rosbag</exec_depend>
+  <exec_depend>roslib</exec_depend>
+
+  <test_depend>rostest</test_depend>
+  <test_depend>std_msgs</test_depend>
+  <test_depend>std_srvs</test_depend>
+  <test_depend>diagnostic_msgs</test_depend>
+
+  <export>
+    <rosdoc config="rosdoc.yaml"/>
+    <architecture_independent/>
+  </export>
+</package>

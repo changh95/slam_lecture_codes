@@ -1,0 +1,13 @@
+diff --git a/include/basalt/utils/sophus_utils.hpp b/include/basalt/utils/sophus_utils.hpp
+index 7fb5520..e5f78ee 100644
+--- a/include/basalt/utils/sophus_utils.hpp
++++ b/include/basalt/utils/sophus_utils.hpp
+@@ -39,6 +39,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ #pragma once
+ 
++#define _USE_MATH_DEFINES
++#include <math.h> // <cmath> does not work when included before this header
+ #include <sophus/se3.hpp>
+ #include <sophus/sim3.hpp>
+ 

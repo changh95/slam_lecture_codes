@@ -1,0 +1,150 @@
+image: vladyslavusenko/b_image_jammy:latest
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  BUILD_TYPE: Release
+
+# template for docker builds with ccache
+.prepare_docker_template: &prepare_docker_definition
+  tags:
+    - docker
+  before_script:
+    - mkdir -p ccache
+    - export CCACHE_BASEDIR=${PWD}
+    - export CCACHE_DIR=${PWD}/ccache
+    - ccache -s
+  cache:
+    paths:
+    - ccache/
+    key: ${CI_JOB_NAME}
+
+# template for secondary build & unit test configurations
+.compile_and_test_template: &compile_and_test_definition
+  stage: build
+  script:
+    - mkdir build
+    - cd build
+    - cmake --version
+    - cmake .. -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
+    - make -j4
+    - ctest --output-on-failure
+
+# template for secondary build & unit test configurations (no builtin libs)
+.compile_and_test_no_builtin_template: &compile_and_test_no_builtin_definition
+  stage: build
+  script:
+    - scripts/ci-install-deps.sh ${BUILD_TYPE}
+    - mkdir build
+    - cd build
+    - cmake --version
+    - cmake .. -DCMAKE_BUILD_TYPE=${BUILD_TYPE}  -DBASALT_BUILTIN_EIGEN=OFF -DBASALT_BUILTIN_SOPHUS=Off -DBASALT_BUILTIN_CEREAL=OFF -DCMAKE_PREFIX_PATH="$PWD/../external/install"
+    - make -j4
+    - ctest --output-on-failure
+
+# main build with benchmark and coverage
+jammy-release-compile:
+  <<: *prepare_docker_definition
+  stage: build
+  script:
+    - mkdir build
+    - cd build
+    - cmake --version
+    - cmake .. -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
+    - make -j4
+    - ctest --output-on-failure
+    - ./test/benchmark_camera > ../benchmark_camera.txt
+    - cd ../
+    - mkdir build_coverage
+    - cd build_coverage
+    - cmake .. -DCMAKE_BUILD_TYPE=Coverage
+    - make -j4
+    - ctest --output-on-failure
+    - lcov --directory . --capture --output-file coverage.info
+    - lcov --remove coverage.info '*test/*' '/usr/*' '*thirdparty*' '*googletest*' --output-file coverage.info
+    - lcov --list coverage.info
+  artifacts:
+    paths:
+    - benchmark_camera.txt
+
+jammy-debug-compile:
+  <<: *prepare_docker_definition
+  <<: *compile_and_test_definition
+  variables:
+    BUILD_TYPE: Debug
+
+jammy-relwithdebinfo-compile:
+  <<: *prepare_docker_definition
+  <<: *compile_and_test_definition
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+
+jammy-asan-build:
+  <<: *prepare_docker_definition
+  <<: *compile_and_test_definition
+  variables:
+    CC: clang-15
+    CXX: clang++-15
+    BUILD_TYPE: SanitizerRelWithDebInfo
+    # LeakSanitizer doesn't work in (non-priviliged) container
+    ASAN_OPTIONS: "detect_leaks=0"
+
+jammy-release-no-builtin:
+  <<: *prepare_docker_definition
+  <<: *compile_and_test_no_builtin_definition
+
+bionic-release-compile:
+  <<: *prepare_docker_definition
+  <<: *compile_and_test_definition
+  image: vladyslavusenko/b_image_bionic:latest
+
+focal-release-compile:
+  <<: *prepare_docker_definition
+  <<: *compile_and_test_definition
+  image: vladyslavusenko/b_image_focal:latest
+
+monterey-arm-brewedclang-asan-build:
+  <<: *compile_and_test_definition
+  tags: [macos, "12", arm64]
+  variables:
+    CC: /opt/homebrew/opt/llvm/bin/clang
+    CXX: /opt/homebrew/opt/llvm/bin/clang++
+    BUILD_TYPE: SanitizerRelWithDebInfo
+
+monterey-arm-asan-build:
+  <<: *compile_and_test_definition
+  tags: [macos, "12", arm64]
+  variables:
+    BUILD_TYPE: SanitizerRelWithDebInfo
+
+monterey-arm-build-no-builtin:
+  <<: *compile_and_test_no_builtin_definition
+  tags: [macos, "12", arm64]
+
+monterey-arm-relwithdebinfo-compile:
+  <<: *compile_and_test_definition
+  tags: [macos, "12", arm64]
+  variables:
+    BUILD_TYPE: RelWithDebInfo
+
+# check if clang-format would make any changes
+clang-format:
+  tags:
+    - docker
+  stage: build
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  script:
+    - ./scripts/clang-format-all.sh
+    # check if any files are now modified and error if yes
+    - (if git diff --name-only --diff-filter=M | grep '\..pp$'; then echo $'\n    Some files are not properly formatted. You can use "./scripts/clang-format-all.sh".\n'; git diff --diff-filter=M; false; fi)
+
+pages:
+  tags:
+    - docker
+  script:
+  - doxygen
+  artifacts:
+    paths:
+    - public
+  only:
+  - master

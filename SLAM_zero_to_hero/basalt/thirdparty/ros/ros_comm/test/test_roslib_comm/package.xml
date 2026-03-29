@@ -1,0 +1,27 @@
+<package>
+  <name>test_roslib_comm</name>
+  <version>1.17.3</version>
+  <description>
+    Unit tests verifying that roslib is operating as expected.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>BSD</license>
+
+  <url>http://ros.org/wiki/roslib</url>
+  <author>Jeremy Leibs</author>
+  <author>Ken Conley</author>
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend version_gte="0.5.68">catkin</buildtool_depend>
+
+  <build_depend>genmsg</build_depend>
+  <build_depend>rosgraph_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+
+  <test_depend>genpy</test_depend>
+  <test_depend>rosbuild</test_depend>
+  <test_depend>roslib</test_depend>
+  <test_depend>std_srvs</test_depend>
+</package>

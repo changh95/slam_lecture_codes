@@ -1,0 +1,21 @@
+diff --git a/src/io/dataset_io.cpp b/src/io/dataset_io.cpp
+index 0629d12..17ae036 100644
+--- a/src/io/dataset_io.cpp
++++ b/src/io/dataset_io.cpp
+@@ -36,7 +36,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <basalt/io/dataset_io.h>
+ #include <basalt/io/dataset_io_euroc.h>
+ #include <basalt/io/dataset_io_kitti.h>
+-#include <basalt/io/dataset_io_rosbag.h>
+ #include <basalt/io/dataset_io_uzh.h>
+ 
+ namespace basalt {
+@@ -45,8 +44,6 @@ DatasetIoInterfacePtr DatasetIoFactory::getDatasetIo(const std::string &dataset_
+   if (dataset_type == "euroc") {
+     // return DatasetIoInterfacePtr();
+     return DatasetIoInterfacePtr(new EurocIO(load_mocap_as_gt));
+-  } else if (dataset_type == "bag") {
+-    return DatasetIoInterfacePtr(new RosbagIO);
+   } else if (dataset_type == "uzh") {
+     return DatasetIoInterfacePtr(new UzhIO);
+   } else if (dataset_type == "kitti") {

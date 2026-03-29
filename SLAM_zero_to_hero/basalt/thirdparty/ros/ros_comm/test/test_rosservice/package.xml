@@ -1,0 +1,26 @@
+<package>
+  <name>test_rosservice</name>
+  <version>1.17.3</version>
+  <description>
+    Tests for the rosservice tool.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>BSD</license>
+
+  <url>http://ros.org/wiki/rosservice</url>
+  <author>Ken Conley</author>
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend version_gte="0.5.68">catkin</buildtool_depend>
+
+  <build_depend>genmsg</build_depend>
+  <build_depend>rostest</build_depend>
+  <build_depend>std_msgs</build_depend>
+
+  <test_depend>rospy</test_depend>
+  <test_depend>rosservice</test_depend>
+  <test_depend>rosunit</test_depend>
+  <test_depend>test_rosmaster</test_depend>
+</package>

@@ -1,0 +1,78 @@
+{
+  "name": "libmariadb",
+  "version-semver": "3.4.1",
+  "description": "MariaDB Connector/C is used to connect C/C++ applications to MariaDB and MySQL databases",
+  "homepage": "https://github.com/mariadb-corporation/mariadb-connector-c",
+  "license": "LGPL-2.1-or-later",
+  "supports": "!uwp & !xbox",
+  "dependencies": [
+    {
+      "name": "libmariadb",
+      "default-features": false,
+      "features": [
+        "iconv"
+      ],
+      "platform": "windows"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    },
+    "zlib"
+  ],
+  "default-features": [
+    "ssl"
+  ],
+  "features": {
+    "iconv": {
+      "description": "Enables character set conversion",
+      "dependencies": [
+        {
+          "name": "libiconv",
+          "platform": "!windows"
+        }
+      ]
+    },
+    "openssl": {
+      "description": "SSL support (OpenSSL)",
+      "dependencies": [
+        "openssl"
+      ]
+    },
+    "schannel": {
+      "description": "SSL support (Secure Channel)",
+      "supports": "windows"
+    },
+    "ssl": {
+      "description": "Default SSL backend",
+      "dependencies": [
+        {
+          "name": "libmariadb",
+          "default-features": false,
+          "features": [
+            "schannel"
+          ],
+          "platform": "windows"
+        },
+        {
+          "name": "libmariadb",
+          "default-features": false,
+          "features": [
+            "openssl"
+          ],
+          "platform": "!windows"
+        }
+      ]
+    },
+    "zstd": {
+      "description": "Build zstd compression plugin.",
+      "dependencies": [
+        "zstd"
+      ]
+    }
+  }
+}

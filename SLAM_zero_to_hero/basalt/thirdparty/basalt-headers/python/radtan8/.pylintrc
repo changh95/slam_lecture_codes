@@ -1,0 +1,17 @@
+[MESSAGES CONTROL]
+disable =
+#   unsubscriptable-object, # Optional[T] does not work yet
+#   comparison-with-itself, # The comparisson operators semantics are peculiar
+#   unbalanced-tuple-unpacking # Expression.expr_mappings needs this
+    invalid-name, # One letter names improve readability in short scopes
+    fixme, # To-do reminders in code are not immediate concerns
+    c-extension-no-member, # Using extension modules
+    # TODO: The following are disabled but would be nice to address
+    missing-module-docstring,
+    missing-class-docstring,
+    too-many-locals,
+    too-many-arguments,
+    line-too-long,
+    too-many-instance-attributes,
+    missing-function-docstring,
+    redefined-outer-name,

@@ -1,0 +1,25 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9660f55..67ed503 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,7 +19,7 @@ set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
+ OPTION(BUILD_TESTS "Build tests" ON)
+ OPTION(BUILD_PYTHON "Build Python extension" OFF)
+ 
+-IF(MSVC)
++IF(WIN32)
+   set(BUILD_SHARED_LIBS OFF)
+ ELSE()
+   OPTION(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+diff --git a/src/math/roots.cpp b/src/math/roots.cpp
+index c31b27c..2d44733 100644
+--- a/src/math/roots.cpp
++++ b/src/math/roots.cpp
+@@ -31,6 +31,7 @@
+ 
+ #include <opengv/math/roots.hpp>
+ #include <complex>
++#define _USE_MATH_DEFINES
+ #include <math.h>
+ 
+ std::vector<double>

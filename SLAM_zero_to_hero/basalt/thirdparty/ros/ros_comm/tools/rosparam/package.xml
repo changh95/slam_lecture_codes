@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<?xml-model
+  href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rosparam</name>
+  <version>1.17.3</version>
+  <description>
+    rosparam contains the rosparam command-line tool for getting and
+    setting ROS Parameters on the <a
+    href="http://wiki.ros.org/Parameter%20Server">Parameter
+    Server</a> using YAML-encoded files. It also contains an
+    experimental library for using YAML with the Parameter
+    Server. This library is intended for internal use only.
+
+    rosparam can be invoked within a <a href="http://wiki.ros.org/roslaunch">roslaunch</a> file.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>BSD</license>
+
+  <url type="website">http://wiki.ros.org/rosparam</url>
+  <url type="bugtracker">https://github.com/ros/ros_comm/issues</url>
+  <url type="repository">https://github.com/ros/ros_comm</url>
+  <author>Ken Conley</author>
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend condition="$ROS_PYTHON_VERSION == 2">python-yaml</exec_depend>
+  <exec_depend condition="$ROS_PYTHON_VERSION == 3">python3-yaml</exec_depend>
+  <exec_depend>rosgraph</exec_depend>
+
+  <export>
+    <rosdoc config="rosdoc.yaml"/>
+    <architecture_independent/>
+  </export>
+</package>

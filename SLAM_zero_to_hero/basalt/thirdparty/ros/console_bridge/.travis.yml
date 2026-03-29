@@ -1,0 +1,34 @@
+os: linux
+dist: trusty
+language: cpp
+addons:
+  apt:
+    update: true
+    packages: lcov python3 cppcheck
+compiler:
+  - gcc
+  - clang
+env:
+  - BUILD_TYPE=Debug
+  - BUILD_TYPE=RelWithDebInfo
+  - BUILD_TYPE=Debug COVERAGE=true CXXFLAGS="--coverage"
+jobs:
+  exclude:
+    - compiler: clang
+      env: BUILD_TYPE=Debug COVERAGE=true CXXFLAGS="--coverage"
+script:
+  - mkdir build
+  - cd build
+  - cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_CXX_FLAGS="-Werror $CXXFLAGS" -DBUILD_TESTING=True ..
+  - make
+  - make test ARGS="-VV"
+after_script:
+  - sudo make install
+  - pkg-config --modversion console_bridge
+  - |
+    if [[ $COVERAGE == true ]]; then
+      lcov --capture --directory . --output-file coverage.info
+      lcov --remove coverage.info */test/* --output-file coverage.info
+      lcov --list coverage.info
+      bash <(curl -s https://codecov.io/bash) -f coverage.info || echo "Codecov did not collect coverage reports"
+    fi

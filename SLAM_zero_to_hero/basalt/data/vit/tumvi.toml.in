@@ -1,0 +1,19 @@
+# Options for the Basalt SLAM Tracker
+
+# Show GUI
+show-gui=1
+
+# Ground-truth camera calibration used for simulation.
+cam-calib="@CONFIG_FILE_INSTALL_DESTINATION@/tumvi_512_ds_calib.json"
+
+# Path to config file.
+config-path="@CONFIG_FILE_INSTALL_DESTINATION@/tumvi_512_config.json"
+
+# Path to folder where marginalization data will be stored.
+marg-data=""
+
+# Poll and print for queue sizes.
+print-queue=0
+
+# Whether to use a double or single precision pipeline.
+use-double=0

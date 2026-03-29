@@ -1,0 +1,12 @@
+diff --git a/utilities/roslz4/src/lz4s.c b/utilities/roslz4/src/lz4s.c
+index 8db1dfc9e..e6e3e7b8a 100644
+--- a/utilities/roslz4/src/lz4s.c
++++ b/utilities/roslz4/src/lz4s.c
+@@ -40,6 +40,7 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#undef min
+ 
+ #if 0
+ #define DEBUG(...) fprintf(stderr, __VA_ARGS__)

@@ -1,4 +1,3 @@
-# Based on rosblox/ros-fast-livo community Dockerfile
 FROM docker.io/ros:noetic
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -11,18 +10,18 @@ RUN apt-get update -y && apt-get upgrade -y && \
     ros-noetic-eigen-conversions && \
     apt-get clean
 
-# Install Eigen 3.4 (Sophus needs >= 3.4, noetic ships 3.3.7)
+# Install Eigen 3.4.1 (Sophus needs >= 3.4, noetic ships 3.3.7)
 RUN wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.zip && \
     unzip -q eigen-3.4.1.zip && cd eigen-3.4.1 && \
     mkdir build && cd build && cmake .. && make install && \
     cd / && rm -rf eigen-3.4.1 eigen-3.4.1.zip
 
-# Install Sophus (non-templated/double-only version as required by FAST-LIVO2)
-RUN git clone https://github.com/strasdat/Sophus.git && \
-    cd Sophus && git checkout a621ff && \
-    mkdir build && cd build && \
-    cmake .. && make -j$(nproc) && make install && ldconfig && \
-    cd / && rm -rf Sophus
+# Install patched Sophus (with non-templated aliases + .h symlinks)
+COPY Sophus /Sophus
+RUN cd /Sophus && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \
+             -DCMAKE_CXX_FLAGS="-Wno-error" && \
+    make -j$(nproc) install && ldconfig
 
 # Install Livox SDK
 RUN git clone https://github.com/Livox-SDK/Livox-SDK.git && \
@@ -30,12 +29,12 @@ RUN git clone https://github.com/Livox-SDK/Livox-SDK.git && \
     cmake .. && make -j$(nproc) && make install && \
     cd / && rm -rf Livox-SDK
 
-# Build in catkin workspace
-RUN mkdir -p /catkin_ws/src && cd /catkin_ws/src && \
-    git clone https://github.com/Livox-SDK/livox_ros_driver.git && \
-    git clone https://github.com/xuankuzcr/rpg_vikit.git && \
-    git clone https://github.com/hku-mars/FAST-LIVO2.git && \
-    cd FAST-LIVO2 && git submodule update --init --recursive
+# Copy patched sources into catkin workspace
+RUN mkdir -p /catkin_ws/src
+COPY rpg_vikit /catkin_ws/src/rpg_vikit
+COPY FAST-LIVO2 /catkin_ws/src/FAST-LIVO2
+RUN cd /catkin_ws/src && \
+    git clone https://github.com/Livox-SDK/livox_ros_driver.git
 
 WORKDIR /catkin_ws
 RUN . /opt/ros/noetic/setup.sh && \

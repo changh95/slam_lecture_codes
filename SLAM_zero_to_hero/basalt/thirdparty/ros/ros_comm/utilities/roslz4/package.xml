@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package>
+  <name>roslz4</name>
+  <version>1.17.3</version>
+  <description>
+    A Python and C++ implementation of the LZ4 streaming format.  Large data
+    streams are split into blocks which are compressed using the very fast LZ4
+    compression algorithm.
+  </description>
+  <maintainer email="michael@openrobotics.org">Michael Carroll</maintainer>
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+  <license>BSD</license>
+  <author email="bcharrow@seas.upenn.edu">Ben Charrow</author>
+  <author email="jacob@openrobotics.org">Jacob Perron</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+
+  <build_depend>lz4</build_depend>
+  <build_depend>python3</build_depend>
+  <build_depend>cpp_common</build_depend>
+
+  <run_depend>lz4</run_depend>
+  <run_depend>python3</run_depend>
+
+  <test_depend>rosunit</test_depend>
+</package>
