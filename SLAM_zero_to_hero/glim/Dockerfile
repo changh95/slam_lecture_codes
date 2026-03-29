@@ -38,7 +38,7 @@ RUN git clone https://github.com/koide3/iridescence.git --recursive && \
 RUN git clone https://github.com/koide3/gtsam_points.git -b v1.0.0 --recursive && \
     cd gtsam_points && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
-             -DBUILD_WITH_CUDA=ON \
+             -DBUILD_WITH_CUDA=OFF \
              -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam_points
