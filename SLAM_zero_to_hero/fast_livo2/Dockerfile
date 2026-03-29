@@ -10,13 +10,11 @@ RUN apt-get update -y && apt-get upgrade -y && \
     ros-noetic-eigen-conversions && \
     apt-get clean
 
-# Install patched Sophus 1.22.10 (with non-templated aliases + .h symlinks)
-# Uses system Eigen 3.3.7 from noetic
+# Install patched Sophus v0.9.5 (header-only, just cmake install)
 COPY Sophus /Sophus
 RUN cd /Sophus && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \
-             -DCMAKE_CXX_FLAGS="-Wno-error" && \
-    make -j$(nproc) install && ldconfig
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make install && ldconfig
 
 # Install Livox SDK
 RUN git clone https://github.com/Livox-SDK/Livox-SDK.git && \
