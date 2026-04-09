@@ -1,0 +1,36 @@
+ARG BASE_IMAGE=ubuntu:jammy
+FROM ${BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -y && apt-get upgrade -y && \
+    apt-get install -y \
+    build-essential cmake git sudo wget ninja-build \
+    software-properties-common python3 python3-pip \
+    gcc g++ gdb rsync tar x11-utils x11-apps zip \
+    libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev \
+    libgl1-mesa-dev libwayland-dev libxkbcommon-dev wayland-protocols \
+    libegl1-mesa-dev libc++-dev libglew-dev libeigen3-dev \
+    libboost-all-dev libssl-dev && \
+    apt-get clean
+
+COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
+RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh
+
+RUN git clone https://github.com/changh95/Portable_ORB_SLAM2.git && \
+    cd Portable_ORB_SLAM2 && \
+    python3 ./buildDeps.py
+
+COPY orb_slam2/patches/ /tmp/orbslam2_patches/
+RUN cp /tmp/orbslam2_patches/CMakeLists.txt /Portable_ORB_SLAM2/CMakeLists.txt && \
+    cp /tmp/orbslam2_patches/System.cc /Portable_ORB_SLAM2/src/System.cc && \
+    cp /tmp/orbslam2_patches/Tracking.cc /Portable_ORB_SLAM2/src/Tracking.cc && \
+    cp /tmp/orbslam2_patches/ORBextractor.cc /Portable_ORB_SLAM2/src/ORBextractor.cc && \
+    cp /tmp/orbslam2_patches/ORBmatcher.cc /Portable_ORB_SLAM2/src/ORBmatcher.cc && \
+    cp /tmp/orbslam2_patches/LocalMapping.cc /Portable_ORB_SLAM2/src/LocalMapping.cc && \
+    cp /tmp/orbslam2_patches/LoopClosing.cc /Portable_ORB_SLAM2/src/LoopClosing.cc && \
+    cp /tmp/orbslam2_patches/Optimizer.cc /Portable_ORB_SLAM2/src/Optimizer.cc
+
+RUN cd /Portable_ORB_SLAM2 && python3 ./build.py --profiler
+
+VOLUME /output
+WORKDIR /Portable_ORB_SLAM2
