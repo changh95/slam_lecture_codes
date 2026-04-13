@@ -1,0 +1,36 @@
+common:
+    lid_topic:  "/hesai/pandar"
+    imu_topic:  "/alphasense/imu"
+    time_sync_en: false
+    time_offset_lidar_to_imu: 0.0
+
+preprocess:
+    lidar_type: 2                # Velodyne-compatible handler (Hesai PandarXT-32)
+    scan_line: 32
+    scan_rate: 10
+    timestamp_unit: 3            # nanoseconds
+    blind: 1
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree:    180
+    det_range:     100.0
+    # Official HILTI 2022 calibration (lidar_calibration.yaml, Phasma25 2022-03-22)
+    # IMU-to-LiDAR transform, quaternion [x,y,z,w] = [0.7071068, -0.7071068, 0, 0]
+    extrinsic_est_en:  false
+    extrinsic_T: [-0.001, -0.00855, 0.055]
+    extrinsic_R: [ 0.0, -1.0,  0.0,
+                  -1.0,  0.0,  0.0,
+                   0.0,  0.0, -1.0]
+
+publish:
+    path_en:  true
+    scan_publish_en:  true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: false
