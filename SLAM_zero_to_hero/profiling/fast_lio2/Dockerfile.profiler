@@ -18,15 +18,9 @@ RUN git clone https://github.com/Livox-SDK/Livox-SDK.git && \
     cd / && rm -rf Livox-SDK
 
 RUN mkdir -p /catkin_ws/src && cd /catkin_ws/src && \
-    git clone https://github.com/Livox-SDK/livox_ros_driver.git && \
-    git clone https://github.com/hku-mars/FAST_LIO.git && \
-    cd FAST_LIO && git submodule update --init --recursive
+    git clone https://github.com/Livox-SDK/livox_ros_driver.git
 
-COPY fast_lio2/patches/ /tmp/fastlio2_patches/
-RUN cp /tmp/fastlio2_patches/CMakeLists.txt /catkin_ws/src/FAST_LIO/CMakeLists.txt && \
-    cp /tmp/fastlio2_patches/laserMapping.cpp /catkin_ws/src/FAST_LIO/src/laserMapping.cpp && \
-    cp /tmp/fastlio2_patches/preprocess.cpp /catkin_ws/src/FAST_LIO/src/preprocess.cpp && \
-    cp /tmp/fastlio2_patches/IMU_Processing.hpp /catkin_ws/src/FAST_LIO/src/IMU_Processing.hpp
+COPY fast_lio2/src /catkin_ws/src/FAST_LIO
 
 WORKDIR /catkin_ws
 RUN . /opt/ros/noetic/setup.sh && \

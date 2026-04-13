@@ -1,0 +1,87 @@
+# Use NVIDIA NGC PyTorch container as base. Need NGC 25.01+ for CUDA 12.8
+# which is the first release with Blackwell (sm_120 / GB10 DGX Spark) support.
+# Older NGC 24.10 ships torch 2.5 compiled without Blackwell kernels, so
+# every torch CUDA op fails on GB10 with "no kernel image is available".
+FROM nvcr.io/nvidia/pytorch:25.01-py3
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics,compute,utility
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;12.0+PTX"
+# FORCE_CUDA=1 tells PyTorch extensions to compile CUDA kernels even though
+# no GPU is present at docker build time (torch.cuda.is_available() == False).
+ENV FORCE_CUDA=1
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    git git-lfs wget curl ca-certificates \
+    libgl1-mesa-dev libglib2.0-0 libsm6 libxext6 libxrender-dev \
+    libgomp1 libusb-1.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Clone MASt3R-SLAM with submodules
+RUN git clone https://github.com/rmurai0610/MASt3R-SLAM.git --recursive /MASt3R-SLAM
+
+WORKDIR /MASt3R-SLAM
+
+# Patch CUDA kernels for PyTorch 2.6+ compatibility:
+# 1) AT_DISPATCH macro changed: .type() -> .scalar_type()
+# 2) torch::linalg::linalg_norm -> torch::linalg::norm
+RUN find . -name '*.cu' -exec sed -i \
+    's/\.type()/.scalar_type()/g' {} + && \
+    find . \( -name '*.cu' -o -name '*.cpp' \) -print0 | xargs -0 python3 -c "\
+import sys;\
+old='torch::linalg::linalg_norm(dx, std::optional<c10::Scalar>(), {}, false, {})';\
+new='at::linalg_vector_norm(dx, 2, {}, false, {})';\
+[exec('c=open(f).read(); open(f,\"w\").write(c.replace(old,new))') for f in sys.argv[1:]]"
+
+# Install thirdparty packages first (mast3r encoder + in3d renderer)
+RUN pip install --no-cache-dir -e thirdparty/mast3r && \
+    pip install --no-cache-dir -e thirdparty/in3d
+
+# Install mast3r_slam itself - builds CUDA extensions (lietorch, mast3r_slam_backends)
+# --no-build-isolation is critical so pip uses the already-installed PyTorch.
+# Upstream setup.py guards ext_modules behind torch.cuda.is_available() which
+# returns False during `docker build` (no GPU access) -> NameError on ext_modules.
+# Patch it to unconditionally enable CUDA.
+RUN sed -i 's/has_cuda = torch.cuda.is_available()/has_cuda = True/' setup.py && \
+    sed -i '/gencode=arch=compute_60/,/gencode=arch=compute_86/c\        "-gencode=arch=compute_80,code=sm_80",\n        "-gencode=arch=compute_86,code=sm_86",\n        "-gencode=arch=compute_89,code=sm_89",\n        "-gencode=arch=compute_90,code=sm_90",\n        "-gencode=arch=compute_120,code=sm_120",' setup.py && \
+    pip install --no-cache-dir --no-build-isolation -e .
+
+# PyTorch 2.6 defaults weights_only=True in torch.load, but MASt3R checkpoints
+# contain argparse.Namespace. Patch all torch.load calls to use weights_only=False.
+RUN find . -name '*.py' -exec sed -i \
+    "s/torch\.load(\([^)]*\))/torch.load(\1, weights_only=False)/g" {} + && \
+    find . -name '*.py' -exec sed -i \
+    "s/weights_only=False, weights_only=False/weights_only=False/g" {} +
+
+# Additional deps used by the profiler runner
+# NGC PyTorch image ships a broken cv2 typing stub (cv2.dnn.DictValue missing)
+# Force a working opencv-python-headless version.
+RUN pip install --no-cache-dir pillow numpy && \
+    pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python 2>/dev/null || true && \
+    rm -rf /usr/local/lib/python3.*/dist-packages/cv2 \
+           /usr/local/lib/python3.*/dist-packages/opencv_*.dist-info && \
+    pip install --no-cache-dir "opencv-python-headless==4.10.0.84"
+
+# Download MASt3R pretrained checkpoints (needed before any SLAM run)
+RUN mkdir -p /MASt3R-SLAM/checkpoints && \
+    cd /MASt3R-SLAM/checkpoints && \
+    wget -q https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth && \
+    wget -q https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth && \
+    wget -q https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl
+
+# Copy profiler utilities
+COPY mast3r_slam/py_profiler.py /profiling/py_profiler.py
+COPY mast3r_slam/run_profiled.py /profiling/run_profiled.py
+COPY mast3r_slam/profiler_patch.py /profiling/profiler_patch.py
+
+VOLUME /data
+VOLUME /output
+
+WORKDIR /MASt3R-SLAM
+
+# Default: run the profiler
+CMD ["python", "/profiling/run_profiled.py", "--help"]

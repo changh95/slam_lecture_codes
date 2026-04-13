@@ -1,0 +1,62 @@
+ARG BASE_IMAGE=ros:noetic
+FROM ${BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -y && apt-get upgrade -y && \
+    apt-get install -y \
+    build-essential cmake git wget \
+    python3-wstool python3-catkin-tools \
+    protobuf-compiler libprotobuf-dev \
+    autoconf libceres-dev libeigen3-dev \
+    libgoogle-glog-dev libgflags-dev \
+    ros-noetic-cmake-modules \
+    ros-noetic-eigen-conversions ros-noetic-tf-conversions \
+    ros-noetic-pcl-ros ros-noetic-pcl-conversions \
+    ros-noetic-cv-bridge ros-noetic-image-transport \
+    ros-noetic-tf ros-noetic-tf2 ros-noetic-tf2-ros \
+    ros-noetic-interactive-markers ros-noetic-visualization-msgs \
+    ros-noetic-geometry-msgs ros-noetic-nav-msgs ros-noetic-std-srvs \
+    ros-noetic-message-runtime ros-noetic-message-generation \
+    ros-noetic-genmsg ros-noetic-rosbag && \
+    apt-get clean
+
+# Install easy_profiler from source
+COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
+RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh
+
+# Clone voxblox and its catkin dependencies
+RUN mkdir -p /catkin_ws/src && cd /catkin_ws/src && \
+    git clone https://github.com/catkin/catkin_simple.git && \
+    git clone https://github.com/ethz-asl/eigen_catkin.git && \
+    git clone https://github.com/ethz-asl/eigen_checks.git && \
+    git clone https://github.com/ethz-asl/gflags_catkin.git && \
+    git clone https://github.com/ethz-asl/glog_catkin.git && \
+    git clone https://github.com/ethz-asl/protobuf_catkin.git && \
+    git clone https://github.com/ethz-asl/minkindr.git && \
+    git clone https://github.com/ethz-asl/minkindr_ros.git && \
+    git clone https://github.com/ethz-asl/voxblox.git --recursive
+
+# Apply easy_profiler patches (source instrumentation + CMakeLists)
+COPY voxblox/profiler_patch.sh /tmp/profiler_patch.sh
+COPY voxblox/cmake_patch.sh /tmp/cmake_patch.sh
+RUN bash /tmp/cmake_patch.sh && \
+    bash /tmp/profiler_patch.sh && \
+    rm /tmp/profiler_patch.sh /tmp/cmake_patch.sh
+
+WORKDIR /catkin_ws
+# Remove voxblox_rviz_plugin (needs ros-noetic-rviz which we don't install)
+# Also strip the dependency from voxblox_ros package.xml and CMakeLists.txt
+RUN rm -rf /catkin_ws/src/voxblox/voxblox_rviz_plugin && \
+    sed -i '/voxblox_rviz_plugin/d' /catkin_ws/src/voxblox/voxblox_ros/package.xml && \
+    sed -i '/voxblox_rviz_plugin/d' /catkin_ws/src/voxblox/voxblox_ros/CMakeLists.txt
+RUN catkin init && \
+    catkin config --extend /opt/ros/noetic \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DWITH_PROFILER=ON && \
+    catkin build voxblox_ros
+
+RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh
+
+VOLUME /output
+WORKDIR /data
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

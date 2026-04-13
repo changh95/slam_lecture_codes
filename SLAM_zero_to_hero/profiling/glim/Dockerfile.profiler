@@ -1,8 +1,6 @@
-ARG BASE_IMAGE=nvidia/cuda:12.6.3-devel-ubuntu24.04
+ARG BASE_IMAGE=docker.io/ros:noetic
 FROM ${BASE_IMAGE}
 ARG DEBIAN_FRONTEND=noninteractive
-ENV NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
-ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git wget ca-certificates ninja-build \
@@ -11,8 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libatlas-base-dev libsuitesparse-dev libtbb-dev \
     libspdlog-dev libfmt-dev \
     libglfw3-dev libglm-dev libpng-dev \
-    libgtest-dev nlohmann-json3-dev && \
+    libgtest-dev nlohmann-json3-dev \
+    ros-noetic-cv-bridge ros-noetic-tf2-ros ros-noetic-rosbag \
+    ros-noetic-pcl-ros ros-noetic-image-transport && \
     rm -rf /var/lib/apt/lists/*
+
+# Install newer CMake (gtsam_points requires >= 3.22, noetic ships 3.16)
+RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-aarch64.tar.gz | \
+    tar xz -C /usr/local --strip-components=1 || \
+    (wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz | \
+    tar xz -C /usr/local --strip-components=1)
 
 COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
 RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh
@@ -44,22 +50,31 @@ RUN git clone https://github.com/koide3/gtsam_points.git -b v1.0.0 --recursive &
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam_points
 
-# Clone GLIM
-RUN git clone https://github.com/koide3/glim.git -b v1.0.0 --recursive
-
-# Apply profiler patches
-COPY glim/patches/CMakeLists.txt /glim/CMakeLists.txt
-COPY glim/patches/cloud_preprocessor.cpp /glim/src/glim/preprocess/cloud_preprocessor.cpp
-COPY glim/patches/odometry_estimation_imu.cpp /glim/src/glim/odometry/odometry_estimation_imu.cpp
-COPY glim/patches/sub_mapping.cpp /glim/src/glim/mapping/sub_mapping.cpp
-COPY glim/patches/global_mapping.cpp /glim/src/glim/mapping/global_mapping.cpp
-COPY glim/patches/global_mapping_pose_graph.cpp /glim/src/glim/mapping/global_mapping_pose_graph.cpp
-
+# Build GLIM with profiler
+COPY glim/src /glim
 RUN cd /glim && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DBUILD_WITH_EASY_PROFILER=ON \
              -DBUILD_WITH_CUDA=OFF && \
     make -j$(nproc) && make install && ldconfig
 
+# Build glim_ros1 (provides glim_rosbag offline processor)
+RUN git clone https://github.com/koide3/glim_ros1.git
+
+# Patch glim_rosbag.cpp to add easy_profiler init/dump + signal handler
+COPY glim/profiler_patch.sh /tmp/profiler_patch.sh
+RUN chmod +x /tmp/profiler_patch.sh && \
+    /tmp/profiler_patch.sh /glim_ros1/src/glim_rosbag.cpp && \
+    cd /glim_ros1 && \
+    sed -i '/target_link_libraries(glim_rosbag/i find_package(easy_profiler REQUIRED)' CMakeLists.txt && \
+    sed -i 's/target_link_libraries(glim_rosbag/target_link_libraries(glim_rosbag easy_profiler/' CMakeLists.txt && \
+    mkdir build && cd build && \
+    . /opt/ros/noetic/setup.sh && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DBUILD_WITH_EASY_PROFILER" && \
+    make -j$(nproc) && make install && ldconfig
+
 VOLUME /output
 WORKDIR /data
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

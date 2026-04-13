@@ -1,0 +1,109 @@
+# GPU-accelerated GLIM profiler (same v1.0.0 easy_profiler patches as the CPU
+# variant, but built with CUDA so ScanRegistration uses IntegratedVGICPFactorGPU).
+#
+# CUDA 12.1 is used because CUDA 12.5+ has a thrust::device_ptr ambiguity that
+# breaks gtsam_points v1.0.0. CUDA 12.1's sm_90 PTX forward-compats to newer
+# GPUs (Blackwell, Hopper Next) via JIT.
+FROM nvidia/cuda:12.1.0-devel-ubuntu20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
+# ROS Noetic on top of the CUDA image
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gnupg lsb-release && \
+    curl -sSL 'https://raw.githubusercontent.com/ros/rosdistro/master/ros.key' -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros1.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ros-noetic-ros-base \
+    ros-noetic-cv-bridge ros-noetic-tf2-ros ros-noetic-rosbag \
+    ros-noetic-pcl-ros ros-noetic-image-transport && \
+    rm -rf /var/lib/apt/lists/*
+
+# Dev deps (skip libeigen3-dev; Ubuntu 20.04 ships 3.3.7 which lacks
+# __device__ inverse, required by gtsam_points CUDA kernels)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git wget ca-certificates ninja-build \
+    python3 python3-pip \
+    libpcl-dev libopencv-dev \
+    libboost-all-dev libgoogle-glog-dev libgflags-dev \
+    libatlas-base-dev libsuitesparse-dev libtbb-dev \
+    libspdlog-dev libfmt-dev \
+    libgl1-mesa-dev mesa-common-dev \
+    libglfw3-dev libglm-dev libpng-dev \
+    libgtest-dev nlohmann-json3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Newer CMake (gtsam_points needs >= 3.22; noetic ships 3.16)
+RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-$(uname -m).tar.gz | \
+    tar xz -C /usr/local --strip-components=1
+
+# Eigen 3.4.0 from source (header-only)
+RUN git clone https://gitlab.com/libeigen/eigen.git -b 3.4.0 --depth 1 && \
+    cd eigen && mkdir build && cd build && \
+    cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make install && \
+    cd / && rm -rf eigen
+
+COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
+RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh
+
+# GTSAM 4.2.0
+RUN git clone https://github.com/borglab/gtsam.git -b 4.2.0 && \
+    cd gtsam && mkdir build && cd build && \
+    cmake .. -DGTSAM_BUILD_TESTS=OFF \
+             -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
+             -DGTSAM_USE_SYSTEM_EIGEN=ON \
+             -DCMAKE_BUILD_TYPE=Release \
+             -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
+    make -j$(nproc) && make install && ldconfig && \
+    cd / && rm -rf gtsam
+
+# iridescence
+RUN git clone https://github.com/koide3/iridescence.git --recursive && \
+    cd iridescence && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) && make install && ldconfig && \
+    cd / && rm -rf iridescence
+
+# gtsam_points v1.0.0 WITH CUDA
+# v1.0.0 is missing <GL/gl.h> before <cuda_gl_interop.h>; patch in both
+# translation units that use cuda_gl_interop.
+RUN git clone https://github.com/koide3/gtsam_points.git -b v1.0.0 --recursive && \
+    cd gtsam_points && \
+    sed -i '/#include <cuda_gl_interop.h>/i #include <GL/gl.h>' src/gtsam_points/cuda/gl_buffer_map.cu && \
+    sed -i '/#include <cuda_gl_interop.h>/i #include <GL/gl.h>' include/gtsam_points/cuda/gl_buffer_map.hpp 2>/dev/null || true && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DBUILD_WITH_CUDA=ON \
+             -DCMAKE_CUDA_ARCHITECTURES="75;80;86;87;89;90" \
+             -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
+    make -j$(nproc) && make install && ldconfig && \
+    cd / && rm -rf gtsam_points
+
+# GLIM v1.0.0 with profiler patches AND CUDA
+COPY glim/src /glim
+RUN cd /glim && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DBUILD_WITH_EASY_PROFILER=ON \
+             -DBUILD_WITH_CUDA=ON && \
+    make -j$(nproc) && make install && ldconfig
+
+# glim_ros1 with profiler dump patch
+RUN git clone https://github.com/koide3/glim_ros1.git
+COPY glim/profiler_patch.sh /tmp/profiler_patch.sh
+RUN chmod +x /tmp/profiler_patch.sh && \
+    /tmp/profiler_patch.sh /glim_ros1/src/glim_rosbag.cpp && \
+    cd /glim_ros1 && \
+    sed -i '/target_link_libraries(glim_rosbag/i find_package(easy_profiler REQUIRED)' CMakeLists.txt && \
+    sed -i 's/target_link_libraries(glim_rosbag/target_link_libraries(glim_rosbag easy_profiler/' CMakeLists.txt && \
+    mkdir build && cd build && \
+    . /opt/ros/noetic/setup.sh && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DBUILD_WITH_EASY_PROFILER" && \
+    make -j$(nproc) && make install && ldconfig
+
+VOLUME /output
+WORKDIR /data
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

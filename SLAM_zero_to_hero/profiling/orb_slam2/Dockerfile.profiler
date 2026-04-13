@@ -16,21 +16,10 @@ RUN apt-get update -y && apt-get upgrade -y && \
 COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
 RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh
 
-RUN git clone https://github.com/changh95/Portable_ORB_SLAM2.git && \
-    cd Portable_ORB_SLAM2 && \
-    python3 ./buildDeps.py
-
-COPY orb_slam2/patches/ /tmp/orbslam2_patches/
-RUN cp /tmp/orbslam2_patches/CMakeLists.txt /Portable_ORB_SLAM2/CMakeLists.txt && \
-    cp /tmp/orbslam2_patches/System.cc /Portable_ORB_SLAM2/src/System.cc && \
-    cp /tmp/orbslam2_patches/Tracking.cc /Portable_ORB_SLAM2/src/Tracking.cc && \
-    cp /tmp/orbslam2_patches/ORBextractor.cc /Portable_ORB_SLAM2/src/ORBextractor.cc && \
-    cp /tmp/orbslam2_patches/ORBmatcher.cc /Portable_ORB_SLAM2/src/ORBmatcher.cc && \
-    cp /tmp/orbslam2_patches/LocalMapping.cc /Portable_ORB_SLAM2/src/LocalMapping.cc && \
-    cp /tmp/orbslam2_patches/LoopClosing.cc /Portable_ORB_SLAM2/src/LoopClosing.cc && \
-    cp /tmp/orbslam2_patches/Optimizer.cc /Portable_ORB_SLAM2/src/Optimizer.cc
-
-RUN cd /Portable_ORB_SLAM2 && python3 ./build.py --profiler
+COPY orb_slam2/src /Portable_ORB_SLAM2
+RUN cd /Portable_ORB_SLAM2 && \
+    python3 ./buildDeps.py && \
+    python3 ./build.py --profiler
 
 VOLUME /output
 WORKDIR /Portable_ORB_SLAM2
