@@ -1,0 +1,12 @@
+# Cloned upstream sources (profiler fetches these at build time)
+profiling/*/src/
+profiling/results/
+profiling/__pycache__/
+
+# Python venv + caches
+venv/
+**/__pycache__/
+**/*.pyc
+
+# oh-my-claudecode state
+.omc/

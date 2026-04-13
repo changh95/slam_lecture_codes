@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Download Replica dataset to ~/data/replica/
-using the official multi-part archive from GitHub releases.
+Download Replica dataset (NICE-SLAM preprocessed) to ~/data/replica/
+with tqdm progress bars, then unzip and remove zip file.
 
-Reference: https://github.com/facebookresearch/Replica-Dataset
+This downloads the NICE-SLAM preprocessed Replica sequences with rendered
+RGB + depth frames and camera poses - directly usable for SLAM benchmarking
+(nvblox, gaussian_splatting_slam, pin_slam, nvblox, etc.).
+
+For the raw mesh+texture (Facebook original), use Replica-Dataset upstream
+instead: https://github.com/facebookresearch/Replica-Dataset
 """
 
 import os
 import sys
-import subprocess
+import zipfile
 import urllib.request
 from pathlib import Path
 
@@ -20,10 +25,11 @@ except ImportError:
     from tqdm import tqdm
 
 
-BASE_URL = "https://github.com/facebookresearch/Replica-Dataset/releases/download/v1.0"
-
-# 17 parts: partaa through partaq
-PARTS = [f"replica_v1_0.tar.gz.part{chr(ord('a'))}{chr(ord('a') + i)}" for i in range(17)]
+REPLICA_URLS = {
+    # NICE-SLAM preprocessed Replica (~43 GB): 8 scenes with RGB, depth, poses
+    # office0, office1, office2, office3, office4, room0, room1, room2
+    "Replica.zip": "https://cvg-data.inf.ethz.ch/nice-slam/data/Replica.zip",
+}
 
 DEST_DIR = Path.home() / "data" / "replica"
 
@@ -42,7 +48,7 @@ class TqdmDownloadHook:
                 unit="B",
                 unit_scale=True,
                 unit_divisor=1024,
-                desc=f"  ↓ {self.filename}",
+                desc=f"  > {self.filename}",
                 ncols=100,
                 miniters=1,
                 mininterval=0.5,
@@ -59,12 +65,13 @@ class TqdmDownloadHook:
             self.pbar.close()
 
 
-def download_file(url: str, dest: Path, filename: str) -> Path:
+def download_file(url: str, dest: Path) -> Path:
     """Download a file with tqdm progress bar. Skips if already exists."""
-    filepath = dest / filename
+    filepath = dest / url.split("/")[-1]
 
     if filepath.exists():
-        print(f"  ⏭  {filepath.name} already exists, skipping download.")
+        size_gb = filepath.stat().st_size / (1024**3)
+        print(f"  Skipping {filepath.name} (already exists, {size_gb:.2f} GB)")
         return filepath
 
     hook = TqdmDownloadHook(filepath.name)
@@ -76,76 +83,69 @@ def download_file(url: str, dest: Path, filename: str) -> Path:
     return filepath
 
 
+def unzip_file(zip_path: Path, dest: Path):
+    """Unzip a file with tqdm progress bar."""
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        members = zf.namelist()
+        for member in tqdm(members, desc=f"  Unzipping {zip_path.name}", ncols=100):
+            zf.extract(member, dest)
+
+
 def main():
     print("=" * 60)
-    print("  Replica Dataset Downloader")
+    print("  Replica Dataset Downloader (NICE-SLAM preprocessed)")
+    print("  https://github.com/cvg/nice-slam")
     print("=" * 60)
     print(f"\n  Destination: {DEST_DIR}")
-    print(f"  Parts:       {len(PARTS)}\n")
+    print(f"  Approximate size: ~43 GB")
+    print(f"  Contents: 8 scenes (office0-4, room0-2)")
+    print(f"    Each with: rgb/*.jpg, depth/*.png, traj.txt\n")
 
     DEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    part_files: list[Path] = []
+    zip_files: list[Path] = []
 
     # --- Download ---
-    print("📥 Downloading parts...\n")
-    for part in PARTS:
-        url = f"{BASE_URL}/{part}"
+    print("Downloading files...\n")
+    for filename, url in REPLICA_URLS.items():
         try:
-            pf = download_file(url, DEST_DIR, part)
-            part_files.append(pf)
+            zf = download_file(url, DEST_DIR)
+            zip_files.append(zf)
         except Exception as e:
-            print(f"  ❌ Failed to download {part}: {e}")
+            print(f"  Failed to download {filename}: {e}")
             continue
 
-    # --- Reassemble and extract ---
-    print("\n📦 Reassembling and extracting...\n")
-    combined = DEST_DIR / "replica_v1_0.tar.gz"
-    try:
-        # Concatenate all parts
-        with open(combined, "wb") as out:
-            for pf in sorted(part_files):
-                if pf.exists():
-                    print(f"  Merging {pf.name}...")
-                    with open(pf, "rb") as inp:
-                        while True:
-                            chunk = inp.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            out.write(chunk)
-
-        # Extract using tar (pigz if available, else gzip)
-        print("\n  Extracting (this may take a while)...")
-        subprocess.run(
-            ["tar", "-xzf", str(combined), "-C", str(DEST_DIR)],
-            check=True,
-        )
-        print("  ✅ Extraction complete.")
-    except Exception as e:
-        print(f"  ❌ Failed to extract: {e}")
-        print("  Try manually: cat replica_v1_0.tar.gz.part* | tar -xz")
+    # --- Unzip ---
+    print("\nExtracting archives...\n")
+    for zf in zip_files:
+        if not zf.exists():
+            continue
+        try:
+            unzip_file(zf, DEST_DIR)
+            print(f"  {zf.name} extracted.")
+        except zipfile.BadZipFile:
+            print(f"  {zf.name} is corrupted, skipping.")
+        except Exception as e:
+            print(f"  Failed to extract {zf.name}: {e}")
 
     # --- Cleanup ---
-    print("\n🧹 Removing archive files...\n")
-    for pf in part_files:
-        if pf.exists():
-            pf.unlink()
-            print(f"  🗑  Removed {pf.name}")
-    if combined.exists():
-        combined.unlink()
-        print(f"  🗑  Removed {combined.name}")
+    print("\nRemoving zip files...\n")
+    for zf in zip_files:
+        if zf.exists():
+            zf.unlink()
+            print(f"  Removed {zf.name}")
 
     # --- Summary ---
     print("\n" + "=" * 60)
-    print("  ✅ Done! Dataset installed at:")
+    print("  Done! Dataset installed at:")
     print(f"     {DEST_DIR}")
     print("=" * 60)
 
     if DEST_DIR.exists():
         print("\n  Contents:")
         for item in sorted(DEST_DIR.iterdir()):
-            kind = "📁" if item.is_dir() else "📄"
-            print(f"    {kind} {item.name}")
+            kind = "dir " if item.is_dir() else "file"
+            print(f"    [{kind}] {item.name}")
 
 
 if __name__ == "__main__":
