@@ -103,24 +103,53 @@ fi
 
 # ---------------------------------------------------------------------------
 # Patch frontend/Tracker.cpp
+#
+# Only featureTracking and geometricOutlierRejection live here. Feature
+# detection has its own file (see FeatureDetector patch below). The
+# `geometricOutlierRejection` pattern matches the first of the 2d2d/3d3d
+# overloads; that's fine, sed injects into the first match only.
 # ---------------------------------------------------------------------------
 TRACKER="${KIMERA_SRC}/src/frontend/Tracker.cpp"
 if [ -f "$TRACKER" ]; then
   insert_profiler_guard "$TRACKER"
-  insert_easy_block "$TRACKER" "Tracker::featureTracking" "SLAM/FeatureTracking" "profiler::colors::Cyan"
-  insert_easy_block "$TRACKER" "Tracker::featureDetection\b" "SLAM/FeatureExtraction" "profiler::colors::Green"
-  insert_easy_block "$TRACKER" "geometricOutlierRejection" "SLAM/RANSAC" "profiler::colors::Red"
+  insert_easy_block "$TRACKER" "void Tracker::featureTracking" "SLAM/FeatureTracking" "profiler::colors::Cyan"
+  insert_easy_block "$TRACKER" "Tracker::geometricOutlierRejection2d2d" "SLAM/RANSAC" "profiler::colors::Red"
 else
   echo "[warn] Tracker.cpp not found at $TRACKER"
 fi
 
 # ---------------------------------------------------------------------------
+# Patch frontend/feature-detector/FeatureDetector.cpp
+#
+# Upstream moved detection into its own class; the old patch searched
+# Tracker.cpp for `Tracker::featureDetection` which no longer exists and
+# silently dropped the FeatureExtraction block.
+# ---------------------------------------------------------------------------
+FEAT_DET="${KIMERA_SRC}/src/frontend/feature-detector/FeatureDetector.cpp"
+if [ -f "$FEAT_DET" ]; then
+  insert_profiler_guard "$FEAT_DET"
+  insert_easy_block "$FEAT_DET" "void FeatureDetector::featureDetection" "SLAM/FeatureExtraction" "profiler::colors::Green"
+else
+  echo "[warn] FeatureDetector.cpp not found at $FEAT_DET"
+fi
+
+# ---------------------------------------------------------------------------
 # Patch backend/VioBackend.cpp
+#
+# The old patch pattern `addVisualInertialState` matched the *call site*
+# inside spinOnce at line 167 and injected EASY_BLOCK into spinOnce's body
+# instead of the real function definition. Anchor on the typed function
+# signature so we hit the definition at line 296. `VioBackend::optimize`
+# is unambiguous (only one definition).
 # ---------------------------------------------------------------------------
 VIO_BACKEND="${KIMERA_SRC}/src/backend/VioBackend.cpp"
 if [ -f "$VIO_BACKEND" ]; then
   insert_profiler_guard "$VIO_BACKEND"
-  insert_easy_block "$VIO_BACKEND" "addVisualInertialState" "SLAM/IMUIntegration" "profiler::colors::Orange"
+  # Two overloads exist: the first at ~line 296 is the bootstrap/init path
+  # (called once), the second at ~line 430 is the per-keyframe entry point
+  # called from VioBackend::spinOnce. Anchor on the BackendInput parameter so
+  # we instrument the workhorse, not the bootstrap.
+  insert_easy_block "$VIO_BACKEND" "addVisualInertialStateAndOptimize(const BackendInput" "SLAM/BackendUpdate" "profiler::colors::Orange"
   insert_easy_block "$VIO_BACKEND" "VioBackend::optimize" "SLAM/VIOOptimization" "profiler::colors::Magenta"
 else
   echo "[warn] VioBackend.cpp not found at $VIO_BACKEND"
@@ -138,46 +167,89 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Patch pipeline/StereoImuPipeline.cpp (frame process loop)
+# Patch frontend/StereoVisionImuFrontend.cpp (per-frame processing entry)
+#
+# The old patch targeted `spinOnce` in StereoImuPipeline.cpp, but that file
+# only contains a `std::bind(&StereoImuPipeline::spinOnce, ...)` reference;
+# the real spinOnce lives in Pipeline.cpp and its body is only a 2-line
+# queue push. `StereoVisionImuFrontend::processStereoFrame` is the real
+# per-frame work: feature detection, tracking, RANSAC, stereo matching.
 # ---------------------------------------------------------------------------
-PIPELINE="${KIMERA_SRC}/src/pipeline/StereoImuPipeline.cpp"
-if [ -f "$PIPELINE" ]; then
-  insert_profiler_guard "$PIPELINE"
-  insert_easy_block "$PIPELINE" "spinOnce\b" "SLAM/FrameProcess" "profiler::colors::Blue"
+FRONTEND="${KIMERA_SRC}/src/frontend/StereoVisionImuFrontend.cpp"
+if [ -f "$FRONTEND" ]; then
+  insert_profiler_guard "$FRONTEND"
+  insert_easy_block "$FRONTEND" "StereoVisionImuFrontend::processStereoFrame" "SLAM/FrameProcess" "profiler::colors::Blue"
 else
-  # Try MonoImuPipeline
-  PIPELINE="${KIMERA_SRC}/src/pipeline/MonoImuPipeline.cpp"
-  if [ -f "$PIPELINE" ]; then
-    insert_profiler_guard "$PIPELINE"
-    insert_easy_block "$PIPELINE" "spinOnce\b" "SLAM/FrameProcess" "profiler::colors::Blue"
+  FRONTEND="${KIMERA_SRC}/src/frontend/MonoVisionImuFrontend.cpp"
+  if [ -f "$FRONTEND" ]; then
+    insert_profiler_guard "$FRONTEND"
+    insert_easy_block "$FRONTEND" "MonoVisionImuFrontend::processFrame" "SLAM/FrameProcess" "profiler::colors::Blue"
   else
-    echo "[warn] Neither StereoImuPipeline.cpp nor MonoImuPipeline.cpp found"
+    echo "[warn] Neither StereoVisionImuFrontend.cpp nor MonoVisionImuFrontend.cpp found"
   fi
 fi
 
 # ---------------------------------------------------------------------------
 # Patch examples/KimeraVIO.cpp (main entry: enable profiler + dump on exit)
+#
+# Uses a Python helper because:
+#   1. `grep -q EASY_PROFILER_ENABLE` false-matches the stub `#define
+#      EASY_PROFILER_ENABLE` line that `insert_profiler_guard` just added,
+#      which makes the previous `sed -i` path silently skip the insertion.
+#   2. Kimera-VIO's main() ends with
+#          return is_pipeline_successful ? EXIT_SUCCESS : EXIT_FAILURE;
+#      so searching for "return 0;" finds nothing and the dump insertion
+#      is silently skipped. Match any terminal return statement instead.
 # ---------------------------------------------------------------------------
 MAIN="${KIMERA_SRC}/examples/KimeraVIO.cpp"
 if [ -f "$MAIN" ]; then
   insert_profiler_guard "$MAIN"
-  # Insert EASY_PROFILER_ENABLE after opening brace of main()
-  if ! grep -q "EASY_PROFILER_ENABLE" "$MAIN"; then
-    local_line=$(grep -n "^int main\b" "$MAIN" | head -1 | cut -d: -f1)
-    if [ -n "$local_line" ]; then
-      brace_line=$(awk "NR>=${local_line} && /\{/{print NR; exit}" "$MAIN")
-      sed -i "${brace_line}a\\  EASY_PROFILER_ENABLE;" "$MAIN"
-      echo "[patched] $MAIN: EASY_PROFILER_ENABLE added"
-    fi
-  fi
-  # Insert dump before return 0
-  if ! grep -q "dumpBlocksToFile" "$MAIN"; then
-    ret_line=$(grep -n "return 0;" "$MAIN" | tail -1 | cut -d: -f1)
-    if [ -n "$ret_line" ]; then
-      sed -i "${ret_line}i\\#ifdef BUILD_WITH_EASY_PROFILER\\n  profiler::dumpBlocksToFile(\"/output/kimera_profile.prof\");\\n  std::cout << \"[Profiler] Saved to /output/kimera_profile.prof\" << std::endl;\\n#endif" "$MAIN"
-      echo "[patched] $MAIN: dumpBlocksToFile added before return"
-    fi
-  fi
+  python3 - "$MAIN" << 'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+
+# Ensure easy/profiler.h is included inside the guard block (the stub-only
+# guard from insert_profiler_guard does not include it).
+if "easy/profiler.h" not in s:
+    s = s.replace(
+        "#ifdef BUILD_WITH_EASY_PROFILER\n",
+        "#ifdef BUILD_WITH_EASY_PROFILER\n#include <easy/profiler.h>\n",
+        1,
+    )
+
+# Enable the profiler at the top of main(). profiler::setEnabled(true) is
+# the library call that EASY_PROFILER_ENABLE expands to; calling it directly
+# avoids ambiguity with the stub #define of the same name.
+if "profiler::setEnabled" not in s:
+    s = re.sub(
+        r"(int\s+main\s*\([^)]*\)\s*\{)",
+        lambda m: m.group(0)
+        + "\n#ifdef BUILD_WITH_EASY_PROFILER\n  profiler::setEnabled(true);\n#endif",
+        s,
+        count=1,
+    )
+
+# Insert dumpBlocksToFile before the LAST return statement in the file.
+# Using chr(34) avoids quote-escaping issues inside the heredoc.
+if "dumpBlocksToFile" not in s:
+    Q = chr(34)
+    DUMP = (
+        "#ifdef BUILD_WITH_EASY_PROFILER\n"
+        "  profiler::dumpBlocksToFile(" + Q + "/output/kimera_profile.prof" + Q + ");\n"
+        "  fprintf(stderr, " + Q + "[easy_profiler] wrote /output/kimera_profile.prof\\n" + Q + ");\n"
+        "#endif\n"
+    )
+    matches = list(re.finditer(r"^[ \t]*return [^;]*;", s, flags=re.MULTILINE))
+    if not matches:
+        print("[warn] no return statement found in main", file=sys.stderr)
+    else:
+        last = matches[-1]
+        s = s[: last.start()] + DUMP + s[last.start():]
+
+open(p, "w").write(s)
+print("[patched] KimeraVIO.cpp: profiler::setEnabled + dumpBlocksToFile")
+PY
 else
   echo "[warn] KimeraVIO.cpp not found at $MAIN"
 fi

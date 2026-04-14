@@ -6,7 +6,7 @@ Supports two modes:
   1. live   - integrates frames one by one and pushes incremental mesh updates to Rerun
   2. replay - loads a previously saved .ply mesh file and displays it in Rerun
 
-Dataset layouts supported (same as track_nvblox_profiled.py):
+Dataset layouts supported:
   - 3DMatch / Replica:  depth/ color/ pose/ subdirectories
   - TUM RGB-D format:   depth.txt, rgb.txt, groundtruth.txt
 
@@ -42,7 +42,7 @@ import rerun.blueprint as rrb
 
 
 # ---------------------------------------------------------------------------
-# Dataset helpers (duplicated from track_nvblox_profiled.py for standalone use)
+# Dataset helpers
 # ---------------------------------------------------------------------------
 
 def _load_pose_file(path: str) -> np.ndarray:
