@@ -45,6 +45,7 @@ header = '''#ifdef BUILD_WITH_EASY_PROFILER
 #define EASY_BLOCK(...)
 #define EASY_END_BLOCK
 #define EASY_FUNCTION(...)
+#define EASY_THREAD(...)
 #define EASY_PROFILER_ENABLE
 #endif
 
@@ -57,25 +58,66 @@ PY
   fi
 }
 
-# ---- TSDF integrator ----
+# Inject EASY_THREAD("name") at the top of a worker function so that
+# blocks logged from inside it are actually captured (easy_profiler ignores
+# blocks from threads it has never seen).
+inject_thread_register() {
+  local file="$1"
+  local funcname="$2"
+  local thread_name="$3"
+  python3 - "$file" "$funcname" "$thread_name" << 'PY'
+import re, sys
+path, funcname, thread_name = sys.argv[1:4]
+with open(path) as f:
+    src = f.read()
+pat = re.compile(re.escape(funcname) + r"\s*\([^{]*?\)\s*\{", re.DOTALL)
+injection = (
+    f'\n#ifdef BUILD_WITH_EASY_PROFILER\n'
+    f'  EASY_THREAD("{thread_name}");\n'
+    f'#endif'
+)
+new_src, n = pat.subn(lambda m: m.group(0) + injection, src, count=1)
+if n == 0:
+    print(f"[warn] no match for {funcname} in {path}", file=sys.stderr)
+else:
+    with open(path, "w") as f:
+        f.write(new_src)
+    print(f"[ok] EASY_THREAD({thread_name}) -> {funcname}")
+PY
+}
+
+# ---- TSDF integrator (inner voxblox library) ----
+# Top-level integratePointCloud captures the full integration window
+# (thread spawn + worker join + post-process). The worker thread bodies
+# (integrateFunction) need EASY_THREAD so their blocks aren't dropped.
 TSDF_SRC="${VOXBLOX_SRC}/voxblox/src/integrator/tsdf_integrator.cc"
 add_profiler_header "$TSDF_SRC"
-inject_block "$TSDF_SRC" "SimpleTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
-inject_block "$TSDF_SRC" "MergedTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
-inject_block "$TSDF_SRC" "FastTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
-inject_block "$TSDF_SRC" "TsdfIntegratorBase::integrateFunction" "SLAM/Preprocessing"
+inject_block          "$TSDF_SRC" "SimpleTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
+inject_block          "$TSDF_SRC" "MergedTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
+inject_block          "$TSDF_SRC" "FastTsdfIntegrator::integratePointCloud"   "SLAM/TsdfIntegration"
+inject_thread_register "$TSDF_SRC" "SimpleTsdfIntegrator::integrateFunction"  "tsdf_worker"
+inject_thread_register "$TSDF_SRC" "FastTsdfIntegrator::integrateFunction"    "tsdf_worker"
+inject_block          "$TSDF_SRC" "SimpleTsdfIntegrator::integrateFunction"   "SLAM/TsdfIntegration/Worker"
+inject_block          "$TSDF_SRC" "FastTsdfIntegrator::integrateFunction"     "SLAM/TsdfIntegration/Worker"
 
 # ---- ESDF integrator ----
 ESDF_SRC="${VOXBLOX_SRC}/voxblox/src/integrator/esdf_integrator.cc"
 if [ -f "$ESDF_SRC" ]; then
   add_profiler_header "$ESDF_SRC"
-  inject_block "$ESDF_SRC" "EsdfIntegrator::updateFromTsdfLayer" "SLAM/EsdfIntegration"
+  inject_block "$ESDF_SRC" "EsdfIntegrator::updateFromTsdfLayer"      "SLAM/EsdfIntegration"
+  inject_block "$ESDF_SRC" "EsdfIntegrator::updateFromTsdfLayerBatch" "SLAM/EsdfIntegration/Batch"
 fi
 
-# ---- Mesh integrator ----
-MESH_SRC="${VOXBLOX_SRC}/voxblox/src/mesh/mesh_integrator.cc"
-if [ -f "$MESH_SRC" ]; then
-  add_profiler_header "$MESH_SRC"
+# ---- Mesh integrator (header-only template) ----
+# The mesh code lives in mesh_integrator.h because MeshIntegrator is a
+# class template. Injection into the header instruments every TU that
+# instantiates it, but the inline-define guard keeps the build clean.
+MESH_HDR="${VOXBLOX_SRC}/voxblox/include/voxblox/mesh/mesh_integrator.h"
+if [ -f "$MESH_HDR" ]; then
+  add_profiler_header "$MESH_HDR"
+  inject_block          "$MESH_HDR" "generateMesh"               "SLAM/MeshGeneration"
+  inject_thread_register "$MESH_HDR" "generateMeshBlocksFunction" "mesh_worker"
+  inject_block          "$MESH_HDR" "generateMeshBlocksFunction" "SLAM/MeshGeneration/Worker"
 fi
 
 # ---- voxblox_ros main server ----
@@ -83,6 +125,7 @@ SERVER_SRC="${VOXBLOX_SRC}/voxblox_ros/src/tsdf_server.cc"
 if [ -f "$SERVER_SRC" ]; then
   add_profiler_header "$SERVER_SRC"
   inject_block "$SERVER_SRC" "TsdfServer::insertPointcloud" "SLAM/FrameProcess"
+  inject_block "$SERVER_SRC" "TsdfServer::generateMesh"     "SLAM/MeshPublish"
 fi
 
 # ---- profiler enable + signal handler in main ----
