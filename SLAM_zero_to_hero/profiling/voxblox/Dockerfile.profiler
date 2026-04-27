@@ -56,7 +56,17 @@ RUN catkin init && \
 
 RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh
 
+# Bake the bag_player + profile runner into the image so callers do not
+# need to mount them from the host. bag_player.py works around an
+# upstream rosbag stall on noetic/aarch64; profile_run.sh launches
+# voxblox, pushes the bag through it, and SIGINTs voxblox so its
+# atexit() handler dumps the easy_profiler trace.
+COPY voxblox/bag_player.py /app/bag_player.py
+COPY voxblox/profile_run.sh /app/profile_run.sh
+RUN chmod +x /app/profile_run.sh
+
+VOLUME /data
 VOLUME /output
 WORKDIR /data
 ENTRYPOINT ["/ros_entrypoint.sh"]
-CMD ["bash"]
+CMD ["/app/profile_run.sh"]

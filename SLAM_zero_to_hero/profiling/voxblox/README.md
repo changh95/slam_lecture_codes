@@ -59,15 +59,14 @@ the bag through voxblox with our own Python player
 (`rerun_viz/voxblox/bag_player.py`, which just iterates messages via the
 `rosbag` library and republishes them via `rospy`).
 
+`profile_run.sh` and `bag_player.py` are baked into the image as `/app/`,
+so the run is a single command:
+
 ```bash
-# From SLAM_zero_to_hero/
 docker run --rm \
   -v /path/to/cow_and_lady_dataset.bag:/data/input.bag:ro \
-  -v $PWD/rerun_viz/voxblox/bag_player.py:/app/bag_player.py:ro \
-  -v $PWD/profiling/voxblox/profile_run.sh:/app/profile_run.sh:ro \
   -v /tmp/voxblox_profile_out:/output \
-  --entrypoint bash \
-  slam:voxblox-profiler /app/profile_run.sh
+  slam:voxblox-profiler
 ```
 
 Environment overrides:
