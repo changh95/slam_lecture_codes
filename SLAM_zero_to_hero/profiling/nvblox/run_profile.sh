@@ -17,6 +17,7 @@ NUM_FRAMES="${NUM_FRAMES:-500}"
 OUTPUT_TIMING="${OUTPUT_TIMING:-/output/nvblox_timing.txt}"
 OUTPUT_MESH="${OUTPUT_MESH:-/output/nvblox_mesh.ply}"
 OUTPUT_CSV="${OUTPUT_CSV:-/output/nvblox_stats.csv}"
+OUTPUT_JSON="${OUTPUT_JSON:-/output/nvblox.json}"
 
 mkdir -p "$(dirname "$OUTPUT_TIMING")"
 
@@ -37,4 +38,5 @@ echo "[nvblox-profiler] csv       : $OUTPUT_CSV"
   --mesh_output_path="$OUTPUT_MESH"
 
 python3 /app/parse_nvblox_timing.py "$OUTPUT_TIMING" -o "$OUTPUT_CSV"
+python3 /app/nvblox_timing_to_json.py "$OUTPUT_TIMING" -o "$OUTPUT_JSON"
 echo "[nvblox-profiler] done."

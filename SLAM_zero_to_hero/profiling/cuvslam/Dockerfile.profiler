@@ -21,6 +21,11 @@ RUN pip3 install --no-cache-dir numpy pillow rerun-sdk && \
 COPY cuvslam/py_profiler.py /app/py_profiler.py
 COPY cuvslam/track_kitti_profiled.py /app/track_kitti_profiled.py
 COPY cuvslam/track_kitti_gui.py /app/track_kitti_gui.py
+COPY cuvslam/run_profile.sh /app/run_profile.sh
+RUN chmod +x /app/run_profile.sh
 
+VOLUME /data
 VOLUME /output
 WORKDIR /app
+
+CMD ["/app/run_profile.sh"]

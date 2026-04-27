@@ -69,20 +69,12 @@ RUN cd /Kimera-VIO && mkdir build && cd build && \
              -DWITH_PROFILER=ON && \
     make -j$(nproc)
 
+COPY kimera/run_profile.sh /app/run_profile.sh
+RUN chmod +x /app/run_profile.sh
+
 VOLUME /output
 VOLUME /data
 WORKDIR /Kimera-VIO
 
-# Run EuRoC stereo-VIO and dump profile on exit
-# Mount EuRoC dataset at /data and params at /params (optional override)
-CMD ["bash", "-c", \
-    "/Kimera-VIO/build/stereoVIOEuroc \
-        --flagfile=/Kimera-VIO/params/EuRoC/flags/stereoVIOEuroc.flags \
-        --logtostderr=1 \
-        --output_path=/output \
-        --left_imgs_path=/data/cam0/data \
-        --right_imgs_path=/data/cam1/data \
-        --imu_path=/data/imu0/data.csv \
-        --gt_path=/data/state_groundtruth_estimate0/data.csv \
-        --params_folder_path=/Kimera-VIO/params/EuRoC \
-        2>&1 | tee /output/kimera_run.log"]
+# Mount the EuRoC sequence directory (parent of mav0/) at /data.
+CMD ["/app/run_profile.sh"]
