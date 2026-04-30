@@ -6,11 +6,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-COPY . /workspace/1_10
+COPY . /workspace/1_9
 
-RUN cd /workspace/1_10 && \
+RUN cd /workspace/1_9 && \
     rm -rf build && mkdir build && cd build && \
     cmake .. && \
     make -j4
 
-WORKDIR /workspace/1_10/build
+WORKDIR /workspace/1_9/build

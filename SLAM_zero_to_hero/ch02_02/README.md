@@ -1,6 +1,6 @@
-# Building C++ Libraries for SLAM
+# Basic C++ Programming for SLAM
 
-This tutorial covers how to build and use C++ libraries - an essential skill for SLAM development where you'll work with Eigen, OpenCV, PCL, g2o, GTSAM, and more.
+This tutorial covers fundamental C++ programming concepts essential for SLAM development.
 
 ## How to build
 
@@ -16,62 +16,53 @@ make -j
 
 Docker build:
 ```bash
-docker build . -t slam_zero_to_hero:1_10
+docker build . -t slam_zero_to_hero:1_9
 ```
 
 ## How to run
 
 Local:
 ```bash
-./build/use_static_lib
-./build/use_shared_lib
-./build/use_header_only
+./build/for_loop
+./build/while_loop
+./build/vector
+./build/map
+./build/unordered_map
+./build/template_function
+./build/template_class
+./build/smart_pointers
 ```
 
 Docker:
 ```bash
-docker run -it --rm slam_zero_to_hero:1_10
+docker run -it --rm slam_zero_to_hero:1_9
 ```
 
 ---
 
 ## Topics Covered
 
-### 1. Library Types
+### 1. Control Flow
+- **for_loop**: Different styles of for loops (index-based, range-based)
+- **while_loop**: While and do-while loops
 
-| Type | Extension | Linking | Use Case |
-|------|-----------|---------|----------|
-| **Static** | `.a` (Linux), `.lib` (Windows) | Compile-time | Eigen, small libs |
-| **Shared** | `.so` (Linux), `.dll` (Windows) | Run-time | OpenCV, PCL |
-| **Header-only** | `.hpp` / `.h` | Include only | Eigen, Sophus |
+### 2. STL Containers
+- **vector**: Dynamic arrays with push_back, pop_back, clear
+- **map**: Ordered key-value pairs (sorted by key)
+- **unordered_map**: Hash-based key-value pairs (faster lookup)
 
-### 2. CMake Concepts
+### 3. Templates
+- **template_function**: Generic functions that work with any type
+- **template_class**: Generic classes (commonly used in Eigen, OpenCV)
 
-- `add_library(name STATIC/SHARED sources...)` - Create a library
-- `target_include_directories()` - Specify header locations
-- `target_link_libraries()` - Link libraries together
-- `find_package()` - Find installed libraries
-- `PUBLIC/PRIVATE/INTERFACE` - Visibility of dependencies
-
-### 3. Project Structure
-
-```
-project/
-├── CMakeLists.txt
-├── include/
-│   └── mylib/
-│       └── mylib.hpp      # Public headers
-├── src/
-│   └── mylib.cpp          # Implementation
-└── examples/
-    └── main.cpp           # Usage example
-```
+### 4. Memory Management
+- **smart_pointers**: unique_ptr, shared_ptr, weak_ptr (essential for SLAM)
 
 ---
 
-## Why This Matters for SLAM
+## Why These Matter for SLAM
 
-- **Eigen**: Header-only library, just include and use
-- **OpenCV**: Shared library, needs `find_package(OpenCV)` and linking
-- **g2o/GTSAM**: Can be static or shared, need proper CMake setup
-- **Your own SLAM modules**: Often organized as libraries for reusability
+- **Containers**: Store keypoints, descriptors, map points, keyframes
+- **Templates**: Eigen matrices, OpenCV Mat operations
+- **Smart Pointers**: Memory management for map points, keyframes in ORB-SLAM, etc.
+- **Range-based loops**: Efficient iteration over point clouds, features
