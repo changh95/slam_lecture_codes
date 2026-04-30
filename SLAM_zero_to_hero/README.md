@@ -35,37 +35,41 @@ echo "xhost +local:docker" >> ~/.profile
 
 ## Table of contents
 
-- Chapter 1: Introduction to SLAM
-  - 1.1 Lecture introduction
-  - 1.2 Mobile robotics
-  - 1.3 What is SLAM?
-  - 1.4 Hardware used in SLAM
-  - 1.5 Types of SLAM
-  - 1.6 Applications of SLAM
-  - 1.7 Tips for studying SLAM
-  - 1.8 C++ and SLAM
-  - 1.9 [Basic C++ programming](1_9)
-  - 1.10 [Building C++ libraries](1_10)
-  - 1.11 [C++ CPU profiler](1_11)
-  - 1.12 [C++ memory profiler](1_12)
-  - 1.13 Python basics
-  - 1.14 [Basic Python programming](1_14)
-  - 1.15 [PyBind](1_15)
-  - 1.16 [ROS fundamentals](1_16)
-  - 1.17 Rotation and translation in 3D space
-  - 1.18 Homogeneous coordinates
-  - 1.19 Lie Group
-  - 1.20 Basics of Lie algebra
-  - 1.21 [Eigen + Sophus library hands-on](1_21)
-  - 1.22 Continuous-time representation
-  - 1.23 Camera basics for robotics
-  - 1.24 Camera models
-  - 1.25 LiDAR basics
-  - 1.26 IMU basics
-  - 1.27 Radar basics
-  - 1.28 [Forward/Inverse kinematics](1_28)
-  - 1.29 [Sensor calibration](1_29)
-  - 1.30 [Kalibr package hands-on](1_30)
+- Part 1: Introduction to SLAM
+  - Chapter 1: What is SLAM?
+    - 1. Lecture introduction
+    - 2. Mobile robotics
+    - 3. What is SLAM?
+    - 4. Hardware used in SLAM
+    - 5. Types of SLAM
+    - 6. Applications of SLAM
+    - 7. Tips for studying SLAM
+  - Chapter 2: Basic programming 
+    - 1. C++ and SLAM
+    - 2. [Basic C++ programming](ch02_02)
+    - 3. [Building C++ libraries](ch02_03)
+    - 4. [C++ CPU profiler](ch02_04)
+    - 5. [C++ memory profiler](ch02_05)
+    - 6. Python basics
+    - 7. [Basic Python programming](ch02_07)
+    - 8. [PyBind](ch02_08)
+    - 9. [ROS fundamentals](ch02_09)
+  - Chapter 3: Basic maths
+    - 1. Rotation and translation in 3D space
+    - 2. Homogeneous coordinates
+    - 3. Lie Group
+    - 4. Basics of Lie algebra
+    - 5. [Eigen + Sophus library hands-on](1_21)
+    - 6. Continuous-time representation
+  - Chapter 4: Sensor basics
+    - 1. Camera basics for robotics
+    - 2. Camera models
+    - 3. LiDAR basics
+    - 4. IMU basics
+    - 5. Radar basics
+    - 6. [Forward/Inverse kinematics](1_28)
+    - 7. [Sensor calibration](1_29)
+    - 8. [Kalibr package hands-on](1_30)
 - Chapter 2: Dive into SLAM (Front-end)
   - 2.1 Part 2 introduction
   - 2.2 Local feature detection
