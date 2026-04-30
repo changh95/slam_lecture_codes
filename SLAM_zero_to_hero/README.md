@@ -46,20 +46,20 @@ echo "xhost +local:docker" >> ~/.profile
     - Tips for studying SLAM
   - Chapter 2: Basic programming 
     - C++ and SLAM
-    - [Basic C++ programming](ch02_02)
-    - [Building C++ libraries](ch02_03)
-    - [C++ CPU profiler](ch02_04)
-    - [C++ memory profiler](ch02_05)
+    - [Basic C++ programming](part1_ch02_02)
+    - [Building C++ libraries](part1_ch02_03)
+    - [C++ CPU profiler](part1_ch02_04)
+    - [C++ memory profiler](part1_ch02_05)
     - Python basics
-    - [Basic Python programming](ch02_07)
-    - [PyBind](ch02_08)
-    - [ROS fundamentals](ch02_09)
+    - [Basic Python programming](part1_ch02_07)
+    - [PyBind](part1_ch02_08)
+    - [ROS fundamentals](part1_ch02_09)
   - Chapter 3: Basic maths
     - Rotation and translation in 3D space
     - Homogeneous coordinates
     - Lie Group
     - Basics of Lie algebra
-    - [Eigen + Sophus library hands-on](1_21)
+    - [Eigen + Sophus library hands-on](part1_ch03_05)
     - Continuous-time representation
   - Chapter 4: Sensor basics
     - Camera basics for robotics
@@ -67,44 +67,44 @@ echo "xhost +local:docker" >> ~/.profile
     - LiDAR basics
     - IMU basics
     - Radar basics
-    - [Forward/Inverse kinematics](1_28)
-    - [Sensor calibration](1_29)
-    - [Kalibr package hands-on](1_30)
+    - [Forward/Inverse kinematics](part1_ch04_06)
+    - [Sensor calibration](part1_ch04_07)
+    - [Kalibr package hands-on](part1_ch04_08)
 - Part 2: Dive into SLAM (Front-end)
   - Chapter 1: Image processing
     - Part 2 introduction
     - Local feature detection
-    - [Classical local feature detection hands-on](2_3)
-    - [Deep local feature detection hands-on](2_4)
+    - [Classical local feature detection hands-on](part2_ch01_03)
+    - [Deep local feature detection hands-on](part2_ch01_04)
     - Feature tracking basics
     - Advanced feature tracking in practice
-    - [Feature tracking hands-on](2_7)
+    - [Feature tracking hands-on](part2_ch01_07)
     - Global feature detection
-    - [Global feature detection hands-on](2_9)
-    - [Deep global feature detection hands-on](2_10)
+    - [Global feature detection hands-on](part2_ch01_09)
+    - [Deep global feature detection hands-on](part2_ch01_10)
   - Chapter 2: Multiple view geometry
     - Epipolar geometry
-    - [Epipolar geometry hands-on](2_12)
+    - [Epipolar geometry hands-on](part2_ch02_02)
     - Homography
-    - [Homography hands-on](2_14)
-    - [MonoVO hands-on](2_15)
+    - [Homography hands-on](part2_ch02_04)
+    - [MonoVO hands-on](part2_ch02_05)
     - Triangulation
-    - [Triangulation hands-on](2_17)
+    - [Triangulation hands-on](part2_ch02_07)
     - Perspective-n-points
-    - [Perspective-n-points hands-on](2_19)
+    - [Perspective-n-points hands-on](part2_ch02_09)
     - RANSAC
     - Advanced RANSAC
-    - [RANSAC hands-on](2_22)
+    - [RANSAC hands-on](part2_ch02_12)
     - M-estimator & MAXCON
   - Chapter 3: Point cloud processing
     - What is point cloud?
     - Introduction to PCL library
     - Point cloud preprocessing
-    - [Point cloud preprocessing hands-on](2_27)
+    - [Point cloud preprocessing hands-on](part2_ch03_04)
     - ICP
-    - [ICP hands-on](2_29)
-    - [Advanced ICP hands-on](2_30)
-    - [Octree, Octomap, Bonxai hands-on](2_31)
+    - [ICP hands-on](part2_ch03_06)
+    - [Advanced ICP hands-on](part2_ch03_07)
+    - [Octree, Octomap, Bonxai hands-on](part2_ch03_08)
 - Chapter 3: Dive into SLAM (Back-end)
   - Chapter 1: Probabilistic graph inference
     - Part 3 introduction
@@ -119,11 +119,11 @@ echo "xhost +local:docker" >> ~/.profile
     - Sparsity in SLAM
     - Bundle adjustment
     - Nonlinear solvers
-    - [g2o hands-on](3_13)
-    - [GTSAM hands-on](3_14)
-    - [Ceres-solver hands-on](3_15)
-    - [SymForce hands-on](3_16)
-    - [Kimera-RPGO hands-on](3_17)
+    - [g2o hands-on](part3_ch01_13)
+    - [GTSAM hands-on](part3_ch01_14)
+    - [Ceres-solver hands-on](part3_ch01_15)
+    - [SymForce hands-on](part3_ch01_16)
+    - [Kimera-RPGO hands-on](part3_ch01_17)
   - Chapter 2: SLAM system architecture
     - SLAM systems
     - Various map representations
@@ -183,9 +183,9 @@ echo "xhost +local:docker" >> ~/.profile
     - Characteristics of auto-labeling / data-crunching SLAM
     - C++ build configuration optimization
     - SIMD acceleration and CPU optimization techniques
-    - [SIMD acceleration hands-on](5_29)
+    - [SIMD acceleration hands-on](part5_ch03_06)
     - Introduction to NVIDIA Jetson
-    - [CUDA acceleration hands-on](5_31)
+    - [CUDA acceleration hands-on](part5_ch03_08)
 - Final projects
   - Project 1: SLAM for autonomous driving
   - Project 2: SLAM for drones
