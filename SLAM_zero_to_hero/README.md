@@ -37,145 +37,155 @@ echo "xhost +local:docker" >> ~/.profile
 
 - Part 1: Introduction to SLAM
   - Chapter 1: What is SLAM?
-    - 1. Lecture introduction
-    - 2. Mobile robotics
-    - 3. What is SLAM?
-    - 4. Hardware used in SLAM
-    - 5. Types of SLAM
-    - 6. Applications of SLAM
-    - 7. Tips for studying SLAM
+    - Lecture introduction
+    - Mobile robotics
+    - What is SLAM?
+    - Hardware used in SLAM
+    - Types of SLAM
+    - Applications of SLAM
+    - Tips for studying SLAM
   - Chapter 2: Basic programming 
-    - 1. C++ and SLAM
-    - 2. [Basic C++ programming](ch02_02)
-    - 3. [Building C++ libraries](ch02_03)
-    - 4. [C++ CPU profiler](ch02_04)
-    - 5. [C++ memory profiler](ch02_05)
-    - 6. Python basics
-    - 7. [Basic Python programming](ch02_07)
-    - 8. [PyBind](ch02_08)
-    - 9. [ROS fundamentals](ch02_09)
+    - C++ and SLAM
+    - [Basic C++ programming](ch02_02)
+    - [Building C++ libraries](ch02_03)
+    - [C++ CPU profiler](ch02_04)
+    - [C++ memory profiler](ch02_05)
+    - Python basics
+    - [Basic Python programming](ch02_07)
+    - [PyBind](ch02_08)
+    - [ROS fundamentals](ch02_09)
   - Chapter 3: Basic maths
-    - 1. Rotation and translation in 3D space
-    - 2. Homogeneous coordinates
-    - 3. Lie Group
-    - 4. Basics of Lie algebra
-    - 5. [Eigen + Sophus library hands-on](1_21)
-    - 6. Continuous-time representation
+    - Rotation and translation in 3D space
+    - Homogeneous coordinates
+    - Lie Group
+    - Basics of Lie algebra
+    - [Eigen + Sophus library hands-on](1_21)
+    - Continuous-time representation
   - Chapter 4: Sensor basics
-    - 1. Camera basics for robotics
-    - 2. Camera models
-    - 3. LiDAR basics
-    - 4. IMU basics
-    - 5. Radar basics
-    - 6. [Forward/Inverse kinematics](1_28)
-    - 7. [Sensor calibration](1_29)
-    - 8. [Kalibr package hands-on](1_30)
-- Chapter 2: Dive into SLAM (Front-end)
-  - 2.1 Part 2 introduction
-  - 2.2 Local feature detection
-  - 2.3 [Classical local feature detection hands-on](2_3)
-  - 2.4 [Deep local feature detection hands-on](2_4)
-  - 2.5 Feature tracking basics
-  - 2.6 Advanced feature tracking in practice
-  - 2.7 [Feature tracking hands-on](2_7)
-  - 2.8 Global feature detection
-  - 2.9 [Global feature detection hands-on](2_9)
-  - 2.10 [Deep global feature detection hands-on](2_10)
-  - 2.11 Epipolar geometry
-  - 2.12 [Epipolar geometry hands-on](2_12)
-  - 2.13 Homography
-  - 2.14 [Homography hands-on](2_14)
-  - 2.15 [MonoVO hands-on](2_15)
-  - 2.16 Triangulation
-  - 2.17 [Triangulation hands-on](2_17)
-  - 2.18 Perspective-n-points
-  - 2.19 [Perspective-n-points hands-on](2_19)
-  - 2.20 RANSAC
-  - 2.21 Advanced RANSAC
-  - 2.22 [RANSAC hands-on](2_22)
-  - 2.23 M-estimator & MAXCON
-  - 2.24 What is point cloud?
-  - 2.25 Introduction to PCL library
-  - 2.26 Point cloud preprocessing
-  - 2.27 [Point cloud preprocessing hands-on](2_27)
-  - 2.28 ICP
-  - 2.29 [ICP hands-on](2_29)
-  - 2.30 [Advanced ICP hands-on](2_30)
-  - 2.31 [Octree, Octomap, Bonxai hands-on](2_31)
+    - Camera basics for robotics
+    - Camera models
+    - LiDAR basics
+    - IMU basics
+    - Radar basics
+    - [Forward/Inverse kinematics](1_28)
+    - [Sensor calibration](1_29)
+    - [Kalibr package hands-on](1_30)
+- Part 2: Dive into SLAM (Front-end)
+  - Chapter 1: Image processing
+    - Part 2 introduction
+    - Local feature detection
+    - [Classical local feature detection hands-on](2_3)
+    - [Deep local feature detection hands-on](2_4)
+    - Feature tracking basics
+    - Advanced feature tracking in practice
+    - [Feature tracking hands-on](2_7)
+    - Global feature detection
+    - [Global feature detection hands-on](2_9)
+    - [Deep global feature detection hands-on](2_10)
+  - Chapter 2: Multiple view geometry
+    - Epipolar geometry
+    - [Epipolar geometry hands-on](2_12)
+    - Homography
+    - [Homography hands-on](2_14)
+    - [MonoVO hands-on](2_15)
+    - Triangulation
+    - [Triangulation hands-on](2_17)
+    - Perspective-n-points
+    - [Perspective-n-points hands-on](2_19)
+    - RANSAC
+    - Advanced RANSAC
+    - [RANSAC hands-on](2_22)
+    - M-estimator & MAXCON
+  - Chapter 3: Point cloud processing
+    - What is point cloud?
+    - Introduction to PCL library
+    - Point cloud preprocessing
+    - [Point cloud preprocessing hands-on](2_27)
+    - ICP
+    - [ICP hands-on](2_29)
+    - [Advanced ICP hands-on](2_30)
+    - [Octree, Octomap, Bonxai hands-on](2_31)
 - Chapter 3: Dive into SLAM (Back-end)
-  - 3.1 Part 3 introduction
-  - 3.2 Factor graph
-  - 3.3 Nonlinear least squares
-  - 3.4 Nonlinear optimization
-  - 3.5 Optimization on manifolds
-  - 3.6 Graph-based SLAM
-  - 3.7 Schur complement
-  - 3.8 Auto-diff
-  - 3.9 Continuous-time optimization
-  - 3.10 Sparsity in SLAM
-  - 3.11 Bundle adjustment
-  - 3.12 Nonlinear solvers
-  - 3.13 [g2o hands-on](3_13)
-  - 3.14 [GTSAM hands-on](3_14)
-  - 3.15 [Ceres-solver hands-on](3_15)
-  - 3.16 [SymForce hands-on](3_16)
-  - 3.17 [Kimera-RPGO hands-on](3_17)
-  - 3.18 SLAM systems
-  - 3.19 Various map representations
-  - 3.20 VSLAM system architecture
-  - 3.21 LiDAR SLAM system architecture
-  - 3.22 RADAR SLAM system architecture
-  - 3.23 Event SLAM system architecture
-  - 3.24 Inertial odometry basics
-  - 3.25 Leg odometry basics
-  - 3.26 Sensor fusion
+  - Chapter 1: Probabilistic graph inference
+    - Part 3 introduction
+    - Factor graph
+    - Nonlinear least squares
+    - Nonlinear optimization
+    - Optimization on manifolds
+    - Graph-based SLAM
+    - Schur complement
+    - Auto-diff
+    - Continuous-time optimization
+    - Sparsity in SLAM
+    - Bundle adjustment
+    - Nonlinear solvers
+    - [g2o hands-on](3_13)
+    - [GTSAM hands-on](3_14)
+    - [Ceres-solver hands-on](3_15)
+    - [SymForce hands-on](3_16)
+    - [Kimera-RPGO hands-on](3_17)
+  - Chapter 2: SLAM system architecture
+    - SLAM systems
+    - Various map representations
+    - VSLAM system architecture
+    - LiDAR SLAM system architecture
+    - RADAR SLAM system architecture
+    - Event SLAM system architecture
+    - Inertial odometry basics
+    - Leg odometry basics
+    - Sensor fusion
 - Chapter 4: Classical SLAM
-  - 4.1 Part 4 introduction
-  - 4.2 Feature-based VSLAM
-  - 4.3 Direct VSLAM
-  - 4.4 Visual-inertial odometry
-  - 4.5 2D LiDAR SLAM
-  - 4.6 3D LiDAR SLAM
-  - 4.7 Sensor fusion SLAM
-  - 4.8 ORB-SLAM 2
-  - 4.9 Basalt-VIO
-  - 4.10 Cartographer
-  - 4.11 KISS-SLAM
-  - 4.12 GLIM
-  - 4.13 FAST-LIO2
-  - 4.14 FAST-LIVO2
+  - Chapter 1: Introduction to classical SLAM pipelines
+    - Part 4 introduction
+    - Feature-based VSLAM
+    - Direct VSLAM
+    - Visual-inertial odometry
+    - 2D LiDAR SLAM
+    - 3D LiDAR SLAM
+    - Sensor fusion SLAM
+  - Chapter 2: Hands-on classical SLAM
+    - ORB-SLAM 2
+    - Basalt-VIO
+    - Cartographer
+    - KISS-SLAM
+    - GLIM
+    - FAST-LIO2
+    - FAST-LIVO2
 - Chapter 5: Advanced SLAM - AI Integration and Hardware Optimization
-  - 5.1 Part 5 introduction
-  - 5.2 SLAM + Object detection + Segmentation
-  - 5.3 SLAM + Depth estimation
-  - 5.4 SLAM + Camera pose regression
-  - 5.5 SLAM + Deep feature matching
-  - 5.6 SLAM + Deep optical flow / scene flow
-  - 5.7 SLAM + Differentiable bundle adjustment
-  - 5.8 SLAM + Feed-forward 3D transformer
-  - 5.9 SLAM + NeRF / Implicit neural field
-  - 5.10 SLAM + Gaussian Splatting
-  - 5.11 SLAM + Video generation
-  - 5.12 SLAM + VLM/VLA
-  - 5.13 SLAM + 3D Scene graph
-  - 5.14 SLAM + Certifiably optimal algorithm
-  - 5.15 SLAM + Auto-encoder / diffusion
-  - 5.16 SLAM + Graph processor
-  - 5.17 DSP-SLAM
-  - 5.18 Kimera
-  - 5.19 ConceptFusion
-  - 5.20 Gaussian Splatting SLAM
-  - 5.21 MASt3r-SLAM
-  - 5.22 PIN-SLAM
-  - 5.23 Suma++
-  - 5.24 Differences between desktop, server, and embedded boards
-  - 5.25 Characteristics of real-time SLAM
-  - 5.26 Characteristics of auto-labeling / data-crunching SLAM
-  - 5.27 C++ build configuration optimization
-  - 5.28 SIMD acceleration and CPU optimization techniques
-  - 5.29 [SIMD acceleration hands-on](5_29)
-  - 5.30 Introduction to NVIDIA Jetson
-  - 5.31 [CUDA acceleration hands-on](5_31)
+  - Chapter 1: AI + SLAM
+    - Part 5 introduction
+    - SLAM + Object detection + Segmentation
+    - SLAM + Depth estimation
+    - SLAM + Camera pose regression
+    - SLAM + Deep feature matching
+    - SLAM + Deep optical flow / scene flow
+    - SLAM + Differentiable bundle adjustment
+    - SLAM + Feed-forward 3D transformer
+    - SLAM + NeRF / Implicit neural field
+    - SLAM + Gaussian Splatting
+    - SLAM + Video generation
+    - SLAM + VLM/VLA
+    - SLAM + 3D Scene graph
+    - SLAM + Certifiably optimal algorithm
+    - SLAM + Auto-encoder / diffusion
+    - SLAM + Graph processor
+  - Chapter 2: Hands on AI + SLAM
+    - DSP-SLAM
+    - Kimera
+    - ConceptFusion
+    - Gaussian Splatting SLAM
+    - MASt3r-SLAM
+    - PIN-SLAM
+    - Suma++
+  - Chapter 3: Hardware/Software optimization for SLAM performance
+    - Differences between desktop, server, and embedded boards
+    - Characteristics of real-time SLAM
+    - Characteristics of auto-labeling / data-crunching SLAM
+    - C++ build configuration optimization
+    - SIMD acceleration and CPU optimization techniques
+    - [SIMD acceleration hands-on](5_29)
+    - Introduction to NVIDIA Jetson
+    - [CUDA acceleration hands-on](5_31)
 - Final projects
   - Project 1: SLAM for autonomous driving
   - Project 2: SLAM for drones
