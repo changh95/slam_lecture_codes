@@ -24,7 +24,7 @@ COPY fast_lio2/src /catkin_ws/src/FAST_LIO
 
 WORKDIR /catkin_ws
 RUN . /opt/ros/noetic/setup.sh && \
-    catkin_make -j$(nproc) -DCMAKE_BUILD_TYPE=Release -DWITH_PROFILER=ON
+    catkin_make -j$(nproc) -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_EASY_PROFILER=ON
 
 RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh
 

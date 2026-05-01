@@ -15,10 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Install newer CMake (gtsam_points requires >= 3.22, noetic ships 3.16)
-RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-aarch64.tar.gz | \
-    tar xz -C /usr/local --strip-components=1 || \
-    (wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz | \
-    tar xz -C /usr/local --strip-components=1)
+RUN CMAKE_ARCH=$(uname -m | sed 's/aarch64/aarch64/;s/x86_64/x86_64/') && \
+    wget -qO- "https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-${CMAKE_ARCH}.tar.gz" | \
+    tar xz -C /usr/local --strip-components=1
 
 COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
 RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh

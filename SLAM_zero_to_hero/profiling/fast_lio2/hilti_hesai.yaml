@@ -1,0 +1,35 @@
+common:
+    lid_topic:  "/hesai/pandar"
+    imu_topic:  "/alphasense/imu"
+    time_sync_en: false
+    time_offset_lidar_to_imu: 0.0
+
+preprocess:
+    lidar_type: 4                # 4 for Hesai PandarXT-32
+    scan_line: 32
+    scan_rate: 10
+    timestamp_unit: 3            # 3-nanosecond (Hesai uses nanoseconds)
+    blind: 2
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree:    180
+    det_range:     100.0
+    extrinsic_est_en:  false
+    extrinsic_T: [ -0.001, -0.00855, 0.055]
+    extrinsic_R: [ 0, -1, 0,
+                  -1,  0, 0,
+                   0,  0, -1]
+
+publish:
+    path_en:  false
+    scan_publish_en:  true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1
