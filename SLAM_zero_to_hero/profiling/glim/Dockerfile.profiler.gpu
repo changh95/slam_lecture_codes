@@ -4,7 +4,7 @@
 # CUDA 12.1 is used because CUDA 12.5+ has a thrust::device_ptr ambiguity that
 # breaks gtsam_points v1.0.0. CUDA 12.1's sm_90 PTX forward-compats to newer
 # GPUs (Blackwell, Hopper Next) via JIT.
-FROM nvidia/cuda:12.1.0-devel-ubuntu20.04
+FROM docker.io/nvidia/cuda:12.1.0-devel-ubuntu20.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_VISIBLE_DEVICES=all
