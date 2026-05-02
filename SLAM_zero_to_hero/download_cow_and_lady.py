@@ -30,6 +30,8 @@ DATA_BAG_URLS = [
     "http://robotics.ethz.ch/~asl-datasets/iros_2017_voxblox/data.bag",
     # ASL projects mirror
     "https://projects.asl.ethz.ch/datasets/voxblox/data.bag",
+    # Wayback Machine archive (may be truncated for large files)
+    "https://web.archive.org/web/2024id_/http://robotics.ethz.ch/~asl-datasets/iros_2017_voxblox/data.bag",
 ]
 
 DATA_BAG_FILE = "data.bag"
