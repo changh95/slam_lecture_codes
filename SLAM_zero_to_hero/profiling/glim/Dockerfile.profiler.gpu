@@ -57,6 +57,7 @@ RUN git clone https://github.com/borglab/gtsam.git -b 4.2.0 && \
     cmake .. -DGTSAM_BUILD_TESTS=OFF \
              -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
              -DGTSAM_USE_SYSTEM_EIGEN=ON \
+             -DGTSAM_WITH_TBB=ON \
              -DCMAKE_BUILD_TYPE=Release \
              -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \

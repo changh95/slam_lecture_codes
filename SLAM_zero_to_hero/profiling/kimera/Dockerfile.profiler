@@ -19,14 +19,15 @@ RUN git clone https://github.com/borglab/gtsam.git -b 4.2 && \
     cd gtsam && mkdir build && cd build && \
     cmake .. -DGTSAM_BUILD_TESTS=OFF \
              -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
-             -DCMAKE_BUILD_TYPE=Release && \
+             -DCMAKE_BUILD_TYPE=Release \
+             -DGTSAM_WITH_TBB=ON && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam
 
 # Install Eigen 3.4.1 from source
 RUN wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.zip && \
     unzip -q eigen-3.4.1.zip && cd eigen-3.4.1 && \
-    mkdir build && cd build && cmake .. && make install && \
+    mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make install && \
     cd / && rm -rf eigen-3.4.1 eigen-3.4.1.zip
 
 # Build OpenGV
@@ -66,7 +67,8 @@ RUN chmod +x /profiler_patches/profiler_patch.sh && \
 RUN cd /Kimera-VIO && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DKIMERA_BUILD_TESTS=OFF \
-             -DWITH_PROFILER=ON && \
+             -DWITH_PROFILER=ON \
+             -DCMAKE_CXX_FLAGS="-fopenmp" && \
     make -j$(nproc)
 
 COPY kimera/run_profile.sh /app/run_profile.sh
