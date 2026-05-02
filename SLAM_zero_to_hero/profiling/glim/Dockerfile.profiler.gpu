@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-ros-base \
     ros-noetic-cv-bridge ros-noetic-tf2-ros ros-noetic-rosbag \
+    ros-noetic-rosbag-storage \
     ros-noetic-pcl-ros ros-noetic-image-transport && \
     rm -rf /var/lib/apt/lists/*
 
@@ -102,6 +103,12 @@ RUN chmod +x /tmp/profiler_patch.sh && \
     . /opt/ros/noetic/setup.sh && \
     cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DBUILD_WITH_EASY_PROFILER" && \
     make -j$(nproc) && make install && ldconfig
+
+ENV LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/local/lib:${LD_LIBRARY_PATH}
+
+# Create ros_entrypoint.sh (not provided by nvidia/cuda base image)
+RUN echo '#!/bin/bash\nset -e\nsource /opt/ros/noetic/setup.bash\nexec "$@"' > /ros_entrypoint.sh && \
+    chmod +x /ros_entrypoint.sh
 
 VOLUME /output
 WORKDIR /data
