@@ -2,11 +2,15 @@
 """
 Download the cow_and_lady_dataset rosbag from ETH ASL (used with voxblox).
 Destination: ~/data/cow_and_lady/
+
+Tries multiple mirror URLs in order, with retries and a minimum size check.
 """
 
 import os
 import sys
+import time
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 try:
@@ -17,15 +21,23 @@ except ImportError:
     from tqdm import tqdm
 
 
-# ETH Research Collection permanent URL
-# Landing page: https://www.research-collection.ethz.ch/handle/20.500.11850/721636
-DATA_BAG_URL = (
-    "https://www.research-collection.ethz.ch/bitstreams/"
-    "bfb68f88-fcb2-4e09-aa53-434d9162cef5/download"
-)
-DATA_BAG_FILE = "data.bag"
+# Fallback URLs in priority order.
+DATA_BAG_URLS = [
+    # ETH Research Collection permanent handle
+    # Landing page: https://www.research-collection.ethz.ch/handle/20.500.11850/721636
+    "https://www.research-collection.ethz.ch/bitstreams/bfb68f88-fcb2-4e09-aa53-434d9162cef5/download",
+    # ASL datasets server (legacy direct link)
+    "http://robotics.ethz.ch/~asl-datasets/iros_2017_voxblox/data.bag",
+    # ASL projects mirror
+    "https://projects.asl.ethz.ch/datasets/voxblox/data.bag",
+]
 
+DATA_BAG_FILE = "data.bag"
 DEST_DIR = Path.home() / "data" / "cow_and_lady"
+
+CONNECT_TIMEOUT = 30        # seconds per connection attempt
+MAX_RETRIES = 3             # retries per URL
+MIN_SIZE_BYTES = 1 * 1024 ** 3  # 1 GB minimum (actual bag is ~4.6 GB)
 
 
 class TqdmDownloadHook:
@@ -56,6 +68,71 @@ class TqdmDownloadHook:
             self.pbar.close()
 
 
+def try_download(url: str, dest: Path, attempt: int) -> bool:
+    """
+    Attempt to download *url* to *dest*.
+    Returns True on success (file exists and is large enough), False otherwise.
+    Cleans up a partial/undersized file before returning False.
+    """
+    hook = TqdmDownloadHook(DATA_BAG_FILE)
+    try:
+        print(f"    Attempt {attempt}: {url}")
+        opener = urllib.request.build_opener()
+        opener.addheaders = [("User-Agent", "Mozilla/5.0")]
+        urllib.request.install_opener(opener)
+
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=CONNECT_TIMEOUT) as response:
+            total = int(response.headers.get("Content-Length", 0))
+            with open(dest, "wb") as f:
+                block_size = 8192
+                downloaded = 0
+                while True:
+                    chunk = response.read(block_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    hook(downloaded // block_size, block_size, total)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        print(f"\n    Error: {exc}")
+        return False
+    finally:
+        hook.close()
+
+    # Verify minimum size
+    if dest.exists():
+        size = dest.stat().st_size
+        size_gb = size / (1024 ** 3)
+        if size < MIN_SIZE_BYTES:
+            print(f"\n    File too small ({size_gb:.2f} GB < 1 GB minimum). Removing.")
+            dest.unlink(missing_ok=True)
+            return False
+        print(f"\n    Downloaded {size_gb:.2f} GB.")
+        return True
+
+    return False
+
+
+def download_with_fallback(dest: Path) -> bool:
+    """
+    Try each URL up to MAX_RETRIES times. Returns True if the file was
+    successfully downloaded and verified.
+    """
+    for url_index, url in enumerate(DATA_BAG_URLS, start=1):
+        print(f"\n  [URL {url_index}/{len(DATA_BAG_URLS)}] {url}")
+        for attempt in range(1, MAX_RETRIES + 1):
+            if try_download(url, dest, attempt):
+                return True
+            if attempt < MAX_RETRIES:
+                wait = 5 * attempt
+                print(f"    Waiting {wait}s before retry...")
+                time.sleep(wait)
+        print(f"  All {MAX_RETRIES} attempts failed for this URL. Trying next...")
+
+    return False
+
+
 def main():
     print("=" * 60)
     print("  Cow and Lady Dataset Downloader (ETH ASL)")
@@ -70,15 +147,20 @@ def main():
     out = DEST_DIR / DATA_BAG_FILE
 
     if out.exists():
-        size_gb = out.stat().st_size / (1024**3)
-        print(f"  Skipping {out.name} (already exists, {size_gb:.2f} GB)")
+        size_gb = out.stat().st_size / (1024 ** 3)
+        if out.stat().st_size >= MIN_SIZE_BYTES:
+            print(f"  Skipping {out.name} (already exists, {size_gb:.2f} GB)")
+        else:
+            print(f"  Found incomplete file ({size_gb:.2f} GB). Re-downloading...")
+            out.unlink()
+            if not download_with_fallback(out):
+                print("\n  ERROR: Download failed from all URLs.")
+                sys.exit(1)
     else:
-        print(f"Downloading {DATA_BAG_FILE}...")
-        hook = TqdmDownloadHook(DATA_BAG_FILE)
-        try:
-            urllib.request.urlretrieve(DATA_BAG_URL, str(out), reporthook=hook)
-        finally:
-            hook.close()
+        print(f"  Downloading {DATA_BAG_FILE}...")
+        if not download_with_fallback(out):
+            print("\n  ERROR: Download failed from all URLs.")
+            sys.exit(1)
 
     print("\n" + "=" * 60)
     print("  Done. Files at:")
