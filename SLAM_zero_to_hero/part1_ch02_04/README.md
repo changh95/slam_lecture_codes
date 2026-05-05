@@ -10,17 +10,27 @@ We'll profile OpenCV feature detection algorithms (FAST, SIFT) across multiple C
 # 1. Build the Docker image
 docker build . -t slam_zero_to_hero:part1_ch02_04
 
-# 2. Run profiler and visualize (all-in-one)
-xhost +local:docker
+# 2. Allow the container to talk to your X server
+#    Docker:  xhost +local:docker
+#    Podman:  xhost +local:
+xhost +local:
+
+# 3. Run profiler and visualize (all-in-one)
 docker run -it --rm \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     slam_zero_to_hero:part1_ch02_04
 
-# 3. The GUI will open automatically with the profile results
+# 4. The GUI opens automatically after the profile run completes.
+#    To get a shell instead, override the entrypoint:
+#       docker run -it --rm -e DISPLAY=$DISPLAY \
+#           -v /tmp/.X11-unix:/tmp/.X11-unix \
+#           slam_zero_to_hero:part1_ch02_04 bash
+#    then run: ./profile_features && profiler_gui profile.prof
 ```
 
-> **Note**: The `xhost +local:docker` command allows Docker to access your display. Run `xhost -local:docker` afterwards to revoke access if desired.
+> **Note**: Run `xhost -local:` afterwards to revoke display access if desired.
+> On Wayland sessions, ensure XWayland is running (it is by default on GNOME/KDE).
 
 ## Local Build (without Docker)
 
