@@ -1,0 +1,12 @@
+[project]
+name = "part1-ch02-07-python-basics"
+version = "0.1.0"
+description = "Basic Python programming examples for SLAM development"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python>=4.10",
+]
+
+[tool.uv]
+package = false

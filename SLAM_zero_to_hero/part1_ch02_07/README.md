@@ -18,7 +18,26 @@ This tutorial covers fundamental Python programming concepts essential for robot
 
 ## How to Run
 
-### Using Virtual Environment (Recommended)
+This folder ships with `pyproject.toml` and `.python-version` so that uv can set up the environment in one step. We recommend uv over the traditional `venv + pip` workflow because it manages the Python interpreter version *and* the package environment with a single tool, and is 10-100x faster than pip.
+
+### Using uv (Recommended)
+
+```bash
+# Install uv (one time, if you don't have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# From this folder: install the pinned Python version and all deps
+uv sync
+
+# Run examples (no activate / deactivate needed)
+uv run python examples/01_basics.py
+uv run python examples/02_data_structures.py
+# ... etc
+```
+
+`uv sync` reads `pyproject.toml` and `.python-version`, downloads Python 3.12 if needed, creates `.venv/`, and installs `numpy` + `opencv-python` into it. `uv run` executes commands inside that environment automatically.
+
+### Using venv + pip (Traditional)
 
 ```bash
 # Create virtual environment
