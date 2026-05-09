@@ -31,35 +31,35 @@ This tutorial covers Robot Operating System (ROS) fundamentals for both ROS1 (No
 ## Directory Structure
 
 ```
-1_16/
-├── ros1/
+part1_ch02_09/
+├── ros1/                      # Minimal pub/sub demo only
 │   ├── Dockerfile
-│   ├── src/
-│   │   └── slam_tutorial/
-│   │       ├── CMakeLists.txt
-│   │       ├── package.xml
-│   │       ├── scripts/
-│   │       │   ├── publisher.py
-│   │       │   └── subscriber.py
-│   │       └── src/
-│   │           ├── publisher.cpp
-│   │           └── subscriber.cpp
-│   └── README.md
+│   └── src/slam_tutorial/
+│       ├── CMakeLists.txt
+│       ├── package.xml
+│       ├── scripts/{publisher.py,subscriber.py}
+│       └── src/{publisher.cpp,subscriber.cpp}
 │
-└── ros2/
+└── ros2/                      # Full demo: pub/sub + TF + URDF + sync + QoS
     ├── Dockerfile
-    ├── src/
-    │   └── slam_tutorial/
-    │       ├── CMakeLists.txt
-    │       ├── package.xml
-    │       ├── slam_tutorial/
-    │       │   ├── __init__.py
-    │       │   ├── publisher.py
-    │       │   └── subscriber.py
-    │       └── src/
-    │           ├── publisher.cpp
-    │           └── subscriber.cpp
-    └── README.md
+    └── src/slam_tutorial/
+        ├── CMakeLists.txt
+        ├── package.xml
+        ├── slam_tutorial/         # Python nodes (rclpy)
+        │   ├── publisher.py           # PoseStamped on /robot/pose
+        │   ├── subscriber.py          # consumes /robot/pose
+        │   ├── tf_broadcaster.py      # odom -> base_link
+        │   ├── tf_listener.py         # looks up map -> base_link
+        │   ├── imu_publisher.py       # /imu/data, sensor_data QoS, 100 Hz
+        │   ├── qos_subscriber.py      # matching best-effort subscriber
+        │   └── sync_subscriber.py     # ApproximateTimeSynchronizer demo
+        ├── src/                   # C++ nodes (rclcpp)
+        │   ├── publisher.cpp
+        │   └── subscriber.cpp
+        ├── urdf/slam_robot.urdf   # Sample robot description
+        ├── launch/demo.launch.py  # Brings up everything
+        ├── rviz/slam_demo.rviz    # Pre-configured RViz
+        └── scripts/{record_bag.sh,play_bag.sh}
 ```
 
 ---

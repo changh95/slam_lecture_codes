@@ -30,11 +30,25 @@ install(TARGETS
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})
 
-# Install Python scripts
+# Install Python scripts as executables (callable via `ros2 run slam_tutorial <name>.py`)
 install(PROGRAMS
   slam_tutorial/publisher.py
   slam_tutorial/subscriber.py
+  slam_tutorial/tf_broadcaster.py
+  slam_tutorial/tf_listener.py
+  slam_tutorial/imu_publisher.py
+  slam_tutorial/qos_subscriber.py
+  slam_tutorial/sync_subscriber.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install resources (URDF, launch, RViz config, helper scripts)
+install(DIRECTORY
+  urdf
+  launch
+  rviz
+  scripts
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()

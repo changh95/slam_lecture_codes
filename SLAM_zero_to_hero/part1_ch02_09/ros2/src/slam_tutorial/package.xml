@@ -16,6 +16,13 @@
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
 
+  <!-- Added for TF / URDF / message_filters / launch / RViz examples -->
+  <depend>tf2_ros</depend>
+  <exec_depend>message_filters</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>
