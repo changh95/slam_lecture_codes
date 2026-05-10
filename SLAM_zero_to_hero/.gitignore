@@ -6,8 +6,6 @@ profiling/__pycache__/
 # Demo model weights (fetch via download_superpoint_superglue.py)
 part2_ch01_04/weights/*.onnx
 part2_ch01_04/weights/*.engine
-part2_ch01_10/weights/*.onnx
-part2_ch01_10/weights/*.engine
 
 # Python venv + caches
 venv/

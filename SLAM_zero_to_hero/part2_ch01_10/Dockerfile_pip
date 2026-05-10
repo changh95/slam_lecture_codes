@@ -1,0 +1,31 @@
+FROM nvidia/cuda:11.2.2-cudnn8-devel-ubuntu20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update &&\ 
+    apt-get install -y git build-essential cmake software-properties-common curl
+
+RUN echo "**** Installing Python ****" && \
+    add-apt-repository ppa:deadsnakes/ppa &&  \
+    apt-get install -y build-essential python3.8 python3.8-dev python3-pip python3.8-distutils && \
+    curl -O https://bootstrap.pypa.io/get-pip.py && \
+    python3.8 get-pip.py && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/stschubert/VPR_Tutorial.git
+
+RUN cd VPR_Tutorial &&\
+    pip3 install --upgrade setuptools ez_setup scikit-build &&\
+    pip3 install setuptools cmake ipywidgets matplotlib numpy patchnetvlad==0.1.7 pillow scipy setuptools scikit_image tensorflow-gpu tensorflow_hub torch torchvision tqdm
+    
+RUN apt-get -y update 
+    
+RUN apt-get install -y mesa-utils && \
+    apt-get install -y libgl1-mesa-glx && \
+    apt-get install -y libglu1-mesa-dev && \
+    apt-get install -y libglew-dev &&\
+    apt-get install -y libglvnd-dev &&\
+    apt-get install -y libgl1-mesa-dev &&\
+    apt-get install -y libegl1-mesa-dev &&\
+    apt-get install -y mesa-common-dev
+
