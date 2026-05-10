@@ -133,12 +133,40 @@ int main(int argc, char* argv[]) {
     std::cout << "  Scoring:              L1-NORM" << std::endl;
     std::cout << std::endl;
 
-    // Number of training images
+    // Number of training images (used only if no real images directory provided)
     const int num_training_images = 50;
 
-    // Generate or load training images
-    std::vector<cv::Mat> training_images =
-        generateSyntheticTrainingImages(num_training_images);
+    // Generate or load training images.
+    // If the user passes a directory of real images as argv[1], load those;
+    // otherwise fall back to synthetic random patterns.
+    std::vector<cv::Mat> training_images;
+    if (argc >= 2 && std::filesystem::is_directory(argv[1])) {
+        std::cout << "Loading real images from: " << argv[1] << std::endl;
+        std::vector<std::filesystem::path> image_paths;
+        for (const auto& entry : std::filesystem::directory_iterator(argv[1])) {
+            const auto& p = entry.path();
+            const std::string ext = p.extension().string();
+            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                ext == ".bmp" || ext == ".PNG" || ext == ".JPG") {
+                image_paths.push_back(p);
+            }
+        }
+        std::sort(image_paths.begin(), image_paths.end());
+        for (const auto& p : image_paths) {
+            cv::Mat img = cv::imread(p.string(), cv::IMREAD_GRAYSCALE);
+            if (!img.empty()) {
+                training_images.push_back(img);
+            } else {
+                std::cerr << "  Warning: failed to read " << p << std::endl;
+            }
+        }
+        std::cout << "Loaded " << training_images.size()
+                  << " real images for vocabulary training" << std::endl;
+        std::cout << std::endl;
+    }
+    if (training_images.empty()) {
+        training_images = generateSyntheticTrainingImages(num_training_images);
+    }
 
     // Create ORB feature detector
     // Using default parameters similar to ORB-SLAM

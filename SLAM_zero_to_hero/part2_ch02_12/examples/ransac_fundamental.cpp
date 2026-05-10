@@ -172,23 +172,66 @@ cv::Mat normalizeFundamental(const cv::Mat& F) {
     return Fn;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "=== RANSAC Fundamental Matrix Estimation with USAC ===" << std::endl;
     std::cout << std::fixed << std::setprecision(6);
 
-    // Generate synthetic stereo data
     std::vector<cv::Point2f> pts1, pts2;
     cv::Mat gtF, K;
-    const int numPoints = 200;
-    const double outlierRatio = 0.35;
     const double threshold = 3.0;
+    bool real_data = false;
 
-    generateStereoData(pts1, pts2, gtF, K, numPoints, outlierRatio);
+    // If two image paths are given, extract real correspondences via ORB + BFMatcher.
+    if (argc >= 3) {
+        cv::Mat img1 = cv::imread(argv[1], cv::IMREAD_GRAYSCALE);
+        cv::Mat img2 = cv::imread(argv[2], cv::IMREAD_GRAYSCALE);
+        if (img1.empty() || img2.empty()) {
+            std::cerr << "Failed to load images, falling back to synthetic data\n";
+        } else {
+            std::cout << "\nLoaded images: " << argv[1] << " (" << img1.cols << "x" << img1.rows
+                      << ") and " << argv[2] << " (" << img2.cols << "x" << img2.rows << ")\n";
+            auto orb = cv::ORB::create(2000);
+            std::vector<cv::KeyPoint> kp1, kp2;
+            cv::Mat des1, des2;
+            orb->detectAndCompute(img1, cv::noArray(), kp1, des1);
+            orb->detectAndCompute(img2, cv::noArray(), kp2, des2);
+            cv::BFMatcher matcher(cv::NORM_HAMMING);
+            std::vector<std::vector<cv::DMatch>> knn_matches;
+            matcher.knnMatch(des1, des2, knn_matches, 2);
+            // Lowe's ratio test
+            for (const auto& m : knn_matches) {
+                if (m.size() == 2 && m[0].distance < 0.75f * m[1].distance) {
+                    pts1.push_back(kp1[m[0].queryIdx].pt);
+                    pts2.push_back(kp2[m[0].trainIdx].pt);
+                }
+            }
+            std::cout << "ORB features: " << kp1.size() << " / " << kp2.size()
+                      << ", ratio-test matches: " << pts1.size() << "\n";
+            // Approximate K using EuRoC MAV cam0 intrinsics (close to TUM/KITTI scale).
+            K = (cv::Mat_<double>(3, 3) <<
+                 458.654, 0.0,     367.215,
+                 0.0,     457.296, 248.375,
+                 0.0,     0.0,     1.0);
+            real_data = true;
+        }
+    }
 
-    std::cout << "\nData: " << numPoints << " correspondences, "
-              << static_cast<int>(outlierRatio * 100) << "% outliers\n";
+    if (!real_data) {
+        // Synthetic fallback
+        const int numPoints = 200;
+        const double outlierRatio = 0.35;
+        generateStereoData(pts1, pts2, gtF, K, numPoints, outlierRatio);
+        std::cout << "\nData: " << numPoints << " synthetic correspondences, "
+                  << static_cast<int>(outlierRatio * 100) << "% outliers\n";
+    } else {
+        std::cout << "\nData: " << pts1.size() << " real ORB correspondences\n";
+    }
     std::cout << "Camera matrix K:\n" << K << "\n";
-    std::cout << "\nGround truth F (normalized):\n" << normalizeFundamental(gtF) << "\n\n";
+    if (!real_data) {
+        std::cout << "\nGround truth F (normalized):\n" << normalizeFundamental(gtF) << "\n\n";
+    } else {
+        std::cout << "(no ground-truth F available for real-image input)\n\n";
+    }
 
     Timer timer;
 
