@@ -35,7 +35,7 @@ DEMOS=(
   "part2_ch01_10:::ldconfig; cd /VPR_Tutorial && echo '=== VPR Tutorial: cross-time-of-day place recognition (RTX 5090) ===' && for desc in AlexNet NetVLAD PatchNetVLAD CosPlace EigenPlaces SAD; do echo; echo '------- '\$desc' -------'; python3 demo.py --descriptor \$desc --dataset GardensPoint 2>&1 | grep -E 'Using|R@|AUC|R@100P' | head -5; done:::[GPU] Part2 ch01_10 - VPR Tutorial (6 deep descriptors on GardensPoint day-vs-night)"
   "part2_ch02_02:::cd /workspace/part2_ch02_02/build && ./epipolar_visualization ../data/left.png ../data/right.png:::[GUI] Part2 ch02_02 - Epipolar Visualization on stereo pair"
   "part2_ch02_04:::cd /workspace/part2_ch02_04/build && ./image_stitching ../data/000024.png ../data/000025.png:::[GUI] Part2 ch02_04 - Image Stitching on KITTI pair"
-  "part2_ch02_05:::cd /workspace/part2_ch02_05/build && ./run_vo_kitti ../data/kitti:::[GUI] Part2 ch02_05 - Monocular VO on KITTI"
+  "part2_ch02_05:::cd /workspace/part2_ch02_05/build && ./run_vo_kitti ../data/kitti ../data/poses.txt:::[GUI] Part2 ch02_05 - Monocular VO on KITTI seq 00 (30 frames + ground-truth poses)"
   "part2_ch02_07:::cd /workspace/part2_ch02_07/build && ./triangulation_demo:::[CLI] Part2 ch02_07 - Triangulation (synthetic stereo benchmark)"
   "part2_ch02_09:::cd /workspace/part2_ch02_09/build && ./charuco_calibration:::[GUI] Part2 ch02_09 - ChArUco Calibration window"
   "part2_ch02_12:::cd /workspace/part2_ch02_12/build && ./ransac_fundamental ../data/000024.png ../data/000025.png:::[CLI] Part2 ch02_12 - RANSAC Fundamental on EuRoC (5 estimators benchmarked)"
