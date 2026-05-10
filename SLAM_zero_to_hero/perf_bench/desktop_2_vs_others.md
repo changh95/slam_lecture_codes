@@ -93,15 +93,17 @@ ORB-SLAM2 gets 1.9–2× speedup on the per-frame critical path (KeyPoints, Trac
 
 GLIM v1.0.0 has different block instrumentation than the existing dgx_spark/desktop_1 dumps used (the lecturer's older runs measured `ScanOptimization`, `SmootherUpdate`, `CovarianceEstimation` etc; our re-instrumented build measures `Preprocessing`, `LocalMapping`, `GlobalMapping`, `FrameProcess`). Only blocks present in both can be compared directly.
 
-| Block | DGX Spark CPU | DGX Spark GPU | **Desktop 2 CPU** | **Desktop 2 GPU** |
-|---|---:|---:|---:|---:|
-| Preprocessing | 4.53 | 4.63 | **2.52** | **2.20** |
-| LocalMapping | 1.40 | 1.21 | **1.26** | **1.21** |
-| GlobalMapping | — | 7.02 | 11.75 | **6.72** |
+| Block | DGX Spark CPU | DGX Spark GPU | Desktop 1 MT CPU | Desktop 1 MT GPU | **Desktop 2 CPU** | **Desktop 2 GPU** |
+|---|---:|---:|---:|---:|---:|---:|
+| Preprocessing | 4.53 | 4.63 | 9.73 | 9.19 | **2.52** | **2.20** |
+| LocalMapping | 1.40 | 1.21 | 4.48 | 3.65 | **1.26** | **1.21** |
+| GlobalMapping | — | 7.02 | 33.34 | 18.90 | 11.75 | **6.72** |
+| GlobalMapping/Optimize | — | — | 7.02 | 1.77 | — | — |
 
-* **Preprocessing**: Desktop 2 CPU is **1.8× faster** than DGX Spark CPU; Desktop 2 GPU is **2.1× faster** than DGX Spark GPU. Same pattern as FAST-LIO2 — point-cloud SIMD work scales with Zen 4's wider vector pipeline.
-* **LocalMapping**: tie across all four — sub-mapping work is dominated by GTSAM iSAM2 incremental updates, where DGX Spark and Desktop 2 are equally matched.
-* **GlobalMapping**: Desktop 2 GPU **matches DGX Spark GPU** (6.72 vs 7.02 ms). Desktop 2 CPU is 1.7× slower than Desktop 2 GPU — confirming GPU acceleration is real on this platform.
+* **Preprocessing**: Desktop 2 CPU is **1.8× faster** than DGX Spark CPU; Desktop 2 GPU is **2.1× faster** than DGX Spark GPU. Same pattern as FAST-LIO2 — point-cloud SIMD work scales with Zen 4's wider vector pipeline. Desktop 1 MT (Threadripper 2950X, Zen+, no AVX-512) is the slowest by a factor of 2× over DGX Spark and 4× over Desktop 2 — the SIMD generation gap is decisive on this kernel.
+* **LocalMapping**: DGX Spark and Desktop 2 tie; Desktop 1 MT is ~3× slower (older single-thread IPC, no TBB-friendly cache hierarchy).
+* **GlobalMapping**: Desktop 2 GPU **matches DGX Spark GPU** (6.72 vs 7.02 ms). Desktop 2 CPU is 1.7× slower than Desktop 2 GPU — confirming GPU acceleration is real on this platform. Desktop 1 MT trails everyone here for the same reasons (older silicon + larger working set than fits in its 32 MB L3 with high concurrency pressure).
+* **GlobalMapping/Optimize**: this block is captured only by the post-fix profiler (see GLIM debugging notes); only Desktop 1 MT and Desktop 2 traces have it. Desktop 1 MT GPU is 4× faster than its CPU on this iSAM2 incremental-update step, while Desktop 2 GPU is *slower* than CPU on it (12.40 ms — likely cuda-context warmup overhead at low call frequency).
 
 This is **direct evidence that discrete GPU + PCIe round-trips are NOT a meaningful penalty for GLIM's GPU pipeline** on a Zen 4 + RTX 5090 system. The unified-memory thesis predicted DGX Spark would dominate; in practice, Desktop 2 GPU is competitive (LocalMapping, GlobalMapping) or faster (Preprocessing) than DGX Spark GPU on every measured block. The PCIe5 x16 bandwidth + RTX 5090's compute throughput evidently outweigh the unified-memory bandwidth advantage for GLIM's data sizes (~10K downsampled points/scan).
 

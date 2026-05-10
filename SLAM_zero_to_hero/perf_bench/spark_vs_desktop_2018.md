@@ -59,20 +59,32 @@ Speedup > 1.0 means Desktop 1 is faster than DGX Spark.
 
 ### GLIM CPU (Hilti exp14_basement_2)
 
-| Block | DGX Spark (ms) | Desktop 1 (ms) | Speedup |
+| Block | DGX Spark (ms) | Desktop 1 MT (ms) | Speedup |
 |---|---|---|---|
-| FrameProcess | 13.5 | 14.9 | 0.91x |
-| Preprocessing | 4.5 | 2.9 | **1.57x** |
-| LocalMapping | 1.4 | 6.4 | 0.22x |
+| FrameProcess | 13.55 | 44.82 | 0.30x |
+| Preprocessing | 4.53 | 9.73 | 0.47x |
+| LocalMapping | 1.40 | 4.48 | 0.31x |
+| GlobalMapping | — | 33.34 | — |
+| GlobalMapping/Optimize | — | 7.02 | — |
 
 ### GLIM GPU (Hilti exp14_basement_2)
 
-| Block | DGX Spark (ms) | Desktop 1 (ms) | Speedup |
+| Block | DGX Spark (ms) | Desktop 1 MT (ms) | Speedup |
 |---|---|---|---|
-| FrameProcess | 14.8 | 15.7 | 0.94x |
-| Preprocessing | 4.6 | 2.8 | **1.63x** |
-| GlobalMapping | 7.0 | 11.1 | 0.63x |
-| LocalMapping | 1.2 | 7.0 | 0.17x |
+| FrameProcess | 14.80 | 50.87 | 0.29x |
+| Preprocessing | 4.63 | 9.19 | 0.50x |
+| LocalMapping | 1.21 | 3.65 | 0.33x |
+| GlobalMapping | 7.02 | 18.90 | 0.37x |
+| GlobalMapping/Optimize | — | 1.77 | — |
+
+`SLAM/GlobalMapping` and `SLAM/GlobalMapping/Optimize` blocks didn't fire in
+the original DGX Spark dump (an easy_profiler-runtime quirk that was fixed in
+the May 2026 patcher rewrite). Re-running on DGX Spark with the current
+profiling/glim image would close the missing rows. Numbers shifted
+substantially from the May 2026 v1 of this table because the static-profiler
+bug (see profiling/glim/patch_v110_profiler.sh commit history) made
+`EASY_BLOCK` calls inside `libglim.so` no-ops; the prior figures measured a
+binary in which the inner-loop profiler hooks were dead code.
 
 ### Voxblox (cow_and_lady, voxel_size=0.05, method=fast)
 
