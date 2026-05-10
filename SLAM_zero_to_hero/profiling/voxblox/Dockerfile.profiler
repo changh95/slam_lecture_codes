@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ros:noetic
+ARG BASE_IMAGE=docker.io/ros:noetic
 FROM ${BASE_IMAGE}
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -51,7 +51,8 @@ RUN rm -rf /catkin_ws/src/voxblox/voxblox_rviz_plugin && \
     sed -i '/voxblox_rviz_plugin/d' /catkin_ws/src/voxblox/voxblox_ros/CMakeLists.txt
 RUN catkin init && \
     catkin config --extend /opt/ros/noetic \
-      --cmake-args -DCMAKE_BUILD_TYPE=Release -DWITH_PROFILER=ON -DCMAKE_CXX_FLAGS="-fopenmp" && \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DWITH_PROFILER=ON \
+        -DCMAKE_CXX_FLAGS="-march=native -mtune=native -O3 -DNDEBUG -fopenmp" && \
     catkin build voxblox_ros
 
 RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh

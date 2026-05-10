@@ -22,6 +22,21 @@ RUN CMAKE_ARCH=$(uname -m | sed 's/aarch64/aarch64/;s/x86_64/x86_64/') && \
 COPY common/install_easy_profiler.sh /tmp/install_easy_profiler.sh
 RUN bash /tmp/install_easy_profiler.sh && rm /tmp/install_easy_profiler.sh
 
+# Rebuild easy_profiler as a SHARED library. With the default static build,
+# libglim.so (which contains the EASY_BLOCK calls in cloud_preprocessor /
+# sub_mapping / global_mapping) and the glim_rosbag binary (which calls
+# EASY_PROFILER_ENABLE) each get their own static copy of the profiler
+# runtime. Enable in one, blocks in the other -> empty profile dump.
+# A shared library gives a single runtime instance shared by both.
+RUN git clone https://github.com/yse/easy_profiler.git /tmp/ep && \
+    cd /tmp/ep && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DEASY_PROFILER_NO_GUI=ON \
+             -DEASY_PROFILER_NO_SAMPLES=ON \
+             -DBUILD_SHARED_LIBS=ON && \
+    make -j$(nproc) && make install && ldconfig && \
+    cd / && rm -rf /tmp/ep
+
 # Build GTSAM 4.2.0
 RUN git clone https://github.com/borglab/gtsam.git -b 4.2.0 && \
     cd gtsam && mkdir build && cd build && \
@@ -30,7 +45,7 @@ RUN git clone https://github.com/borglab/gtsam.git -b 4.2.0 && \
              -DGTSAM_USE_SYSTEM_EIGEN=ON \
              -DGTSAM_WITH_TBB=ON \
              -DCMAKE_BUILD_TYPE=Release \
-             -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
+             -DCMAKE_CXX_FLAGS="-O3 -DNDEBUG -Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam
 
@@ -46,16 +61,23 @@ RUN git clone https://github.com/koide3/gtsam_points.git -b v1.0.0 --recursive &
     cd gtsam_points && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DBUILD_WITH_CUDA=OFF \
-             -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
+             -DCMAKE_CXX_FLAGS="-O3 -DNDEBUG -Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam_points
 
 # Build GLIM with profiler
+# -fopenmp: glim uses #pragma omp parallel for num_threads(...) in cloud_preprocessor,
+#          cloud_covariance_estimation, and global_mapping_pose_graph. Without -fopenmp
+#          these pragmas are silently ignored => single-thread regression.
+# No -march=native: would enable AVX-512 alignment requirements that std::vector<Eigen::Vector4d>
+#                   in glim::RawPoints (no aligned_allocator) cannot satisfy => SIGSEGV in
+#                   gtsam_points::sample. Stay at x86-64 baseline (SSE2, 16-byte align).
 COPY glim/src /glim
 RUN cd /glim && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DBUILD_WITH_EASY_PROFILER=ON \
-             -DBUILD_WITH_CUDA=OFF && \
+             -DBUILD_WITH_CUDA=OFF \
+             -DCMAKE_CXX_FLAGS="-O3 -DNDEBUG -fopenmp" && \
     make -j$(nproc) && make install && ldconfig
 
 # Build glim_ros1 (provides glim_rosbag offline processor)

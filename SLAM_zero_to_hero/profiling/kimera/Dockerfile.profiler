@@ -20,7 +20,8 @@ RUN git clone https://github.com/borglab/gtsam.git -b 4.2 && \
     cmake .. -DGTSAM_BUILD_TESTS=OFF \
              -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
              -DCMAKE_BUILD_TYPE=Release \
-             -DGTSAM_WITH_TBB=ON && \
+             -DGTSAM_WITH_TBB=ON \
+             -DCMAKE_CXX_FLAGS="-march=native -mtune=native -O3 -DNDEBUG" && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf gtsam
 
@@ -68,7 +69,7 @@ RUN cd /Kimera-VIO && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DKIMERA_BUILD_TESTS=OFF \
              -DWITH_PROFILER=ON \
-             -DCMAKE_CXX_FLAGS="-fopenmp" && \
+             -DCMAKE_CXX_FLAGS="-march=native -mtune=native -O3 -DNDEBUG -fopenmp" && \
     make -j$(nproc)
 
 COPY kimera/run_profile.sh /app/run_profile.sh
