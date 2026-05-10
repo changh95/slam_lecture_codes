@@ -22,16 +22,17 @@ except ImportError:
 
 
 # Fallback URLs in priority order.
+# Landing page: https://www.research-collection.ethz.ch/handle/20.500.11850/721636
+# Item UUID:    ded5ea04-6ec7-42e9-a5ca-6062cf83507c
+# Bitstream:    bfb68f88-fcb2-4e09-aa53-434d9162cef5 (data.bag, 4.6 GB)
 DATA_BAG_URLS = [
-    # ETH Research Collection permanent handle
-    # Landing page: https://www.research-collection.ethz.ch/handle/20.500.11850/721636
-    "https://www.research-collection.ethz.ch/bitstreams/bfb68f88-fcb2-4e09-aa53-434d9162cef5/download",
-    # ASL datasets server (legacy direct link)
+    # DSpace REST API content endpoint — the supported, redirect-safe download path.
+    # The legacy /bitstreams/<uuid>/download UI route currently returns HTTP 500.
+    "https://www.research-collection.ethz.ch/server/api/core/bitstreams/bfb68f88-fcb2-4e09-aa53-434d9162cef5/content",
+    # ASL datasets server (legacy direct link, often unreachable)
     "http://robotics.ethz.ch/~asl-datasets/iros_2017_voxblox/data.bag",
-    # ASL projects mirror
+    # ASL projects mirror (HTTP 404 as of 2026, kept for completeness)
     "https://projects.asl.ethz.ch/datasets/voxblox/data.bag",
-    # Wayback Machine archive (may be truncated for large files)
-    "https://web.archive.org/web/2024id_/http://robotics.ethz.ch/~asl-datasets/iros_2017_voxblox/data.bag",
 ]
 
 DATA_BAG_FILE = "data.bag"

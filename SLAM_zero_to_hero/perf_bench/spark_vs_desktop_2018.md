@@ -74,6 +74,27 @@ Speedup > 1.0 means Desktop 1 is faster than DGX Spark.
 | GlobalMapping | 7.0 | 11.1 | 0.63x |
 | LocalMapping | 1.2 | 7.0 | 0.17x |
 
+### Voxblox (cow_and_lady, voxel_size=0.05, method=fast)
+
+Single full-bag run: 142.78 s, 2,831 PointCloud2 frames.
+
+| Block | DGX Spark (ms) | Desktop 1 MT (ms) | Speedup |
+|---|---|---|---|
+| FrameProcess | 95.65 | 40.51 | **2.36x** |
+| TsdfIntegration/Worker (per worker call) | 82.58 | 7.01 | 11.78x* |
+| MeshGeneration | 2.78 | 4.43 | 0.63x |
+| MeshGeneration/Worker | 1.29 | 1.63 | 0.79x |
+
+*Per-worker numbers are not directly comparable across platforms — voxblox
+spawns one integrator worker per CPU core, so Desktop 1 MT splits the same
+TSDF integration into ~32 worker bursts vs ~19 on DGX Spark. The headline
+metric is `FrameProcess`, which already aggregates the parallel window.
+Desktop 1 MT wins by 2.36× because it can throw 32 cores at the parallel
+ray-casting kernel while DGX Spark only has 19 effective integrator threads;
+on the (largely serial) mesh stages, DGX Spark's faster cores edge it out.
+See `perf_bench/desktop_1_mt/voxblox.{prof,json}` and
+`perf_bench/dgx_spark/voxblox.{prof,json}` for the raw traces.
+
 ## Analysis
 
 ### Why DGX Spark wins most SLAM tasks

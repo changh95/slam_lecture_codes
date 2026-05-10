@@ -87,14 +87,19 @@ PY
 }
 
 # ---- TSDF integrator (inner voxblox library) ----
-# Top-level integratePointCloud captures the full integration window
-# (thread spawn + worker join + post-process). The worker thread bodies
-# (integrateFunction) need EASY_THREAD so their blocks aren't dropped.
+# Per-integrator integratePointCloud blocks use unique names. easy_profiler
+# dedupes block descriptors by name across translation units; if all three
+# overloads emit "SLAM/TsdfIntegration", only one descriptor wins and runtime
+# blocks from the others may be dropped (observed: 0 blocks logged when
+# method=fast). Suffixing per-integrator keeps each descriptor distinct.
+# The canonical "SLAM/TsdfIntegration" wrapper is patched into
+# TsdfServer::integratePointcloud below — that fires regardless of which
+# integrator is configured at launch time.
 TSDF_SRC="${VOXBLOX_SRC}/voxblox/src/integrator/tsdf_integrator.cc"
 add_profiler_header "$TSDF_SRC"
-inject_block          "$TSDF_SRC" "SimpleTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
-inject_block          "$TSDF_SRC" "MergedTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration"
-inject_block          "$TSDF_SRC" "FastTsdfIntegrator::integratePointCloud"   "SLAM/TsdfIntegration"
+inject_block          "$TSDF_SRC" "SimpleTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration/Simple"
+inject_block          "$TSDF_SRC" "MergedTsdfIntegrator::integratePointCloud" "SLAM/TsdfIntegration/Merged"
+inject_block          "$TSDF_SRC" "FastTsdfIntegrator::integratePointCloud"   "SLAM/TsdfIntegration/Fast"
 inject_thread_register "$TSDF_SRC" "SimpleTsdfIntegrator::integrateFunction"  "tsdf_worker"
 inject_thread_register "$TSDF_SRC" "FastTsdfIntegrator::integrateFunction"    "tsdf_worker"
 inject_block          "$TSDF_SRC" "SimpleTsdfIntegrator::integrateFunction"   "SLAM/TsdfIntegration/Worker"
@@ -124,8 +129,14 @@ fi
 SERVER_SRC="${VOXBLOX_SRC}/voxblox_ros/src/tsdf_server.cc"
 if [ -f "$SERVER_SRC" ]; then
   add_profiler_header "$SERVER_SRC"
-  inject_block "$SERVER_SRC" "TsdfServer::insertPointcloud" "SLAM/FrameProcess"
-  inject_block "$SERVER_SRC" "TsdfServer::generateMesh"     "SLAM/MeshPublish"
+  inject_block "$SERVER_SRC" "TsdfServer::insertPointcloud"    "SLAM/FrameProcess"
+  inject_block "$SERVER_SRC" "TsdfServer::generateMesh"        "SLAM/MeshPublish"
+  # Wrapper-level integration block: this dispatches to whichever integrator
+  # (Simple/Merged/Fast) was configured, so it captures the integration window
+  # uniformly regardless of the `method` launch parameter. Note the lowercase
+  # 'p' — TsdfServer::integratePointcloud is the server-side wrapper, distinct
+  # from the inner TsdfIntegratorBase::integratePointCloud (uppercase P).
+  inject_block "$SERVER_SRC" "TsdfServer::integratePointcloud" "SLAM/TsdfIntegration"
 fi
 
 # ---- profiler enable + signal handler in main ----

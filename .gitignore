@@ -1,5 +1,9 @@
 .idea
 cmake-build-*
+build/
 .DS_Store
 lecture_scripts/
 slam_lecture_subtitles/
+
+# OMC (oh-my-claudecode) agent state
+.omc/

@@ -8,19 +8,31 @@ goes in the TSDF pipeline.
 
 ## Instrumented blocks
 
-| Block name | Source location | What it captures |
-|---|---|---|
-| `SLAM/FrameProcess` | `voxblox_ros/src/tsdf_server.cc` – `TsdfServer::insertPointcloud` | Full per-frame server work (TF lookup, point cloud transform, integrator dispatch) |
-| `SLAM/TsdfIntegration` | `voxblox/src/integrator/tsdf_integrator.cc` – all three `integratePointCloud` overloads | Top-level TSDF integration window (thread spawn + join + store-block flush) |
-| `SLAM/TsdfIntegration/Worker` | `Simple/Fast TsdfIntegrator::integrateFunction` | Per-worker-thread integration work (one per `integrator_threads`) |
-| `SLAM/MeshGeneration` | `voxblox/include/voxblox/mesh/mesh_integrator.h` – `MeshIntegrator::generateMesh` | Top-level mesh extraction (thread spawn + join + post-process) |
-| `SLAM/MeshGeneration/Worker` | `MeshIntegrator::generateMeshBlocksFunction` | Per-worker-thread block-by-block mesh extraction |
-| `SLAM/MeshPublish` | `voxblox_ros/src/tsdf_server.cc` – `TsdfServer::generateMesh` | ROS-level mesh publication (also fires on service calls). Only present if a mesh subscriber exists. |
-| `SLAM/EsdfIntegration` | `voxblox/src/integrator/esdf_integrator.cc` – `EsdfIntegrator::updateFromTsdfLayer*` | ESDF distance propagation. Only present if an ESDF server is running (the cow_and_lady launch uses TSDF only). |
+| Block name | Source location | What it captures | Fires? |
+|---|---|---|---|
+| `SLAM/FrameProcess` | `voxblox_ros/src/tsdf_server.cc` – `TsdfServer::insertPointcloud` | Full per-frame server work (TF lookup, point cloud transform, integrator dispatch) | yes |
+| `SLAM/TsdfIntegration` | `voxblox_ros/src/tsdf_server.cc` – `TsdfServer::integratePointcloud` (server-side wrapper, lowercase 'p') | Wraps the dispatch into whichever integrator (Simple/Merged/Fast) is configured. Captures the integration window uniformly. | descriptor only — see note below |
+| `SLAM/TsdfIntegration/{Simple,Merged,Fast}` | `voxblox/src/integrator/tsdf_integrator.cc` – per-integrator `integratePointCloud` overrides | Per-integrator entry points. Suffixes (`/Simple`, `/Merged`, `/Fast`) keep the descriptors distinct so easy_profiler does not dedupe them. | descriptor only — see note below |
+| `SLAM/TsdfIntegration/Worker` | `Simple/Fast TsdfIntegrator::integrateFunction` | Per-worker-thread integration work (one per `integrator_threads`) | yes |
+| `SLAM/MeshGeneration` | `voxblox/include/voxblox/mesh/mesh_integrator.h` – `MeshIntegrator::generateMesh` | Top-level mesh extraction (thread spawn + join + post-process) | yes |
+| `SLAM/MeshGeneration/Worker` | `MeshIntegrator::generateMeshBlocksFunction` | Per-worker-thread block-by-block mesh extraction | yes |
+| `SLAM/MeshPublish` | `voxblox_ros/src/tsdf_server.cc` – `TsdfServer::generateMesh` | ROS-level mesh publication (also fires on service calls). Only present if a mesh subscriber exists. | optional |
+| `SLAM/EsdfIntegration` | `voxblox/src/integrator/esdf_integrator.cc` – `EsdfIntegrator::updateFromTsdfLayer*` | ESDF distance propagation. Only present if an ESDF server is running (the cow_and_lady launch uses TSDF only). | optional |
 
 Worker-thread blocks are captured thanks to `EASY_THREAD("…")` registration
 at the top of each worker entry point. Without that, easy_profiler silently
 drops blocks logged from threads it has never seen.
+
+### Note on the wrapper-level `SLAM/TsdfIntegration` blocks
+
+`SLAM/TsdfIntegration` and the per-integrator `/Simple|/Merged|/Fast` blocks
+register their easy_profiler descriptors but the runtime emits zero blocks for
+them, even though their host functions are reached on every frame and the
+worker-thread blocks below them fire correctly. Voxblox's own `timing::Timer
+integrate/fast` (visible in the `SM Timing` ROS log line) does measure this
+window — for cow_and_lady it lands around 32 ms / call. Treat
+`SLAM/FrameProcess` as the canonical per-frame integration metric and use the
+worker-level totals for the parallel work breakdown.
 
 ## How it works
 
@@ -89,27 +101,33 @@ docker run --rm -v /tmp/voxblox_profile_out:/out --entrypoint bash \
 ## Sample results (DGX Spark, cow_and_lady @ voxel_size=0.05)
 
 See `SLAM_zero_to_hero/perf_bench/dgx_spark/voxblox.{prof,json}`.
-Summary for one full bag (142 s, ~2830 frames, 20 integrator threads,
-stock Release build — no LTO/`-march=native`):
+One full bag (142 s, 2,831 pointcloud frames, ~19 integrator-worker threads
+per burst, stock Release build — no LTO/`-march=native`):
 
 | Block | count | total (s) | avg |
 |---|---|---|---|
-| `SLAM/FrameProcess` | 2,829 | 173.7 | 61.4 ms |
-| `SLAM/TsdfIntegration` | 2,713 | 165.7 | 61.1 ms |
-| `SLAM/TsdfIntegration/Worker` | 54,260 | 2,747.8 | 50.6 ms |
-| `SLAM/MeshGeneration` | 411 | 0.7 | 1.75 ms |
-| `SLAM/MeshGeneration/Worker` | 8,220 | 5.6 | 0.68 ms |
+| `SLAM/FrameProcess` | 2,831 | 270.79 | 95.65 ms |
+| `SLAM/TsdfIntegration/Worker` | 54,300 | 4,483.83 | 82.58 ms (sum across worker threads) |
+| `SLAM/MeshGeneration` | 631 | 1.75 | 2.78 ms |
+| `SLAM/MeshGeneration/Worker` | 12,620 | 16.26 | 1.29 ms |
 
-FrameProcess time is dominated by TsdfIntegration (~96%), as expected
-for voxblox without carving or ESDF — most cycles go into ray casting
-and voxel hashing in the worker threads, while mesh extraction is
-negligible (<0.5% of total).
+`FrameProcess` is the per-frame critical-path metric. The worker totals
+(`SLAM/TsdfIntegration/Worker`) sum across all worker threads spawned
+each burst, so dividing by the per-frame worker count gives the parallel
+component of integration. Mesh extraction is a rounding-error fraction of
+total runtime as expected for cow_and_lady at this voxel size.
+
+For a side-by-side against Desktop 1 (Threadripper 2950X, 32 threads), see
+`SLAM_zero_to_hero/perf_bench/desktop_1_mt/voxblox.{prof,json}` and
+`SLAM_zero_to_hero/perf_bench/spark_vs_desktop_2018.md`.
 
 ## Datasets
 
 | Dataset | Download | Topics |
 |---|---|---|
-| cow_and_lady | `wget http://rpg.ifi.uzh.ch/docs/IJRR17_Loquercio/datasets/cow_and_lady_dataset.bag` | `/camera/depth_registered/points`, `/kinect/vrpn_client/estimated_transform` |
+| cow_and_lady | `python3 SLAM_zero_to_hero/download_cow_and_lady.py` (or the ETH Research Collection [landing page](https://www.research-collection.ethz.ch/handle/20.500.11850/721636)) | `/camera/depth_registered/points`, `/kinect/vrpn_client/estimated_transform` |
 
 cow_and_lady is the canonical voxblox benchmark and is what the stock
-launch file expects.
+launch file expects. The downloader fetches the 4.6 GB rosbag from the
+ETH Research Collection bitstream API; the legacy `robotics.ethz.ch` and
+`projects.asl.ethz.ch` paths are no longer reliable.
