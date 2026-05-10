@@ -61,7 +61,8 @@ RUN wget https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.zip &&\
     cd ../../
 
 # Ceres-solver
-RUN apt-get install -y libgoogle-glog-dev libgflags-dev libatlas-base-dev libsuitesparse-dev &&\
+RUN apt-get update &&\
+    apt-get install -y libgoogle-glog-dev libgflags-dev libatlas-base-dev libsuitesparse-dev &&\
     wget https://github.com/ceres-solver/ceres-solver/archive/refs/tags/2.2.0.zip &&\
     unzip 2.2.0.zip &&\
     cd ceres-solver-2.2.0 &&\

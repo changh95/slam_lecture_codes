@@ -165,22 +165,22 @@ public:
     /**
      * @brief Get host buffer by binding name
      */
-    void* getHostBuffer(const std::string& tensorName) {
+    void* getHostBuffer(const std::string& tensorName) const {
         int index = mEngine->getBindingIndex(tensorName.c_str());
         if (index < 0) {
             std::cerr << "Invalid tensor name: " << tensorName << std::endl;
             return nullptr;
         }
-        return mHostBuffers[index].data();
+        return const_cast<void*>(mHostBuffers[index].data());
     }
 
     /**
      * @brief Get device buffer by binding name
      */
-    void* getDeviceBuffer(const std::string& tensorName) {
+    void* getDeviceBuffer(const std::string& tensorName) const {
         int index = mEngine->getBindingIndex(tensorName.c_str());
         if (index < 0) return nullptr;
-        return mDeviceBuffers[index].data();
+        return const_cast<void*>(mDeviceBuffers[index].data());
     }
 
     /**

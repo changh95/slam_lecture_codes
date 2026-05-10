@@ -19,6 +19,8 @@
 #include <opencv2/opencv.hpp>
 
 #include "buffers.h"
+#include "common.h"
+#include "logging.h"
 #include "read_config.h"
 
 using tensorrt_common::TensorRTUniquePtr;

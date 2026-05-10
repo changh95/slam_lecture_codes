@@ -1,4 +1,4 @@
-FROM osrf/ros:noetic-desktop-full
+FROM docker.io/osrf/ros:noetic-desktop-full
 
 MAINTAINER changh95
 ARG DEBIAN_FRONTEND=noninteractive
