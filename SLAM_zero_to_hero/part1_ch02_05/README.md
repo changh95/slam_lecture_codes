@@ -20,6 +20,7 @@ Memory profiling is essential for SLAM systems where:
 | `--leak-check` | Find memory leaks and their sources |
 | `--tool=massif` | Profile heap memory usage over time |
 | `ms_print` | Visualize massif output as ASCII graph |
+| `massif-visualizer` | Interactive GUI to explore massif snapshots and call stacks |
 
 ---
 
@@ -74,6 +75,43 @@ ms_print massif.out.<pid>
 # Or save to file
 ms_print massif.out.<pid> > memory_report.txt
 ```
+
+#### Visualize with massif-visualizer (GUI)
+
+`ms_print` is fine for quick checks, but for an interactive view of snapshots,
+peak allocations, and call stacks, use [massif-visualizer](https://apps.kde.org/massif-visualizer/).
+
+```bash
+# Install (Ubuntu / Debian)
+sudo apt install massif-visualizer
+
+# Collect a profile (use a fixed filename to avoid <pid> guessing)
+valgrind --tool=massif \
+    --massif-out-file=massif.out \
+    --time-unit=B \
+    --detailed-freq=1 \
+    ./build/memory_examples --with-leak
+
+# Open the GUI
+massif-visualizer massif.out
+```
+
+Useful collection flags:
+
+| Flag | Purpose |
+|------|---------|
+| `--massif-out-file=<path>` | Write to a fixed path instead of `massif.out.<pid>` |
+| `--time-unit=B` | Use bytes-allocated as the X axis (most reproducible) |
+| `--time-unit=ms` | Use wall-clock milliseconds (good for time-based view) |
+| `--detailed-freq=1` | Capture full call stacks at every snapshot |
+| `--pages-as-heap=yes` | Track all memory (mmap, stacks) — not just `malloc` |
+| `--stacks=yes` | Include stack memory in the profile |
+
+Inside the GUI you can:
+- See peak heap size and the snapshot that produced it
+- Drill into the allocation tree to find the function/line responsible
+- Toggle between stacked-area and per-allocation-site views
+- Compare multiple `massif.out` files side by side
 
 ### Option 4: Docker Execution
 
