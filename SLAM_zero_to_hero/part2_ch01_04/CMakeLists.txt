@@ -121,6 +121,10 @@ target_link_libraries(${PROJECT_NAME}_image ${PROJECT_NAME}_lib)
 add_executable(${PROJECT_NAME}_sequence examples/inference_sequence.cpp)
 target_link_libraries(${PROJECT_NAME}_sequence ${PROJECT_NAME}_lib)
 
+# Stereo sequence inference (matches cam0[i] <-> cam1[i])
+add_executable(${PROJECT_NAME}_stereo_sequence examples/inference_stereo_sequence.cpp)
+target_link_libraries(${PROJECT_NAME}_stereo_sequence ${PROJECT_NAME}_lib)
+
 # ==============================================================================
 # Installation (optional)
 # ==============================================================================
