@@ -162,9 +162,17 @@ Recover camera pose (R, t)
 
 ---
 
+## Data
+
+Both demos read frames directly from a **TUM RGB-D sequence** on the host
+(no images are copied into the repo or the image). Default sequence:
+`~/data/tum_rgbd/rgbd_dataset_freiburg1_desk` mounted into the container at
+`/data`. The default in-container sequence path is
+`/data/tum_rgbd/rgbd_dataset_freiburg1_desk`; override via the first CLI arg.
+
 ## How to Build
 
-Dependencies: OpenCV 4.x
+Dependencies: OpenCV 4.x with GUI support (libgtk).
 
 ### Local build:
 ```bash
@@ -180,19 +188,41 @@ docker build . -t slam_zero_to_hero:part2_ch01_07
 
 ## How to Run
 
+Both binaries are **live cv::imshow demos**: each one streams its
+visualization frame-by-frame into a window and blocks on a final keypress.
+
 ### Local:
 ```bash
 # Sparse optical flow (Lucas-Kanade feature tracking)
-./build/sparse_optical_flow
+./build/sparse_optical_flow [seq_dir] [num_frames]
 
-# Dense optical flow (Farneback)
-./build/dense_optical_flow
+# Dense optical flow (Farneback, arrows | HSV side-by-side)
+./build/dense_optical_flow [seq_dir] [num_frames] [frame_gap]
 ```
 
-### Docker:
+### Docker (mount TUM data + forward X11):
 ```bash
-docker run -it --rm slam_zero_to_hero:part2_ch01_07
+xhost +SI:localuser:root
+
+docker run --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v ~/data:/data:ro \
+    --net=host \
+    slam_zero_to_hero:part2_ch01_07 \
+    ./sparse_optical_flow
+
+docker run --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v ~/data:/data:ro \
+    --net=host \
+    slam_zero_to_hero:part2_ch01_07 \
+    ./dense_optical_flow
 ```
+
+Press ESC during the animation to stop early; press any key on the final
+frame to close the window.
 
 ---
 
