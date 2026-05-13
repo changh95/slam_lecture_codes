@@ -170,7 +170,9 @@ void profileFAST_TEBLID(const cv::Mat& img1, const cv::Mat& img2, int nfeatures 
     {
         EASY_BLOCK("TEBLID_Create", profiler::colors::Green100);
         fast = cv::FastFeatureDetector::create(20, true, cv::FastFeatureDetector::TYPE_9_16);
-        teblid = cv::xfeatures2d::TEBLID::create(6.25f, cv::xfeatures2d::TEBLID::SIZE_256_BITS);
+        // scale_factor=5.0f is correct for FAST/AGAST/AKAZE/BRISK detectors.
+        // (Use 1.0f for ORB, 6.75f for SIFT, 6.25f for KAZE/SURF.)
+        teblid = cv::xfeatures2d::TEBLID::create(5.0f, cv::xfeatures2d::TEBLID::SIZE_256_BITS);
     }
 
     // Detection
@@ -245,9 +247,9 @@ int main(int argc, char** argv) {
 
     cv::Mat img1, img2;
 
-    // Default to data folder images
-    std::string img1_path = (argc >= 3) ? argv[1] : "../data/1.jpg";
-    std::string img2_path = (argc >= 3) ? argv[2] : "../data/2.jpg";
+    // Default to data folder images (KITTI seq00 frames 0 and 3)
+    std::string img1_path = (argc >= 3) ? argv[1] : "../data/1.png";
+    std::string img2_path = (argc >= 3) ? argv[2] : "../data/2.png";
 
     {
         EASY_BLOCK("LoadImages", profiler::colors::Cyan);

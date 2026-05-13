@@ -142,6 +142,43 @@ A matches B AND B matches A. Ensures mutual consistency.
 
 ---
 
+## Keypoint Selection: ANMS-SSC
+
+Most detectors (FAST especially) produce thousands of candidate keypoints
+clustered in high-contrast regions of the image. Taking the **top-K by
+response** picks the strongest corners but leaves large portions of the
+frame uncovered — bad for pose estimation, because the resulting point
+distribution makes the camera-pose covariance ill-conditioned.
+
+**ANMS-SSC** (Adaptive Non-Maximal Suppression via Square Covering, Bailo
+et al. 2018) is the variant used by **Kimera-VIO**'s feature tracker. Given
+N detected keypoints, it returns ~K **spatially well-distributed** keypoints
+by binary-searching a suppression radius and accepting keypoints in
+response order — but only if no stronger keypoint already occupies the
+surrounding square.
+
+This tutorial applies ANMS-SSC to ORB, SIFT, and FAST+TEBLID keypoints
+before description and matching.
+
+**Reference**: Bailo et al., *"Efficient adaptive non-maximal suppression
+algorithms for homogeneous spatial keypoint distribution"*, PRL 2018.
+Reference C++ implementation: <https://github.com/BAILOOL/ANMS-Codes>.
+
+---
+
+## Geometric Verification: RANSAC
+
+The ratio test removes descriptor-level ambiguity but cannot reject
+geometrically inconsistent matches (e.g. matches on repeated structures
+like windows or bricks that survive the descriptor test). RANSAC with the
+fundamental matrix (`cv::findFundamentalMat` with `cv::FM_RANSAC`) keeps
+only matches consistent with a single epipolar geometry — the canonical
+SLAM outlier filter, applied after ratio test in this tutorial.
+
+For planar / pure-rotation scenes, use `cv::findHomography` instead.
+
+---
+
 ## Examples in This Tutorial
 
 ### 1. `feature_detection.cpp`
@@ -151,11 +188,23 @@ Demonstrates FAST, ORB, and SIFT feature detection on synthetic images. Compares
 - Keypoint distribution
 
 ### 2. `feature_matching.cpp`
-Demonstrates feature matching between image pairs using:
-- BFMatcher with distance threshold
-- BFMatcher with ratio test
-- FLANN-based matching
-- Cross-check matching
+Full matching pipeline on two KITTI sequence-00 frames (frames 0 and 3) for
+ORB, SIFT, and FAST+TEBLID. For each detector the demo:
+
+1. Detects a **large candidate pool** of keypoints.
+2. Selects ~K well-distributed keypoints with **ANMS-SSC**
+   (Kimera-VIO-style — see "Keypoint Selection" above).
+3. Computes descriptors and runs BF k-NN matching.
+4. Applies **Lowe's ratio test** (0.75 for float / 0.80 for binary).
+5. Applies **RANSAC geometric verification** with the fundamental matrix.
+
+It opens one resizable window per detector showing a 3-row pipeline
+figure — *raw NN* (red), *after ratio test* (yellow), *after RANSAC* (green)
+— and a final cross-method **comparison window** stacking the RANSAC-
+verified inliers from ORB, SIFT, and FAST+TEBLID side-by-side.
+
+A separate loop-closure demo uses SIFT with a stricter ratio (0.7) followed
+by RANSAC for higher-precision matching.
 
 ### 3. `feature_profiling.cpp`
 Comprehensive profiling comparing ORB, SIFT, and FAST+TEBLID using **easy_profiler**:
@@ -265,10 +314,14 @@ matcher->knnMatch(desc1, desc2, knn_matches, 2);         // KNN for ratio test
 ### 2. Feature Distribution
 - Use grid-based detection or adaptive thresholds
 - Ensure features cover entire image (not clustered in one region)
+- This tutorial uses **ANMS-SSC** (as in Kimera-VIO) to enforce spatial
+  coverage — see the "Keypoint Selection" section above
 
 ### 3. Outlier Rejection
-After matching, use geometric verification:
-- RANSAC with fundamental/essential matrix
+After matching, apply geometric verification (wired in this tutorial after
+the ratio test):
+- RANSAC with the fundamental/essential matrix (`cv::findFundamentalMat`)
+- Homography RANSAC for planar / pure-rotation scenes (`cv::findHomography`)
 - Epipolar constraint checking
 
 ### 4. Descriptor Storage
@@ -297,5 +350,8 @@ After matching, use geometric verification:
 - [SIFT Paper (Lowe, 2004)](https://www.cs.ubc.ca/~lowe/papers/ijcv04.pdf)
 - [FAST Paper](https://www.edwardrosten.com/work/fast.html)
 - [TEBLID Paper](https://arxiv.org/abs/2002.06271) - Boosted Local Image Descriptors
+- [ANMS-SSC Paper (Bailo et al., 2018)](https://www.sciencedirect.com/science/article/abs/pii/S016786551830062X) - Efficient adaptive non-maximal suppression
+- [ANMS-Codes (reference implementation)](https://github.com/BAILOOL/ANMS-Codes)
+- [Kimera-VIO](https://github.com/MIT-SPARK/Kimera-VIO) - VIO front-end that uses ANMS-SSC for feature selection
 - [OpenCV Feature Detection Tutorial](https://docs.opencv.org/4.x/db/d27/tutorial_py_table_of_contents_feature2d.html)
 - [OpenCV xfeatures2d (contrib)](https://docs.opencv.org/4.x/d2/dca/group__xfeatures2d.html)

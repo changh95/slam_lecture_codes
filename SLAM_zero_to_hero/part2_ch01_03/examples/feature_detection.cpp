@@ -153,8 +153,8 @@ int main(int argc, char** argv) {
     std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
     std::cout << std::endl;
 
-    // Load test image (default to data/1.jpg)
-    std::string image_path = (argc > 1) ? argv[1] : "../data/1.jpg";
+    // Load test image (default to data/1.png — KITTI seq00 frame 0)
+    std::string image_path = (argc > 1) ? argv[1] : "../data/1.png";
     cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
 
     if (image.empty()) {
