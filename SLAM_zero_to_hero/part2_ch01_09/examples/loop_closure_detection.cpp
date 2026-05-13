@@ -19,10 +19,14 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 
 // DBoW2 types for ORB descriptors
@@ -225,11 +229,14 @@ int matchFeatures(const Keyframe& kf1, const Keyframe& kf2,
 
 /**
  * Geometric verification using fundamental matrix estimation
- * Returns true if enough inliers are found
+ * Returns true if enough inliers are found. When provided, `inlier_matches`
+ * is populated with the RANSAC-inlier subset of `matches`.
  */
 bool geometricVerification(const Keyframe& kf1, const Keyframe& kf2,
                            const std::vector<cv::DMatch>& matches,
-                           int min_inliers = 12) {
+                           int min_inliers = 12,
+                           std::vector<cv::DMatch>* inlier_matches = nullptr) {
+    if (inlier_matches) inlier_matches->clear();
     if (matches.size() < 8) return false;
 
     // Extract matched points
@@ -248,38 +255,162 @@ bool geometricVerification(const Keyframe& kf1, const Keyframe& kf2,
 
     // Count inliers
     int num_inliers = cv::countNonZero(inlier_mask);
+    if (inlier_matches) {
+        for (size_t i = 0; i < matches.size(); ++i) {
+            if (inlier_mask[i]) inlier_matches->push_back(matches[i]);
+        }
+    }
 
     return num_inliers >= min_inliers;
+}
+
+/**
+ * Render an N x N similarity matrix as a colored heatmap with grid + labels.
+ */
+cv::Mat renderSimilarityHeatmap(const std::vector<std::vector<double>>& sim,
+                                int target_size = 720) {
+    const int N = static_cast<int>(sim.size());
+    if (N == 0) return cv::Mat();
+
+    // Build 0..255 grayscale (clip at 1.0)
+    cv::Mat raw(N, N, CV_8UC1);
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < N; ++j)
+            raw.at<uchar>(i, j) = cv::saturate_cast<uchar>(
+                std::min(1.0, sim[i][j]) * 255.0);
+
+    int cell = std::max(20, target_size / N);
+    cv::Mat upscaled;
+    cv::resize(raw, upscaled, cv::Size(N * cell, N * cell), 0, 0,
+               cv::INTER_NEAREST);
+    cv::Mat heat;
+    cv::applyColorMap(upscaled, heat, cv::COLORMAP_JET);
+
+    // Grid lines + tick labels in a margin
+    const int margin = 40;
+    cv::Mat canvas(heat.rows + margin, heat.cols + margin, CV_8UC3,
+                   cv::Scalar(30, 30, 30));
+    heat.copyTo(canvas(cv::Rect(margin, 0, heat.cols, heat.rows)));
+
+    for (int i = 0; i <= N; ++i) {
+        cv::line(canvas, cv::Point(margin, i * cell),
+                 cv::Point(margin + N * cell, i * cell),
+                 cv::Scalar(60, 60, 60), 1);
+        cv::line(canvas, cv::Point(margin + i * cell, 0),
+                 cv::Point(margin + i * cell, N * cell),
+                 cv::Scalar(60, 60, 60), 1);
+    }
+    for (int i = 0; i < N; ++i) {
+        cv::putText(canvas, std::to_string(i),
+                    cv::Point(4, i * cell + cell / 2 + 5),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                    cv::Scalar(220, 220, 220), 1);
+        cv::putText(canvas, std::to_string(i),
+                    cv::Point(margin + i * cell + cell / 3,
+                              N * cell + margin - 12),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                    cv::Scalar(220, 220, 220), 1);
+    }
+    return canvas;
 }
 
 int main(int argc, char* argv[]) {
     std::cout << "=== DBoW2 Loop Closure Detection ===" << std::endl;
     std::cout << std::endl;
 
+    // CLI flags:
+    //   --no-vis / --headless        disable OpenCV windows
+    //   --data <dir>                 load real images from a directory
+    //   --stride <N>                 take every Nth image (default 1)
+    //   --max <N>                    cap loaded images at N (default unlimited)
+    //   --min-inliers <N>            RANSAC inliers required for a LOOP (def 80)
+    //   --score-threshold <X>        min BoW score for a candidate (def 0.1)
+    //   --temporal-gap <N>           min keyframe distance for a candidate
+    bool enable_vis = true;
+    std::string data_dir;
+    int stride = 1;
+    int max_frames = 0;  // 0 = unlimited
+    int min_inliers = 80;
+    double score_threshold = 0.1;
+    int temporal_gap = 10;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--no-vis" || arg == "--headless") {
+            enable_vis = false;
+        } else if (arg == "--data" && i + 1 < argc) {
+            data_dir = argv[++i];
+        } else if (arg == "--stride" && i + 1 < argc) {
+            stride = std::max(1, std::atoi(argv[++i]));
+        } else if (arg == "--max" && i + 1 < argc) {
+            max_frames = std::max(0, std::atoi(argv[++i]));
+        } else if (arg == "--min-inliers" && i + 1 < argc) {
+            min_inliers = std::max(8, std::atoi(argv[++i]));
+        } else if (arg == "--score-threshold" && i + 1 < argc) {
+            score_threshold = std::atof(argv[++i]);
+        } else if (arg == "--temporal-gap" && i + 1 < argc) {
+            temporal_gap = std::max(1, std::atoi(argv[++i]));
+        }
+    }
+
     // Parameters
     const int k = 9;       // Branching factor
     const int L = 3;       // Depth levels (smaller for faster demo)
     const int direct_index_level = 3;  // Level for FeatureVector
-    const double score_threshold = 0.03;  // Minimum similarity score
-    const int temporal_gap = 5;  // Minimum frames between loop candidates
 
     std::cout << "Parameters:" << std::endl;
     std::cout << "  Vocabulary: k=" << k << ", L=" << L << std::endl;
     std::cout << "  Direct index level: " << direct_index_level << std::endl;
-    std::cout << "  Score threshold: " << score_threshold << std::endl;
-    std::cout << "  Temporal gap: " << temporal_gap << " frames" << std::endl;
+    std::cout << "  Score threshold:    " << score_threshold << std::endl;
+    std::cout << "  Temporal gap:       " << temporal_gap << " frames"
+              << std::endl;
+    std::cout << "  Min RANSAC inliers: " << min_inliers << std::endl;
     std::cout << std::endl;
 
     // Create ORB detector
     auto orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2,
                                 cv::ORB::HARRIS_SCORE, 31, 20);
 
-    // Generate image sequence with loop closures
-    std::cout << "Generating image sequence with simulated loop closures..."
-              << std::endl;
-    const int num_unique_places = 12;
-    std::vector<cv::Mat> image_sequence =
-        generateSequenceWithLoops(num_unique_places);
+    // Build image sequence: from real directory if --data given, else synthetic
+    std::vector<cv::Mat> image_sequence;
+    if (!data_dir.empty() && std::filesystem::is_directory(data_dir)) {
+        std::cout << "Loading real images from: " << data_dir
+                  << "  (stride=" << stride;
+        if (max_frames > 0) std::cout << ", max=" << max_frames;
+        std::cout << ")" << std::endl;
+
+        std::vector<std::filesystem::path> image_paths;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(data_dir)) {
+            const auto& p = entry.path();
+            const std::string ext = p.extension().string();
+            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                ext == ".bmp" || ext == ".PNG" || ext == ".JPG") {
+                image_paths.push_back(p);
+            }
+        }
+        std::sort(image_paths.begin(), image_paths.end());
+
+        for (size_t i = 0; i < image_paths.size(); i += stride) {
+            cv::Mat img =
+                cv::imread(image_paths[i].string(), cv::IMREAD_GRAYSCALE);
+            if (!img.empty()) image_sequence.push_back(img);
+            if (max_frames > 0 &&
+                static_cast<int>(image_sequence.size()) >= max_frames)
+                break;
+        }
+        std::cout << "  Loaded " << image_sequence.size()
+                  << " frames from disk" << std::endl;
+    } else {
+        if (!data_dir.empty()) {
+            std::cerr << "Warning: --data path is not a directory: "
+                      << data_dir << " (falling back to synthetic)"
+                      << std::endl;
+        }
+        std::cout << "Generating image sequence with simulated loop closures..."
+                  << std::endl;
+        const int num_unique_places = 12;
+        image_sequence = generateSequenceWithLoops(num_unique_places);
+    }
     std::cout << "  Sequence length: " << image_sequence.size() << " frames"
               << std::endl;
     std::cout << std::endl;
@@ -332,6 +463,12 @@ int main(int argc, char* argv[]) {
     std::cout << "Creating image database..." << std::endl;
     OrbDatabase database(vocabulary, true, direct_index_level);
 
+    const std::string loop_window = "DBoW2 Loop Closure (press any key, ESC quits)";
+    if (enable_vis) {
+        cv::namedWindow(loop_window, cv::WINDOW_NORMAL);
+        cv::resizeWindow(loop_window, 1280, 480);
+    }
+
     // Simulate online SLAM: process each keyframe sequentially
     std::cout << std::endl;
     std::cout << "=== Simulating Online Loop Closure Detection ===" << std::endl;
@@ -383,12 +520,73 @@ int main(int argc, char* argv[]) {
                                                 current_kf, matches);
                 std::cout << std::setw(12) << num_matches;
 
-                if (geometricVerification(keyframes[best_candidate],
-                                          current_kf, matches)) {
+                std::vector<cv::DMatch> inlier_matches;
+                bool verified = geometricVerification(
+                    keyframes[best_candidate], current_kf, matches,
+                    min_inliers, &inlier_matches);
+                if (verified) {
                     std::cout << std::setw(10) << "LOOP!";
                     num_loops_detected++;
                 } else {
                     std::cout << std::setw(10) << "rejected";
+                }
+
+                if (enable_vis) {
+                    // Draw all matches in light gray, inliers in green/red
+                    cv::Mat matches_vis;
+                    cv::Scalar match_color = verified
+                        ? cv::Scalar(0, 255, 0)    // green for LOOP
+                        : cv::Scalar(0, 0, 255);   // red for REJECTED
+                    cv::drawMatches(
+                        keyframes[best_candidate].image,
+                        keyframes[best_candidate].keypoints,
+                        current_kf.image, current_kf.keypoints,
+                        inlier_matches, matches_vis, match_color,
+                        cv::Scalar(180, 180, 180), std::vector<char>(),
+                        cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+                    const int banner_h = 60;
+                    cv::Mat vis(matches_vis.rows + banner_h,
+                                matches_vis.cols, matches_vis.type());
+                    cv::Scalar banner_bg = verified
+                        ? cv::Scalar(0, 180, 0)    // green
+                        : cv::Scalar(0, 0, 180);   // red
+                    cv::Scalar border = verified
+                        ? cv::Scalar(0, 255, 255)  // cyan
+                        : cv::Scalar(0, 0, 255);   // red
+                    const char* header = verified
+                        ? "LOOP FOUND!"
+                        : "REJECTED (inliers below threshold)";
+
+                    vis(cv::Rect(0, 0, vis.cols, banner_h)).setTo(banner_bg);
+                    matches_vis.copyTo(
+                        vis(cv::Rect(0, banner_h, matches_vis.cols,
+                                     matches_vis.rows)));
+                    cv::putText(vis, header, cv::Point(20, 44),
+                                cv::FONT_HERSHEY_SIMPLEX, 1.1,
+                                cv::Scalar(255, 255, 255), 3);
+
+                    std::ostringstream caption;
+                    caption << "Keyframe " << best_candidate
+                            << "  <->  Current " << i
+                            << "    score=" << std::fixed
+                            << std::setprecision(3) << best_score
+                            << "    inliers=" << inlier_matches.size()
+                            << "/" << matches.size()
+                            << "    threshold=" << min_inliers;
+                    cv::putText(vis, caption.str(),
+                                cv::Point(20, banner_h + 25),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                                cv::Scalar(0, 255, 255), 2);
+
+                    cv::rectangle(vis,
+                                  cv::Point(0, 0),
+                                  cv::Point(vis.cols - 1, vis.rows - 1),
+                                  border, 6);
+
+                    cv::imshow(loop_window, vis);
+                    int key = cv::waitKey(0) & 0xff;
+                    if (key == 27) enable_vis = false;
                 }
             } else {
                 std::cout << std::setw(10) << "-"
@@ -415,11 +613,21 @@ int main(int argc, char* argv[]) {
     std::cout << "  Loop closures found: " << num_loops_detected << std::endl;
     std::cout << std::endl;
 
-    // Print similarity matrix
+    // Compute full pairwise similarity matrix once, reuse for print + heatmap
+    const int N = static_cast<int>(keyframes.size());
+    std::vector<std::vector<double>> sim(N, std::vector<double>(N, 0.0));
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            sim[i][j] = vocabulary.score(keyframes[i].bow_vector,
+                                         keyframes[j].bow_vector);
+        }
+    }
+
+    // Print similarity matrix (first 10 frames for readability)
     std::cout << "=== Pairwise Similarity Matrix (first 10 frames) ===" << std::endl;
     std::cout << std::endl;
 
-    int display_size = std::min(10, static_cast<int>(keyframes.size()));
+    int display_size = std::min(10, N);
     std::cout << "     ";
     for (int j = 0; j < display_size; ++j) {
         std::cout << std::setw(6) << j;
@@ -429,9 +637,8 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < display_size; ++i) {
         std::cout << std::setw(4) << i << " ";
         for (int j = 0; j < display_size; ++j) {
-            double score = vocabulary.score(keyframes[i].bow_vector,
-                                            keyframes[j].bow_vector);
-            std::cout << std::setw(6) << std::fixed << std::setprecision(2) << score;
+            std::cout << std::setw(6) << std::fixed << std::setprecision(2)
+                      << sim[i][j];
         }
         std::cout << std::endl;
     }
@@ -440,6 +647,16 @@ int main(int argc, char* argv[]) {
     std::cout << "Note: High scores on diagonal indicate self-similarity." << std::endl;
     std::cout << "Look for high off-diagonal scores = potential loop closures." << std::endl;
     std::cout << std::endl;
+
+    if (enable_vis) {
+        cv::Mat heatmap = renderSimilarityHeatmap(sim, 720);
+        const std::string heat_window =
+            "Pairwise Similarity (JET colormap, press any key)";
+        cv::namedWindow(heat_window, cv::WINDOW_NORMAL);
+        cv::imshow(heat_window, heatmap);
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+    }
 
     std::cout << "=== Loop Closure Detection Complete ===" << std::endl;
 

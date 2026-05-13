@@ -188,10 +188,10 @@ part2_ch01_09/
 ├── README.md                           # This file
 ├── CMakeLists.txt                      # Build configuration
 ├── Dockerfile                          # Docker environment
+├── data/                               # Small KITTI-style sample images
 └── examples/
     ├── vocabulary_training.cpp         # Create vocabulary from images
-    ├── loop_closure_detection.cpp      # Loop detection demo
-    └── image_retrieval.cpp             # Image retrieval example
+    └── loop_closure_detection.cpp      # Loop detection demo + viz
 ```
 
 ---
@@ -220,26 +220,97 @@ docker build . -t slam_zero_to_hero:part2_ch01_09
 
 ## How to Run
 
-### Local
+### `vocabulary_training`
+
+Trains a 100k-word ORB vocabulary (`k=10, L=5`) and writes
+`orb_vocabulary.yml.gz` in the current working directory.
 
 ```bash
-# Vocabulary training (creates vocabulary from images)
-./build/vocabulary_training /path/to/training/images output_vocabulary.yml.gz
+# Synthetic random patterns (default when no directory is given)
+./build/vocabulary_training
 
-# Loop closure detection demo
-./build/loop_closure_detection vocabulary.yml.gz /path/to/sequence/
-
-# Image retrieval demo
-./build/image_retrieval vocabulary.yml.gz /path/to/database/ query_image.jpg
+# Real images from a directory (PNG/JPG/JPEG/BMP)
+./build/vocabulary_training /path/to/training/images
 ```
 
-### Docker
+### `loop_closure_detection`
+
+Simulates online SLAM: builds a per-sequence vocabulary, transforms every
+frame into a BoW vector, queries the database, and runs RANSAC geometric
+verification on each candidate. Pops up OpenCV windows showing matched
+inliers for both **accepted** and **rejected** candidates, and ends with a
+JET-colormap heatmap of the full pairwise BoW similarity matrix.
+
+```
+Flags:
+  --data <dir>             load real grayscale images from a directory
+                           (default: synthetic 16-frame sequence)
+  --stride <N>             use every Nth image (default 1)
+  --max <N>                cap loaded frame count (default unlimited)
+  --min-inliers <N>        RANSAC inliers required for a LOOP (default 80)
+  --score-threshold <X>    minimum BoW score for a candidate (default 0.1)
+  --temporal-gap <N>       minimum keyframe distance for a candidate (default 10)
+  --no-vis / --headless    disable OpenCV windows
+```
 
 ```bash
-docker run -it --rm \
-    -v /path/to/data:/data \
-    slam_zero_to_hero:part2_ch01_09
+# Quick synthetic demo (16 frames, with windows)
+./build/loop_closure_detection
+
+# Real EuRoC MH_01_easy frames, ~93 keyframes, tighter threshold
+./build/loop_closure_detection --data /data --stride 40 --max 100 \
+    --min-inliers 120 --score-threshold 0.45 --temporal-gap 15
+
+# Headless (text-only, useful for CI / SSH without X)
+./build/loop_closure_detection --no-vis
 ```
+
+Window controls: click on the OpenCV window and press **any key** to advance
+to the next candidate, **ESC** to skip remaining previews.
+
+### Docker (with X11 forwarding for visualization)
+
+```bash
+# Build (uses slam:base as parent image)
+docker build . -t slam_zero_to_hero:part2_ch01_09
+
+# Allow the container to talk to the host X server
+xhost +SI:localuser:root
+
+# Synthetic loop closure demo with windows
+docker run --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    slam_zero_to_hero:part2_ch01_09 \
+    ./loop_closure_detection
+
+# Real EuRoC MH_01_easy cam0 frames mounted into /data
+docker run --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v ~/data/euroc_mav/MH_01_easy/mav0/cam0/data:/data:ro \
+    slam_zero_to_hero:part2_ch01_09 \
+    ./loop_closure_detection --data /data --stride 40 --max 100
+
+# Train a vocabulary from real images (output goes to /output on the host)
+mkdir -p /tmp/dbow2_out
+docker run --rm \
+    -v ~/data/euroc_mav/MH_01_easy/mav0/cam0/data:/data:ro \
+    -v /tmp/dbow2_out:/output \
+    -w /output \
+    slam_zero_to_hero:part2_ch01_09 \
+    /workspace/part2_ch01_09/build/vocabulary_training /data
+```
+
+### Visualization legend
+
+| Panel element              | Meaning                                              |
+|----------------------------|------------------------------------------------------|
+| Green "LOOP FOUND!" banner | RANSAC inliers ≥ `--min-inliers` -> verified loop    |
+| Red "REJECTED" banner      | BoW candidate failed geometric verification          |
+| Green / red lines          | Inlier matches between left (keyframe) & right (current frame) |
+| Cyan caption               | `Keyframe N <-> Current M  score=...  inliers=A/B  threshold=T` |
+| JET heatmap (final window) | Pairwise BoW similarity (bright = high)              |
 
 ---
 
