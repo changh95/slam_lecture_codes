@@ -54,11 +54,16 @@ bool SuperPoint::build() {
         return false;
     }
 
-    // Create network with explicit batch dimension
+    // Create network (TRT 10 has implicit explicit-batch only; flag was removed)
+#if NV_TENSORRT_MAJOR >= 10
+    auto network = TensorRTUniquePtr<nvinfer1::INetworkDefinition>(
+        builder->createNetworkV2(0));
+#else
     const auto explicit_batch = 1U << static_cast<uint32_t>(
         nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
     auto network = TensorRTUniquePtr<nvinfer1::INetworkDefinition>(
         builder->createNetworkV2(explicit_batch));
+#endif
     if (!network) {
         std::cerr << "Failed to create network definition" << std::endl;
         return false;
@@ -171,7 +176,12 @@ bool SuperPoint::construct_network(
     }
 
     // Set workspace size (memory for intermediate tensors)
+#if NV_TENSORRT_MAJOR >= 10
+    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE,
+                               512ULL * (1ULL << 20));  // 512 MB
+#else
     config->setMaxWorkspaceSize(512 * (1 << 20));  // 512 MB
+#endif
 
     // Enable FP16 precision (faster with minimal accuracy loss)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -242,13 +252,21 @@ bool SuperPoint::infer(const cv::Mat& image,
         }
     }
 
+#if NV_TENSORRT_MAJOR >= 10
+    assert(engine_->getNbIOTensors() == 3);
+
+    // Set dynamic input shape (TRT 10 uses tensor-name API)
+    context_->setInputShape(
+        super_point_config_.input_tensor_names[0].c_str(),
+        nvinfer1::Dims4(1, 1, image.rows, image.cols));
+#else
     assert(engine_->getNbBindings() == 3);
 
-    // Set input dimensions for this image
     const int input_index = engine_->getBindingIndex(
         super_point_config_.input_tensor_names[0].c_str());
     context_->setBindingDimensions(
         input_index, nvinfer1::Dims4(1, 1, image.rows, image.cols));
+#endif
 
     // Create buffer manager with dynamic shapes
     BufferManager buffers(engine_, 0, context_.get());
@@ -262,8 +280,17 @@ bool SuperPoint::infer(const cv::Mat& image,
     // Copy input to GPU
     buffers.copyInputToDevice();
 
-    // Run inference
+    // Run inference (TRT 10 dropped executeV2; use enqueueV3 + stream sync)
+#if NV_TENSORRT_MAJOR >= 10
+    buffers.setTensorAddresses(context_.get());
+    cudaStream_t stream{nullptr};
+    cudaStreamCreate(&stream);
+    bool status = context_->enqueueV3(stream);
+    cudaStreamSynchronize(stream);
+    cudaStreamDestroy(stream);
+#else
     bool status = context_->executeV2(buffers.getDeviceBindings().data());
+#endif
     if (!status) {
         std::cerr << "Inference execution failed" << std::endl;
         return false;

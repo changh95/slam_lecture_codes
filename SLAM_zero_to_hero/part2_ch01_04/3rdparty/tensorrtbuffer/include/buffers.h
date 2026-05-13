@@ -12,6 +12,7 @@
 #define TENSORRT_BUFFERS_H
 
 #include <memory>
+#include <string>
 #include <vector>
 #include <cassert>
 #include <iostream>
@@ -144,7 +145,27 @@ public:
                   nvinfer1::IExecutionContext* context = nullptr)
         : mEngine(engine), mBatchSize(batchSize) {
 
-        // Allocate buffers for all bindings
+        // Allocate buffers for all bindings (TRT >= 10 uses tensor-name API)
+#if NV_TENSORRT_MAJOR >= 10
+        int nbIO = mEngine->getNbIOTensors();
+        mTensorNames.reserve(nbIO);
+        for (int i = 0; i < nbIO; ++i) {
+            const char* name = mEngine->getIOTensorName(i);
+            mTensorNames.emplace_back(name);
+            auto dims = context ? context->getTensorShape(name)
+                                : mEngine->getTensorShape(name);
+
+            size_t vol = 1;
+            for (int j = 0; j < dims.nbDims; ++j) {
+                vol *= dims.d[j] > 0 ? dims.d[j] : 1;
+            }
+            size_t elemSize = sizeof(float);
+
+            mHostBuffers.emplace_back(vol * elemSize);
+            mDeviceBuffers.emplace_back(vol * elemSize);
+            mDeviceBindings.push_back(mDeviceBuffers.back().data());
+        }
+#else
         for (int i = 0; i < mEngine->getNbBindings(); ++i) {
             auto dims = context ? context->getBindingDimensions(i)
                                : mEngine->getBindingDimensions(i);
@@ -160,13 +181,44 @@ public:
             mDeviceBuffers.emplace_back(vol * elemSize);
             mDeviceBindings.push_back(mDeviceBuffers.back().data());
         }
+#endif
     }
 
+private:
+    int tensorIndex(const std::string& tensorName) const {
+#if NV_TENSORRT_MAJOR >= 10
+        for (size_t i = 0; i < mTensorNames.size(); ++i) {
+            if (mTensorNames[i] == tensorName) return static_cast<int>(i);
+        }
+        return -1;
+#else
+        return mEngine->getBindingIndex(tensorName.c_str());
+#endif
+    }
+
+    bool tensorIsInput(int i) const {
+#if NV_TENSORRT_MAJOR >= 10
+        return mEngine->getTensorIOMode(mTensorNames[i].c_str())
+               == nvinfer1::TensorIOMode::kINPUT;
+#else
+        return mEngine->bindingIsInput(i);
+#endif
+    }
+
+    int tensorCount() const {
+#if NV_TENSORRT_MAJOR >= 10
+        return static_cast<int>(mTensorNames.size());
+#else
+        return mEngine->getNbBindings();
+#endif
+    }
+
+public:
     /**
      * @brief Get host buffer by binding name
      */
     void* getHostBuffer(const std::string& tensorName) const {
-        int index = mEngine->getBindingIndex(tensorName.c_str());
+        int index = tensorIndex(tensorName);
         if (index < 0) {
             std::cerr << "Invalid tensor name: " << tensorName << std::endl;
             return nullptr;
@@ -178,24 +230,35 @@ public:
      * @brief Get device buffer by binding name
      */
     void* getDeviceBuffer(const std::string& tensorName) const {
-        int index = mEngine->getBindingIndex(tensorName.c_str());
+        int index = tensorIndex(tensorName);
         if (index < 0) return nullptr;
         return const_cast<void*>(mDeviceBuffers[index].data());
     }
 
     /**
-     * @brief Get array of device buffer pointers for executeV2
+     * @brief Get array of device buffer pointers for executeV2 / enqueueV3
      */
     std::vector<void*>& getDeviceBindings() {
         return mDeviceBindings;
     }
 
+#if NV_TENSORRT_MAJOR >= 10
+    /**
+     * @brief Bind device buffers to context tensors (TRT 10 enqueueV3 path)
+     */
+    void setTensorAddresses(nvinfer1::IExecutionContext* context) const {
+        for (size_t i = 0; i < mTensorNames.size(); ++i) {
+            context->setTensorAddress(mTensorNames[i].c_str(), mDeviceBindings[i]);
+        }
+    }
+#endif
+
     /**
      * @brief Copy all input buffers from host to device
      */
     void copyInputToDevice() {
-        for (int i = 0; i < mEngine->getNbBindings(); ++i) {
-            if (mEngine->bindingIsInput(i)) {
+        for (int i = 0; i < tensorCount(); ++i) {
+            if (tensorIsInput(i)) {
                 cudaMemcpy(mDeviceBuffers[i].data(),
                           mHostBuffers[i].data(),
                           mHostBuffers[i].size(),
@@ -208,8 +271,8 @@ public:
      * @brief Copy all output buffers from device to host
      */
     void copyOutputToHost() {
-        for (int i = 0; i < mEngine->getNbBindings(); ++i) {
-            if (!mEngine->bindingIsInput(i)) {
+        for (int i = 0; i < tensorCount(); ++i) {
+            if (!tensorIsInput(i)) {
                 cudaMemcpy(mHostBuffers[i].data(),
                           mDeviceBuffers[i].data(),
                           mDeviceBuffers[i].size(),
@@ -222,8 +285,8 @@ public:
      * @brief Copy all input buffers asynchronously
      */
     void copyInputToDeviceAsync(cudaStream_t stream) {
-        for (int i = 0; i < mEngine->getNbBindings(); ++i) {
-            if (mEngine->bindingIsInput(i)) {
+        for (int i = 0; i < tensorCount(); ++i) {
+            if (tensorIsInput(i)) {
                 cudaMemcpyAsync(mDeviceBuffers[i].data(),
                                mHostBuffers[i].data(),
                                mHostBuffers[i].size(),
@@ -237,8 +300,8 @@ public:
      * @brief Copy all output buffers asynchronously
      */
     void copyOutputToHostAsync(cudaStream_t stream) {
-        for (int i = 0; i < mEngine->getNbBindings(); ++i) {
-            if (!mEngine->bindingIsInput(i)) {
+        for (int i = 0; i < tensorCount(); ++i) {
+            if (!tensorIsInput(i)) {
                 cudaMemcpyAsync(mHostBuffers[i].data(),
                                mDeviceBuffers[i].data(),
                                mDeviceBuffers[i].size(),
@@ -254,6 +317,9 @@ private:
     std::vector<HostBuffer> mHostBuffers;
     std::vector<DeviceBuffer> mDeviceBuffers;
     std::vector<void*> mDeviceBindings;
+#if NV_TENSORRT_MAJOR >= 10
+    std::vector<std::string> mTensorNames;  // IO tensor order matches buffer index
+#endif
 };
 
 }  // namespace tensorrt_buffer

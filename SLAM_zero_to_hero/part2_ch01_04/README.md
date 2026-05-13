@@ -248,17 +248,38 @@ part2_ch01_04/
 ### Prerequisites
 
 - NVIDIA GPU with CUDA support
-- TensorRT 8.x+
-- CUDA 11.x+
+- TensorRT 8.x (Pascal/Turing/Ampere/Ada) **or** TensorRT 10.x (Hopper/Blackwell)
+- CUDA 11.x+ (or 12.x for newer GPUs)
 - OpenCV 4.x
 - Eigen3
 - yaml-cpp
 
+### GPU Compatibility
+
+This chapter ships two Dockerfiles. Pick the one that matches your hardware:
+
+| GPU generation               | Examples (consumer)          | SM     | Dockerfile             | TensorRT base                                |
+|------------------------------|------------------------------|--------|------------------------|----------------------------------------------|
+| Pascal / Turing / Ampere / Ada | GTX 10xx, RTX 20xx (e.g. **2080 Ti**), RTX 30xx, RTX 40xx | sm_61–sm_89 | `Dockerfile`           | `nvcr.io/nvidia/tensorrt:22.07-py3` (TRT 8.4.1) |
+| Blackwell                    | RTX 50xx (e.g. **5090**)     | sm_120 | `Dockerfile.blackwell` | `nvcr.io/nvidia/tensorrt:25.04-py3` (TRT 10.9)  |
+
+**Why two images?** TensorRT 8.4.1 was released in mid-2022 and contains a hard internal assertion (`assert(major < 10)`) when introspecting GPU compute capability. RTX 50-series Blackwell GPUs report **CC 12.0**, which trips this assertion and aborts engine construction before any kernel is selected:
+
+```
+[helpers.h::smVerHex2Dig] Error Code 2: Internal Error
+  (Assertion major >= 0 && major < 10 failed.)
+```
+
+No driver, container-toolkit, or runtime setting works around this — TensorRT 10.x (NGC ≥ 25.02) is required. The `Dockerfile.blackwell` image uses TensorRT 10 and the source includes `#if NV_TENSORRT_MAJOR >= 10` guards in `super_point.cpp`, `super_glue.cpp`, and `3rdparty/tensorrtbuffer/include/buffers.h` for the API breaks (tensor-name API, `setMemoryPoolLimit`, `enqueueV3`, etc.).
+
 ### Docker Build (Recommended)
 
 ```bash
-# Build the Docker image
+# Pre-Blackwell GPUs (RTX 2080 Ti, RTX 30xx, RTX 40xx, …)
 docker build . -t slam_zero_to_hero:part2_ch01_04
+
+# Blackwell GPUs (RTX 5090, …)
+docker build -f Dockerfile.blackwell . -t slam_zero_to_hero:part2_ch01_04_blackwell
 ```
 
 ### Local Build
@@ -276,6 +297,7 @@ make -j$(nproc)
 ### 1. Start Docker Container
 
 ```bash
+# Docker + nvidia-container-toolkit
 docker run -it --rm \
     --gpus all \
     --env DISPLAY=$DISPLAY \
@@ -283,6 +305,27 @@ docker run -it --rm \
     --volume ~/datasets:/datasets \
     slam_zero_to_hero:part2_ch01_04 /bin/bash
 ```
+
+Blackwell users swap the tag for `:part2_ch01_04_blackwell`.
+
+**Podman on Ubuntu 22.04** (no CDI support in podman 3.x). Allow X11 first with `xhost +local:root` and use the legacy nvidia runtime:
+
+```bash
+xhost +local:root
+podman run -it --rm \
+    --runtime=/usr/bin/nvidia-container-runtime \
+    --security-opt=label=disable \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v $(pwd)/weights:/workspace/superpointglue/weights \
+    -v $(pwd)/data:/workspace/superpointglue/data \
+    -v $(pwd)/config:/workspace/superpointglue/config \
+    slam_zero_to_hero:part2_ch01_04_blackwell /bin/bash
+```
+
+The `weights/` bind mount caches built `.engine` files on the host, so only the first run pays the build cost.
 
 ### 2. Download/Convert Models
 

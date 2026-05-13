@@ -47,10 +47,15 @@ bool SuperGlue::build() {
         nvinfer1::createInferBuilder(gLogger.getTRTLogger()));
     if (!builder) return false;
 
+#if NV_TENSORRT_MAJOR >= 10
+    auto network = TensorRTUniquePtr<nvinfer1::INetworkDefinition>(
+        builder->createNetworkV2(0));
+#else
     const auto explicit_batch = 1U << static_cast<uint32_t>(
         nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
     auto network = TensorRTUniquePtr<nvinfer1::INetworkDefinition>(
         builder->createNetworkV2(explicit_batch));
+#endif
     if (!network) return false;
 
     auto config = TensorRTUniquePtr<nvinfer1::IBuilderConfig>(
@@ -185,7 +190,12 @@ bool SuperGlue::construct_network(
         return false;
     }
 
+#if NV_TENSORRT_MAJOR >= 10
+    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE,
+                               512ULL * (1ULL << 20));  // 512 MB
+#else
     config->setMaxWorkspaceSize(512 * (1 << 20));  // 512 MB
+#endif
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
     enableDLA(builder.get(), config.get(), superglue_config_.dla_core);
 
@@ -247,9 +257,34 @@ bool SuperGlue::infer(const Eigen::Matrix<double, 259, Eigen::Dynamic>& features
         if (!context_) return false;
     }
 
+#if NV_TENSORRT_MAJOR >= 10
+    assert(engine_->getNbIOTensors() == 7);
+
+    auto const* kp0 = superglue_config_.input_tensor_names[0].c_str();
+    auto const* sc0 = superglue_config_.input_tensor_names[1].c_str();
+    auto const* desc0 = superglue_config_.input_tensor_names[2].c_str();
+    auto const* kp1 = superglue_config_.input_tensor_names[3].c_str();
+    auto const* sc1 = superglue_config_.input_tensor_names[4].c_str();
+    auto const* desc1 = superglue_config_.input_tensor_names[5].c_str();
+    auto const* out = superglue_config_.output_tensor_names[0].c_str();
+
+    context_->setInputShape(kp0,   nvinfer1::Dims3(1, features0.cols(), 2));
+    context_->setInputShape(sc0,   nvinfer1::Dims2(1, features0.cols()));
+    context_->setInputShape(desc0, nvinfer1::Dims3(1, 256, features0.cols()));
+    context_->setInputShape(kp1,   nvinfer1::Dims3(1, features1.cols(), 2));
+    context_->setInputShape(sc1,   nvinfer1::Dims2(1, features1.cols()));
+    context_->setInputShape(desc1, nvinfer1::Dims3(1, 256, features1.cols()));
+
+    keypoints_0_dims_   = context_->getTensorShape(kp0);
+    scores_0_dims_      = context_->getTensorShape(sc0);
+    descriptors_0_dims_ = context_->getTensorShape(desc0);
+    keypoints_1_dims_   = context_->getTensorShape(kp1);
+    scores_1_dims_      = context_->getTensorShape(sc1);
+    descriptors_1_dims_ = context_->getTensorShape(desc1);
+    output_scores_dims_ = context_->getTensorShape(out);
+#else
     assert(engine_->getNbBindings() == 7);
 
-    // Get binding indices
     const int kp0_idx = engine_->getBindingIndex(superglue_config_.input_tensor_names[0].c_str());
     const int sc0_idx = engine_->getBindingIndex(superglue_config_.input_tensor_names[1].c_str());
     const int desc0_idx = engine_->getBindingIndex(superglue_config_.input_tensor_names[2].c_str());
@@ -258,7 +293,6 @@ bool SuperGlue::infer(const Eigen::Matrix<double, 259, Eigen::Dynamic>& features
     const int desc1_idx = engine_->getBindingIndex(superglue_config_.input_tensor_names[5].c_str());
     const int out_idx = engine_->getBindingIndex(superglue_config_.output_tensor_names[0].c_str());
 
-    // Set dynamic dimensions
     context_->setBindingDimensions(kp0_idx, nvinfer1::Dims3(1, features0.cols(), 2));
     context_->setBindingDimensions(sc0_idx, nvinfer1::Dims2(1, features0.cols()));
     context_->setBindingDimensions(desc0_idx, nvinfer1::Dims3(1, 256, features0.cols()));
@@ -266,7 +300,6 @@ bool SuperGlue::infer(const Eigen::Matrix<double, 259, Eigen::Dynamic>& features
     context_->setBindingDimensions(sc1_idx, nvinfer1::Dims2(1, features1.cols()));
     context_->setBindingDimensions(desc1_idx, nvinfer1::Dims3(1, 256, features1.cols()));
 
-    // Get actual dimensions
     keypoints_0_dims_ = context_->getBindingDimensions(kp0_idx);
     scores_0_dims_ = context_->getBindingDimensions(sc0_idx);
     descriptors_0_dims_ = context_->getBindingDimensions(desc0_idx);
@@ -274,6 +307,7 @@ bool SuperGlue::infer(const Eigen::Matrix<double, 259, Eigen::Dynamic>& features
     scores_1_dims_ = context_->getBindingDimensions(sc1_idx);
     descriptors_1_dims_ = context_->getBindingDimensions(desc1_idx);
     output_scores_dims_ = context_->getBindingDimensions(out_idx);
+#endif
 
     BufferManager buffers(engine_, 0, context_.get());
 
@@ -284,7 +318,16 @@ bool SuperGlue::infer(const Eigen::Matrix<double, 259, Eigen::Dynamic>& features
 
     buffers.copyInputToDevice();
 
+#if NV_TENSORRT_MAJOR >= 10
+    buffers.setTensorAddresses(context_.get());
+    cudaStream_t stream{nullptr};
+    cudaStreamCreate(&stream);
+    bool status = context_->enqueueV3(stream);
+    cudaStreamSynchronize(stream);
+    cudaStreamDestroy(stream);
+#else
     bool status = context_->executeV2(buffers.getDeviceBindings().data());
+#endif
     if (!status) return false;
 
     buffers.copyOutputToHost();

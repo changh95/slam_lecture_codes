@@ -1,0 +1,44 @@
+# SuperPoint + SuperGlue with TensorRT 10 (Blackwell-ready)
+# Targets NVIDIA RTX 50-series (sm_120). The original Dockerfile pins
+# TensorRT 8.4.1 which has a hard assertion (major < 10) on the GPU's
+# compute capability and cannot build engines on Blackwell.
+
+# TensorRT 10.9 / CUDA 12.8 / Ubuntu 24.04 — first NGC release with
+# full Blackwell support in TensorRT.
+FROM nvcr.io/nvidia/tensorrt:25.04-py3
+
+LABEL maintainer="changh95"
+LABEL description="SuperPoint + SuperGlue TensorRT 10 build for Blackwell GPUs"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# ==============================================================================
+# System Dependencies (OpenCV/Eigen/yaml-cpp from apt — Ubuntu 24.04 ships 4.6)
+# ==============================================================================
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+      build-essential \
+      cmake \
+      git \
+      pkg-config \
+      libopencv-dev \
+      libeigen3-dev \
+      libyaml-cpp-dev \
+      libgtk-3-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ==============================================================================
+# Copy and Build Project
+# ==============================================================================
+
+WORKDIR /workspace
+
+COPY . /workspace/superpointglue
+
+RUN cd /workspace/superpointglue && \
+    rm -rf build && mkdir -p build && cd build && \
+    cmake .. && \
+    make -j$(nproc)
+
+WORKDIR /workspace/superpointglue
