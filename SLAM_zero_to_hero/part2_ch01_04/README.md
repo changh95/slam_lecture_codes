@@ -296,22 +296,33 @@ make -j$(nproc)
 
 ### 1. Start Docker Container
 
+Allow X11 first so the matched-feature window can render from inside the container:
+
 ```bash
-# Docker + nvidia-container-toolkit
+xhost +local:root
+```
+
+**Pre-Blackwell GPUs (RTX 2080 Ti, RTX 30xx, RTX 40xx) — verified on RTX 2080 Ti:**
+
+```bash
 docker run -it --rm \
     --gpus all \
     --env DISPLAY=$DISPLAY \
     --volume /tmp/.X11-unix:/tmp/.X11-unix \
-    --volume ~/datasets:/datasets \
+    --volume $(pwd)/weights:/workspace/superpointglue/weights \
+    --volume $(pwd)/data:/workspace/superpointglue/data \
+    --volume $(pwd)/config:/workspace/superpointglue/config \
+    --volume ~/data:/datasets \
     slam_zero_to_hero:part2_ch01_04 /bin/bash
 ```
 
-Blackwell users swap the tag for `:part2_ch01_04_blackwell`.
+Run the command from the `part2_ch01_04/` directory so `$(pwd)/weights`, `$(pwd)/data`, and `$(pwd)/config` resolve to the in-repo folders. The `weights/` bind mount caches built `.engine` files on the host, so only the first run pays the ~10–20 min TensorRT build cost.
 
-**Podman on Ubuntu 22.04** (no CDI support in podman 3.x). Allow X11 first with `xhost +local:root` and use the legacy nvidia runtime:
+**Blackwell GPUs (RTX 5090, …):** swap the tag for `:part2_ch01_04_blackwell` (same flags otherwise).
+
+**Podman on Ubuntu 22.04** (no CDI support in podman 3.x) — use the legacy nvidia runtime instead of `--gpus all`:
 
 ```bash
-xhost +local:root
 podman run -it --rm \
     --runtime=/usr/bin/nvidia-container-runtime \
     --security-opt=label=disable \
@@ -322,10 +333,9 @@ podman run -it --rm \
     -v $(pwd)/weights:/workspace/superpointglue/weights \
     -v $(pwd)/data:/workspace/superpointglue/data \
     -v $(pwd)/config:/workspace/superpointglue/config \
+    -v ~/data:/datasets \
     slam_zero_to_hero:part2_ch01_04_blackwell /bin/bash
 ```
-
-The `weights/` bind mount caches built `.engine` files on the host, so only the first run pays the build cost.
 
 ### 2. Download/Convert Models
 
@@ -360,6 +370,21 @@ python convert_superglue_to_onnx.py
 ```
 
 **Note:** First run will take ~10-20 minutes to build TensorRT engines. Subsequent runs use cached engines.
+
+### 4. Run on the EuRoC MAV Dataset
+
+The EuRoC MAV dataset stores monochrome 752×480 images under each sequence's `mav0/cam0/data/` directory — a drop-in fit for `superpointglue_sequence`. If you placed the dataset at `~/data/euroc_mav/` on the host, the `-v ~/data:/datasets` mount above exposes it inside the container at `/datasets/euroc_mav/`.
+
+```bash
+# Inside the container (after building with `cmake .. && make -j$(nproc)`):
+./build/superpointglue_sequence \
+    config/config.yaml \
+    /datasets/euroc_mav/MH_01_easy/mav0/cam0/data/
+```
+
+Other sequences work the same way — just swap `MH_01_easy` for `MH_02_easy`, `MH_03_medium`, `V1_01_easy`, etc. The example resizes each frame to the `image_width`/`image_height` set in `config/config.yaml` (default 640×480) before inference, so EuRoC's native 752×480 frames are slightly downscaled in width.
+
+**Tip:** For indoor EuRoC sequences (Vicon Room `V1_*` / `V2_*`), `superglue_indoor` weights are already the default in `config/config.yaml`. For the Machine Hall (`MH_*`) sequences either set works — they were captured in an industrial hall.
 
 ---
 
