@@ -82,5 +82,20 @@ RUN mkdir -p /root/.cache/torch/hub && \
 # Install VPR_Tutorial as an editable package (no deps -- we just installed them above).
 RUN uv pip install --no-cache --no-deps -e .
 
+# Qt5 + PyQt5 for live matplotlib windows over X11 forwarding.
+# Without these, plt.show() falls back to Agg (no GUI).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+        libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+        libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0 libdbus-1-3 \
+        libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN uv pip install --no-cache "PyQt5>=5.15"
+ENV MPLBACKEND=qt5agg
+
+# Multi-descriptor comparison script (runs every torch-based descriptor on
+# GardensPoint, plots PR curves + similarity matrices + example matches).
+COPY compare_descriptors.py /workspace/compare_descriptors.py
+
 # Default workdir: VPR_Tutorial; default cmd shows what's available.
-CMD ["bash", "-lc", "echo 'VPR Tutorial container. Try:' && echo '  python3 demo.py --descriptor CosPlace --dataset GardensPoint' && exec bash"]
+CMD ["bash", "-lc", "echo 'VPR Tutorial container. Try:' && echo '  python3 demo.py --descriptor CosPlace --dataset GardensPoint' && echo '  python3 /workspace/compare_descriptors.py   # multi-descriptor comparison' && exec bash"]
