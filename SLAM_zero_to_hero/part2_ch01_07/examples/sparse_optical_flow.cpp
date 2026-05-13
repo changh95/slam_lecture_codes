@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -153,7 +154,10 @@ public:
             prev_points_.push_back(pt);
             track_ids_.push_back(next_track_id_++);
         }
+        ++redetection_count_;
     }
+
+    int redetectionCount() const { return redetection_count_; }
 
     cv::Point2f computeAverageFlow() const {
         if (flow_vectors_.empty()) return {0, 0};
@@ -164,26 +168,30 @@ public:
         return avg;
     }
 
-    cv::Mat visualize(const cv::Mat& bgr_frame) const {
+    cv::Mat visualize(const cv::Mat& bgr_frame, bool draw_text = true) const {
         cv::Mat vis = bgr_frame.clone();
         for (size_t i = 0; i < curr_points_.size() && i < last_prev_points_.size(); ++i) {
             int hue = (track_ids_[i] * 37) % 180;
             cv::Scalar color(hue * 1.4, 255 - hue, 100 + hue % 155);
-            cv::line(vis, last_prev_points_[i], curr_points_[i], color, 2);
-            cv::circle(vis, curr_points_[i], 4, color, -1);
-            cv::circle(vis, last_prev_points_[i], 2, cv::Scalar(100, 100, 100), -1);
+            cv::line(vis, last_prev_points_[i], curr_points_[i], color, 3);
+            cv::circle(vis, curr_points_[i], 7, color, -1);
+            cv::circle(vis, last_prev_points_[i], 4, cv::Scalar(100, 100, 100), -1);
         }
-        std::string info = "Tracking " + std::to_string(curr_points_.size()) + " features";
-        cv::putText(vis, info, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                    cv::Scalar(0, 255, 0), 2);
-        cv::Point2f avg = computeAverageFlow();
-        std::ostringstream oss;
-        oss << "Avg flow: (" << std::fixed << std::setprecision(1) << avg.x
-            << ", " << avg.y << ")";
-        cv::putText(vis, oss.str(), cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                    cv::Scalar(0, 255, 0), 2);
+        if (draw_text) {
+            std::string info = "Tracking " + std::to_string(curr_points_.size()) + " features";
+            cv::putText(vis, info, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                        cv::Scalar(0, 255, 0), 2);
+            cv::Point2f avg = computeAverageFlow();
+            std::ostringstream oss;
+            oss << "Avg flow: (" << std::fixed << std::setprecision(1) << avg.x
+                << ", " << avg.y << ")";
+            cv::putText(vis, oss.str(), cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                        cv::Scalar(0, 255, 0), 2);
+        }
         return vis;
     }
+
+    int currentCount() const { return static_cast<int>(curr_points_.size()); }
 
 private:
     OpticalFlowConfig config_;
@@ -195,6 +203,7 @@ private:
     std::vector<int> track_ids_;
     std::vector<cv::Point2f> flow_vectors_;
     int next_track_id_ = 0;
+    int redetection_count_ = 0;
 };
 
 int main(int argc, char** argv) {
@@ -202,7 +211,7 @@ int main(int argc, char** argv) {
         : "/data/tum_rgbd/rgbd_dataset_freiburg1_desk";
     int num_frames = (argc > 2) ? std::stoi(argv[2]) : 500;
 
-    std::cout << "Sparse LK live demo - OpenCV " << CV_VERSION << std::endl;
+    std::cout << "Sparse LK live sweep - OpenCV " << CV_VERSION << std::endl;
     std::cout << "Sequence:  " << seq_dir << std::endl;
     std::cout << "Frames:    " << num_frames << std::endl;
 
@@ -213,43 +222,107 @@ int main(int argc, char** argv) {
     }
     std::cout << "Loaded " << frames.size() << " frames" << std::endl;
 
-    OpticalFlowConfig config;
-    config.max_features = 200;
-    LKFeatureTracker tracker(config);
+    // Parameter sweep: rows = winSize, cols = pyramid levels.
+    const std::vector<int> win_sizes = {11, 21, 31, 41};
+    const std::vector<int> pyramid_levels = {0, 1, 2, 3, 4};
+    const int grid_rows = static_cast<int>(win_sizes.size());
+    const int grid_cols = static_cast<int>(pyramid_levels.size());
 
     cv::Mat bgr_prev = cv::imread(frames[0], cv::IMREAD_COLOR);
     cv::Mat gray_prev;
     cv::cvtColor(bgr_prev, gray_prev, cv::COLOR_BGR2GRAY);
-    tracker.detectFeatures(gray_prev);
 
-    cv::namedWindow("Sparse LK Tracking", cv::WINDOW_AUTOSIZE);
+    std::vector<LKFeatureTracker> trackers;
+    trackers.reserve(grid_rows * grid_cols);
+    for (int ws : win_sizes) {
+        for (int lv : pyramid_levels) {
+            OpticalFlowConfig c;
+            c.max_features = 80;
+            c.win_size = cv::Size(ws, ws);
+            c.max_pyramid_level = lv;
+            trackers.emplace_back(c);
+            trackers.back().detectFeatures(gray_prev);
+        }
+    }
 
-    for (size_t i = 1; i < frames.size(); ++i) {
-        cv::Mat bgr_curr = cv::imread(frames[i], cv::IMREAD_COLOR);
+    // Tile size — keep the full grid under ~1600x1000 so it fits typical screens.
+    const int tile_w = 320, tile_h = 240;
+    cv::namedWindow("LK winSize x pyramid sweep", cv::WINDOW_NORMAL);
+    cv::resizeWindow("LK winSize x pyramid sweep",
+                     grid_cols * tile_w, grid_rows * tile_h);
+
+    for (size_t fi = 1; fi < frames.size(); ++fi) {
+        cv::Mat bgr_curr = cv::imread(frames[fi], cv::IMREAD_COLOR);
         cv::Mat gray_curr;
         cv::cvtColor(bgr_curr, gray_curr, cv::COLOR_BGR2GRAY);
 
-        auto t0 = std::chrono::high_resolution_clock::now();
-        int tracked = tracker.trackFeatures(gray_curr);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        cv::Mat grid(grid_rows * tile_h, grid_cols * tile_w, CV_8UC3,
+                     cv::Scalar(0, 0, 0));
 
-        cv::Mat vis = tracker.visualize(bgr_curr);
-        std::ostringstream tag;
-        tag << "frame " << std::setw(4) << std::setfill('0') << i
-            << "  " << std::fixed << std::setprecision(1) << ms << " ms";
-        cv::putText(vis, tag.str(), cv::Point(10, vis.rows - 10),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
+        double total_ms = 0.0;
+        // "Best" = fewest re-detections so far (least tracking lost over time),
+        // tiebreak by most features currently held.
+        int best_redet = std::numeric_limits<int>::max();
+        int best_count_tie = -1;
+        std::pair<int, int> best_cfg{0, 0};
+        int best_r = 0, best_c = 0;
 
-        cv::imshow("Sparse LK Tracking", vis);
+        for (int r = 0; r < grid_rows; ++r) {
+            for (int c = 0; c < grid_cols; ++c) {
+                int idx = r * grid_cols + c;
+                int ws = win_sizes[r];
+                int lv = pyramid_levels[c];
+
+                auto t0 = std::chrono::high_resolution_clock::now();
+                int tracked = trackers[idx].trackFeatures(gray_curr);
+                auto t1 = std::chrono::high_resolution_clock::now();
+                double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                total_ms += ms;
+
+                int rd = trackers[idx].redetectionCount();
+                if (rd < best_redet || (rd == best_redet && tracked > best_count_tie)) {
+                    best_redet = rd;
+                    best_count_tie = tracked;
+                    best_cfg = {ws, lv};
+                    best_r = r;
+                    best_c = c;
+                }
+
+                cv::Mat vis = trackers[idx].visualize(bgr_curr, /*draw_text=*/false);
+                cv::Mat tile;
+                cv::resize(vis, tile, cv::Size(tile_w, tile_h));
+
+                std::ostringstream l1, l2;
+                l1 << "ws=" << ws << "  lv=" << lv << "  RD=" << rd;
+                l2 << "N=" << tracked << "  " << std::fixed << std::setprecision(2)
+                   << ms << " ms";
+                cv::putText(tile, l1.str(), cv::Point(8, 20),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                            cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
+                cv::putText(tile, l2.str(), cv::Point(8, tile_h - 8),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.45,
+                            cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
+
+                tile.copyTo(grid(cv::Rect(c * tile_w, r * tile_h, tile_w, tile_h)));
+            }
+        }
+
+        // Highlight the best-performing tile (most features still tracked).
+        cv::Rect best_rect(best_c * tile_w, best_r * tile_h, tile_w, tile_h);
+        cv::rectangle(grid, best_rect, cv::Scalar(0, 255, 0), 4);
+        cv::putText(grid, "BEST",
+                    cv::Point(best_rect.x + tile_w - 70, best_rect.y + 22),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
+
+        cv::imshow("LK winSize x pyramid sweep", grid);
         if ((cv::waitKey(30) & 0xff) == 27) break;
 
-        if (i % 25 == 0 || i == frames.size() - 1) {
-            cv::Point2f f = tracker.computeAverageFlow();
-            std::cout << "Frame " << std::setw(4) << i
-                      << ": tracked=" << std::setw(3) << tracked
-                      << ", avg flow=(" << std::fixed << std::setprecision(2)
-                      << f.x << ", " << f.y << "), " << ms << " ms" << std::endl;
+        if (fi % 25 == 0 || fi == frames.size() - 1) {
+            std::cout << "Frame " << std::setw(4) << fi
+                      << ": total " << std::fixed << std::setprecision(1) << total_ms
+                      << " ms, most stable ws=" << best_cfg.first
+                      << " lv=" << best_cfg.second
+                      << " (" << best_redet << " re-detects)" << std::endl;
         }
     }
 

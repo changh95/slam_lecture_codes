@@ -162,6 +162,34 @@ Recover camera pose (R, t)
 
 ---
 
+## Demos
+
+### Sparse — Lucas-Kanade winSize × pyramid level sweep
+
+20 LK trackers run in parallel on every frame. Rows are `winSize ∈ {11, 21, 31, 41}`,
+columns are pyramid levels 0–4. Each tile shows live tracks for that config plus
+`RD` (cumulative re-detection events — fires every time tracking falls below the
+`min_features` threshold). The green BEST box marks the tracker with the
+fewest re-detections so far (least tracking lost over time).
+
+![Sparse LK sweep](sparse.png)
+
+### Dense — Farneback flow + warp residual + motion segmentation
+
+Four tiles computed per frame from a single Farneback flow field:
+
+| Tile | Meaning |
+|------|---------|
+| TL Arrows | Flow vectors overlaid on the current frame |
+| TR HSV    | Flow as a color wheel (hue = direction, value = magnitude) |
+| BL Warp residual | `|curr − warp(prev, flow)| × 3` — dark = ego-motion well explained |
+| BR Motion segmentation | Pixels whose flow deviates >3 px from the dominant ego-motion, tinted red |
+
+Snapshot below was captured on `rgbd_dataset_freiburg2_desk_with_person`, where
+the moving person is correctly flagged in the segmentation tile.
+
+![Dense Farneback](dense.png)
+
 ## Data
 
 Both demos read frames directly from a **TUM RGB-D sequence** on the host

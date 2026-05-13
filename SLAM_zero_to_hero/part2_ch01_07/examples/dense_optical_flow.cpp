@@ -113,6 +113,47 @@ static cv::Mat flowToArrows(const cv::Mat& flow, const cv::Mat& background,
     return vis;
 }
 
+// Backward-warp prev into curr's coordinate frame using the flow field.
+// Flow is prev->curr, so each curr pixel (x,y) sources from prev at (x-fx, y-fy).
+static cv::Mat warpWithFlow(const cv::Mat& prev, const cv::Mat& flow) {
+    cv::Mat map_x(flow.size(), CV_32F), map_y(flow.size(), CV_32F);
+    for (int y = 0; y < flow.rows; ++y) {
+        for (int x = 0; x < flow.cols; ++x) {
+            const cv::Point2f& f = flow.at<cv::Point2f>(y, x);
+            map_x.at<float>(y, x) = static_cast<float>(x) - f.x;
+            map_y.at<float>(y, x) = static_cast<float>(y) - f.y;
+        }
+    }
+    cv::Mat warped;
+    cv::remap(prev, warped, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+    return warped;
+}
+
+// Mark pixels whose flow deviates from the dominant (mean) ego-motion by more
+// than `thresh_px`. These are candidate independently moving objects.
+static cv::Mat motionSegmentation(const cv::Mat& flow, const cv::Mat& bgr_curr,
+                                  double thresh_px = 3.0) {
+    cv::Scalar mean_flow = cv::mean(flow);
+    std::vector<cv::Mat> parts(2);
+    cv::split(flow, parts);
+    cv::Mat dx = parts[0] - mean_flow[0];
+    cv::Mat dy = parts[1] - mean_flow[1];
+    cv::Mat resid;
+    cv::magnitude(dx, dy, resid);
+
+    cv::Mat mask;
+    cv::threshold(resid, mask, thresh_px, 255.0, cv::THRESH_BINARY);
+    mask.convertTo(mask, CV_8U);
+
+    cv::Mat red(bgr_curr.size(), CV_8UC3, cv::Scalar(0, 0, 255));
+    cv::Mat tinted;
+    cv::addWeighted(bgr_curr, 0.4, red, 0.6, 0, tinted);
+
+    cv::Mat vis = bgr_curr.clone();
+    tinted.copyTo(vis, mask);
+    return vis;
+}
+
 int main(int argc, char** argv) {
     std::string seq_dir = (argc > 1) ? argv[1]
         : "/data/tum_rgbd/rgbd_dataset_freiburg1_desk";
@@ -132,7 +173,15 @@ int main(int argc, char** argv) {
 
     FarnebackConfig fb;
 
-    cv::namedWindow("Dense Farneback (arrows | HSV)", cv::WINDOW_AUTOSIZE);
+    const std::string win_title = "Dense Farneback (arrows | HSV / warp residual | seg)";
+    cv::namedWindow(win_title, cv::WINDOW_NORMAL);
+
+    auto labelTile = [](cv::Mat& tile, const std::string& label) {
+        cv::putText(tile, label, cv::Point(10, 25),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+    };
+
+    bool window_sized = false;
 
     for (size_t i = frame_gap; i < frames.size(); ++i) {
         cv::Mat bgr_prev = cv::imread(frames[i - frame_gap], cv::IMREAD_COLOR);
@@ -152,20 +201,46 @@ int main(int argc, char** argv) {
         auto t1 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-        cv::Mat hsv = flowToHSV(flow);
         cv::Mat arrows = flowToArrows(flow, bgr_curr, 16, 2.0);
+        cv::Mat hsv = flowToHSV(flow);
+
+        // Motion compensation: warp prev into curr's frame, then take |curr - warped|.
+        // Dark areas = ego-motion well explained by flow.
+        cv::Mat warped_prev = warpWithFlow(bgr_prev, flow);
+        cv::Mat residual;
+        cv::absdiff(bgr_curr, warped_prev, residual);
+        cv::Mat residual_vis;
+        cv::convertScaleAbs(residual, residual_vis, 3.0);  // amplify so it's visible
+        double err_before = cv::mean(cv::Mat(cv::abs(bgr_curr - bgr_prev)))[0];
+        double err_after  = cv::mean(residual)[0];
+
+        // Motion segmentation: flag pixels whose flow deviates from the dominant motion.
+        cv::Mat seg = motionSegmentation(flow, bgr_curr, 3.0);
+
+        labelTile(arrows,       "Arrows");
+        labelTile(hsv,          "HSV flow");
+        labelTile(residual_vis, "Warp residual (3x)");
+        labelTile(seg,          "Motion segmentation");
 
         std::ostringstream tag;
-        tag << "frame " << std::setw(4) << std::setfill('0') << i
-            << "  " << std::fixed << std::setprecision(1) << ms << " ms";
-        cv::putText(arrows, tag.str(), cv::Point(10, 25),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
-        cv::putText(hsv, tag.str(), cv::Point(10, 25),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
+        tag << "f" << std::setw(4) << std::setfill('0') << i
+            << "  " << std::fixed << std::setprecision(1) << ms << " ms"
+            << "  warp err: " << std::setprecision(1) << err_before
+            << " -> " << err_after;
+        cv::putText(arrows, tag.str(), cv::Point(10, arrows.rows - 12),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1,
+                    cv::LINE_AA);
 
-        cv::Mat side_by_side;
-        cv::hconcat(arrows, hsv, side_by_side);
-        cv::imshow("Dense Farneback (arrows | HSV)", side_by_side);
+        cv::Mat top, bot, grid;
+        cv::hconcat(arrows, hsv, top);
+        cv::hconcat(residual_vis, seg, bot);
+        cv::vconcat(top, bot, grid);
+
+        if (!window_sized) {
+            cv::resizeWindow(win_title, grid.cols, grid.rows);
+            window_sized = true;
+        }
+        cv::imshow(win_title, grid);
         if ((cv::waitKey(1) & 0xff) == 27) break;
 
         if (i % 50 == 0 || i == frames.size() - 1) {
