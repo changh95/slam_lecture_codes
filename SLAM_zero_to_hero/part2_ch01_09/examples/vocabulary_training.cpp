@@ -8,6 +8,10 @@
  *
  * The vocabulary is the foundation of the Bag of Visual Words approach
  * used in visual place recognition and loop closure detection.
+ *
+ * Training images are read from a directory of real images supplied via the
+ * required --data <dir> flag (sample frames are bundled in this chapter's
+ * data/ folder).
  */
 
 #include "DBoW2/DBoW2.h"
@@ -15,12 +19,13 @@
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
-#include <random>
+#include <string>
 #include <vector>
 
 // Vocabulary type using ORB descriptors
@@ -40,78 +45,32 @@ std::vector<cv::Mat> toDescriptorVector(const cv::Mat& descriptors) {
     return desc_vec;
 }
 
-/**
- * Generate synthetic training images with random patterns
- * In real applications, you would load actual images from your dataset
- */
-std::vector<cv::Mat> generateSyntheticTrainingImages(int num_images,
-                                                      int width = 640,
-                                                      int height = 480) {
-    std::vector<cv::Mat> images;
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> pos_dist(50, std::min(width, height) - 50);
-    std::uniform_int_distribution<> size_dist(20, 80);
-    std::uniform_int_distribution<> gray_dist(0, 255);
-    std::uniform_int_distribution<> shape_dist(0, 2);
-
-    std::cout << "Generating " << num_images << " synthetic training images..."
-              << std::endl;
-
-    for (int i = 0; i < num_images; ++i) {
-        // Create base image with gradient background
-        cv::Mat img(height, width, CV_8UC1);
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                img.at<uchar>(y, x) = static_cast<uchar>(
-                    (128 + 50 * std::sin(x * 0.01 + i) +
-                     50 * std::cos(y * 0.01 + i)));
-            }
-        }
-
-        // Add random shapes (circles, rectangles, lines) to create features
-        int num_shapes = 15 + (i % 10);
-        for (int j = 0; j < num_shapes; ++j) {
-            int x = pos_dist(gen);
-            int y = pos_dist(gen);
-            int size = size_dist(gen);
-            uchar color = static_cast<uchar>(gray_dist(gen));
-
-            switch (shape_dist(gen)) {
-                case 0:  // Circle
-                    cv::circle(img, cv::Point(x, y), size / 2, cv::Scalar(color),
-                               -1);
-                    break;
-                case 1:  // Rectangle
-                    cv::rectangle(img, cv::Point(x, y),
-                                  cv::Point(x + size, y + size),
-                                  cv::Scalar(color), -1);
-                    break;
-                case 2:  // Line
-                    cv::line(img, cv::Point(x, y),
-                             cv::Point(x + size, y + size),
-                             cv::Scalar(color), 2);
-                    break;
-            }
-        }
-
-        // Add some noise for more realistic features
-        cv::Mat noise(height, width, CV_8UC1);
-        cv::randn(noise, 0, 15);
-        img += noise;
-
-        // Add Gaussian blur to smooth edges
-        cv::GaussianBlur(img, img, cv::Size(3, 3), 0);
-
-        images.push_back(img);
-    }
-
-    return images;
-}
-
 int main(int argc, char* argv[]) {
     std::cout << "=== DBoW2 Vocabulary Training ===" << std::endl;
     std::cout << std::endl;
+
+    // CLI flags:
+    //   --data <dir>   directory of training images to load (REQUIRED)
+    std::string data_dir;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--data" && i + 1 < argc) {
+            data_dir = argv[++i];
+        }
+    }
+
+    // --data is mandatory: there is no synthetic fallback.
+    if (data_dir.empty()) {
+        std::cerr << "Error: --data <dir> is required.\n"
+                  << "Usage: vocabulary_training --data <image-dir>"
+                  << std::endl;
+        return 1;
+    }
+    if (!std::filesystem::is_directory(data_dir)) {
+        std::cerr << "Error: image directory not found: " << data_dir
+                  << " (pass a valid directory with --data <dir>)." << std::endl;
+        return 1;
+    }
 
     // Vocabulary parameters
     // k: branching factor (children per node)
@@ -133,39 +92,36 @@ int main(int argc, char* argv[]) {
     std::cout << "  Scoring:              L1-NORM" << std::endl;
     std::cout << std::endl;
 
-    // Number of training images (used only if no real images directory provided)
-    const int num_training_images = 50;
-
-    // Generate or load training images.
-    // If the user passes a directory of real images as argv[1], load those;
-    // otherwise fall back to synthetic random patterns.
-    std::vector<cv::Mat> training_images;
-    if (argc >= 2 && std::filesystem::is_directory(argv[1])) {
-        std::cout << "Loading real images from: " << argv[1] << std::endl;
-        std::vector<std::filesystem::path> image_paths;
-        for (const auto& entry : std::filesystem::directory_iterator(argv[1])) {
-            const auto& p = entry.path();
-            const std::string ext = p.extension().string();
-            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                ext == ".bmp" || ext == ".PNG" || ext == ".JPG") {
-                image_paths.push_back(p);
-            }
+    // Load the real training images from disk.
+    std::cout << "Loading images from: " << data_dir << std::endl;
+    std::vector<std::filesystem::path> image_paths;
+    for (const auto& entry : std::filesystem::directory_iterator(data_dir)) {
+        const auto& p = entry.path();
+        const std::string ext = p.extension().string();
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".bmp" || ext == ".PNG" || ext == ".JPG") {
+            image_paths.push_back(p);
         }
-        std::sort(image_paths.begin(), image_paths.end());
-        for (const auto& p : image_paths) {
-            cv::Mat img = cv::imread(p.string(), cv::IMREAD_GRAYSCALE);
-            if (!img.empty()) {
-                training_images.push_back(img);
-            } else {
-                std::cerr << "  Warning: failed to read " << p << std::endl;
-            }
-        }
-        std::cout << "Loaded " << training_images.size()
-                  << " real images for vocabulary training" << std::endl;
-        std::cout << std::endl;
     }
+    std::sort(image_paths.begin(), image_paths.end());
+
+    std::vector<cv::Mat> training_images;
+    for (const auto& p : image_paths) {
+        cv::Mat img = cv::imread(p.string(), cv::IMREAD_GRAYSCALE);
+        if (!img.empty()) {
+            training_images.push_back(img);
+        } else {
+            std::cerr << "  Warning: failed to read " << p << std::endl;
+        }
+    }
+    std::cout << "  Loaded " << training_images.size()
+              << " images for vocabulary training" << std::endl;
+    std::cout << std::endl;
+
     if (training_images.empty()) {
-        training_images = generateSyntheticTrainingImages(num_training_images);
+        std::cerr << "Error: no images loaded from " << data_dir
+                  << " (expected .png/.jpg/.jpeg/.bmp files)." << std::endl;
+        return 1;
     }
 
     // Create ORB feature detector

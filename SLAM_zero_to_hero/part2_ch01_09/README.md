@@ -62,12 +62,16 @@ docker build . -t slam_zero_to_hero:part2_ch01_09
 
 ### `vocabulary_training`
 
-Trains a 100k-word ORB vocabulary (`k=10, L=5`) and writes
-`orb_vocabulary.yml.gz` in the current directory.
+Trains a 100k-word ORB vocabulary (`k=10, L=5`) from a directory of images
+(required via `--data`, PNG/JPG/JPEG/BMP) and writes `orb_vocabulary.yml.gz`
+in the current directory.
 
 ```bash
-./build/vocabulary_training                 # synthetic patterns (default)
-./build/vocabulary_training /path/to/images # real images (PNG/JPG/JPEG/BMP)
+# Bundled sample frames in data/
+./build/vocabulary_training --data data
+
+# A different image directory
+./build/vocabulary_training --data /path/to/images
 ```
 
 ### `loop_closure_detection`
