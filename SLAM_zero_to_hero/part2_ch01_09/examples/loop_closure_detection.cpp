@@ -60,47 +60,76 @@ struct Keyframe {
     cv::Mat descriptors;
     std::vector<cv::Mat> descriptors_vec;  // DBoW2 format
     DBoW2::BowVector bow_vector;
-    DBoW2::FeatureVector feature_vector;
+    DBoW2::FeatureVector feature_vector;   // DBoW2 direct index
 };
 
 /**
- * Match features between two keyframes using FeatureVector
- * This is much faster than brute-force matching
+ * Match ORB features between two keyframes using the DBoW2 direct index
+ * (FeatureVector) plus discriminative filtering.
+ *
+ * The direct index restricts comparisons to descriptors that fall in the same
+ * vocabulary node (same sub-tree), which is the acceleration ORB-SLAM uses in
+ * SearchByBoW: rather than comparing every pair, only features that already
+ * agree at a coarse vocabulary level are considered. Both FeatureVectors are
+ * sorted by node id, so they are walked in lock-step.
+ *
+ * Within each shared node, only confident correspondences survive:
+ *   1. Lowe's ratio test  — accept the nearest neighbour only if it is clearly
+ *      closer than the second nearest (best < ratio * second_best), rejecting
+ *      ambiguous matches in repetitive texture (the dominant false-loop source).
+ *   2. Absolute Hamming cap — drop matches above `max_distance` (ORB's
+ *      TH_LOW = 50) even if they pass the ratio test.
+ *   3. One-to-one consistency — each kf2 feature is claimed by at most one kf1
+ *      feature (the closest), so survivors are mutual best matches.
+ *
+ * Convention: queryIdx indexes kf1, trainIdx indexes kf2 (kept consistent with
+ * the rest of the pipeline / geometric verification).
  */
 int matchFeatures(const Keyframe& kf1, const Keyframe& kf2,
-                  std::vector<cv::DMatch>& matches) {
+                  std::vector<cv::DMatch>& matches,
+                  float ratio = 0.75f, int max_distance = 50) {
     matches.clear();
+    if (kf1.descriptors.empty() || kf2.descriptors.empty()) return 0;
 
-    // Use FeatureVector for efficient matching
-    // Features that share the same vocabulary node are likely to match
     auto it1 = kf1.feature_vector.begin();
     auto it2 = kf2.feature_vector.begin();
+    const auto end1 = kf1.feature_vector.end();
+    const auto end2 = kf2.feature_vector.end();
 
-    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    // Best kf1 feature (and its distance) claiming each kf2 feature, used to
+    // enforce one-to-one consistency across all shared nodes.
+    std::vector<int> best_query_for_train(kf2.descriptors.rows, -1);
+    std::vector<int> best_dist_for_train(kf2.descriptors.rows, 256);
 
-    while (it1 != kf1.feature_vector.end() && it2 != kf2.feature_vector.end()) {
+    while (it1 != end1 && it2 != end2) {
         if (it1->first == it2->first) {
-            // Same node - compare features
+            // Same vocabulary node — compare the features it groups.
             const auto& indices1 = it1->second;
             const auto& indices2 = it2->second;
 
             for (unsigned int idx1 : indices1) {
-                int best_idx2 = -1;
-                int best_dist = 256;  // Max Hamming distance for ORB
-
+                int best_dist = 256, second_dist = 256, best_idx2 = -1;
                 for (unsigned int idx2 : indices2) {
-                    int dist = cv::norm(kf1.descriptors.row(idx1),
-                                        kf2.descriptors.row(idx2),
-                                        cv::NORM_HAMMING);
+                    int dist = static_cast<int>(cv::norm(
+                        kf1.descriptors.row(idx1),
+                        kf2.descriptors.row(idx2), cv::NORM_HAMMING));
                     if (dist < best_dist) {
+                        second_dist = best_dist;
                         best_dist = dist;
-                        best_idx2 = idx2;
+                        best_idx2 = static_cast<int>(idx2);
+                    } else if (dist < second_dist) {
+                        second_dist = dist;
                     }
                 }
 
-                // Accept match if distance is below threshold
-                if (best_dist < 50 && best_idx2 >= 0) {
-                    matches.push_back(cv::DMatch(idx1, best_idx2, best_dist));
+                // Absolute cap + Lowe's ratio test.
+                if (best_idx2 < 0 || best_dist > max_distance) continue;
+                if (best_dist >= ratio * second_dist) continue;
+
+                // Keep only the closest kf1 feature per kf2 feature.
+                if (best_dist < best_dist_for_train[best_idx2]) {
+                    best_dist_for_train[best_idx2] = best_dist;
+                    best_query_for_train[best_idx2] = static_cast<int>(idx1);
                 }
             }
             ++it1;
@@ -112,7 +141,15 @@ int matchFeatures(const Keyframe& kf1, const Keyframe& kf2,
         }
     }
 
-    return matches.size();
+    for (int idx2 = 0; idx2 < kf2.descriptors.rows; ++idx2) {
+        if (best_query_for_train[idx2] >= 0) {
+            matches.push_back(cv::DMatch(
+                best_query_for_train[idx2], idx2,
+                static_cast<float>(best_dist_for_train[idx2])));
+        }
+    }
+
+    return static_cast<int>(matches.size());
 }
 
 /**
@@ -209,17 +246,24 @@ int main(int argc, char* argv[]) {
     // CLI flags:
     //   --no-vis / --headless        disable OpenCV windows
     //   --data <dir>                 image directory to load (REQUIRED)
+    //   --vocab <file>               pretrained vocabulary (orb_vocabulary.yml.gz
+    //                                from vocabulary_training); built on the fly
+    //                                from the sequence if omitted
     //   --stride <N>                 take every Nth image (default 1)
     //   --max <N>                    cap loaded images at N (default unlimited)
-    //   --min-inliers <N>            RANSAC inliers required for a LOOP (def 80)
-    //   --score-threshold <X>        min BoW score for a candidate (def 0.1)
+    //   --min-inliers <N>            RANSAC inliers required for a LOOP (def 50)
+    //   --match-ratio <X>            Lowe ratio test threshold (def 0.75)
+    //   --score-threshold <X>        min BoW score for a candidate (auto by
+    //                                vocab: 0.1 on-the-fly, 0.03 pretrained)
     //   --temporal-gap <N>           min keyframe distance for a candidate
     bool enable_vis = true;
     std::string data_dir;
+    std::string vocab_file;
     int stride = 1;
     int max_frames = 0;  // 0 = unlimited
-    int min_inliers = 80;
-    double score_threshold = 0.1;
+    int min_inliers = 50;
+    float match_ratio = 0.75f;
+    double score_threshold = -1.0;  // < 0 => auto-pick once vocab is known
     int temporal_gap = 10;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -227,12 +271,16 @@ int main(int argc, char* argv[]) {
             enable_vis = false;
         } else if (arg == "--data" && i + 1 < argc) {
             data_dir = argv[++i];
+        } else if (arg == "--vocab" && i + 1 < argc) {
+            vocab_file = argv[++i];
         } else if (arg == "--stride" && i + 1 < argc) {
             stride = std::max(1, std::atoi(argv[++i]));
         } else if (arg == "--max" && i + 1 < argc) {
             max_frames = std::max(0, std::atoi(argv[++i]));
         } else if (arg == "--min-inliers" && i + 1 < argc) {
             min_inliers = std::max(8, std::atoi(argv[++i]));
+        } else if (arg == "--match-ratio" && i + 1 < argc) {
+            match_ratio = static_cast<float>(std::atof(argv[++i]));
         } else if (arg == "--score-threshold" && i + 1 < argc) {
             score_threshold = std::atof(argv[++i]);
         } else if (arg == "--temporal-gap" && i + 1 < argc) {
@@ -244,23 +292,43 @@ int main(int argc, char* argv[]) {
     if (data_dir.empty()) {
         std::cerr << "Error: --data <dir> is required.\n"
                   << "Usage: loop_closure_detection --data <image-dir> "
-                  << "[--stride N] [--max N] [--min-inliers N] "
-                  << "[--score-threshold X] [--temporal-gap N] [--no-vis]"
+                  << "[--vocab <file>] [--stride N] [--max N] [--min-inliers N] "
+                  << "[--match-ratio X] [--score-threshold X] "
+                  << "[--temporal-gap N] [--no-vis]"
                   << std::endl;
         return 1;
     }
 
-    // Parameters
+    // Vocabulary parameters used only when building on the fly (no --vocab).
     const int k = 9;       // Branching factor
-    const int L = 3;       // Depth levels (smaller for faster demo)
-    const int direct_index_level = 3;  // Level for FeatureVector
+    const int L = 3;       // Depth levels (smaller for a fast in-demo build)
+    // Direct-index level = levels up from the leaves at which the FeatureVector
+    // groups descriptors (DBoW2 "levelsup"). Coarser nodes => more candidate
+    // pairs survive for matching; this mirrors ORB-SLAM's value of 4.
+    const int direct_index_level = 4;
+
+    // Pick a candidate-score gate matched to the vocabulary scale (unless the
+    // user set one explicitly). A large pretrained vocabulary spreads features
+    // over far more words, so cross-image BoW scores are ~10x smaller than with
+    // the tiny vocabulary built on the fly; the same 0.1 gate would reject every
+    // real loop. See the README "Score scale" note.
+    if (score_threshold < 0.0) {
+        score_threshold = vocab_file.empty() ? 0.1 : 0.03;
+    }
 
     std::cout << "Parameters:" << std::endl;
-    std::cout << "  Vocabulary: k=" << k << ", L=" << L << std::endl;
+    if (!vocab_file.empty()) {
+        std::cout << "  Vocabulary:         " << vocab_file << " (pretrained)"
+                  << std::endl;
+    } else {
+        std::cout << "  Vocabulary:         built on the fly (k=" << k
+                  << ", L=" << L << ")" << std::endl;
+    }
     std::cout << "  Direct index level: " << direct_index_level << std::endl;
     std::cout << "  Score threshold:    " << score_threshold << std::endl;
     std::cout << "  Temporal gap:       " << temporal_gap << " frames"
               << std::endl;
+    std::cout << "  Match ratio test:   " << match_ratio << std::endl;
     std::cout << "  Min RANSAC inliers: " << min_inliers << std::endl;
     std::cout << std::endl;
 
@@ -332,22 +400,52 @@ int main(int argc, char* argv[]) {
     std::cout << "  Processed " << keyframes.size() << " keyframes" << std::endl;
     std::cout << std::endl;
 
-    // Create vocabulary from the sequence
-    std::cout << "Creating vocabulary from sequence..." << std::endl;
-    auto start_voc = std::chrono::high_resolution_clock::now();
-
-    OrbVocabulary vocabulary(k, L, DBoW2::TF_IDF, DBoW2::L1_NORM);
-    vocabulary.create(all_features);
-
-    auto end_voc = std::chrono::high_resolution_clock::now();
-    auto voc_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end_voc - start_voc).count();
-
-    std::cout << "  Vocabulary size: " << vocabulary.size() << " words" << std::endl;
-    std::cout << "  Creation time: " << voc_time << " ms" << std::endl;
+    // Obtain the vocabulary. Preferred path: load a vocabulary trained offline
+    // by the vocabulary_training demo -- this mirrors how real systems work
+    // (e.g. ORB-SLAM ships a fixed vocabulary trained on a large corpus and just
+    // loads it). Fallback: build a small vocabulary from this sequence so the
+    // demo still runs standalone when no --vocab is given.
+    OrbVocabulary vocabulary;
+    if (!vocab_file.empty()) {
+        std::cout << "Loading pretrained vocabulary from: " << vocab_file
+                  << std::endl;
+        if (!std::filesystem::exists(vocab_file)) {
+            std::cerr << "Error: vocabulary file not found: " << vocab_file
+                      << "\n(run 'vocabulary_training --data <dir>' first to "
+                      << "create orb_vocabulary.yml.gz)." << std::endl;
+            return 1;
+        }
+        auto start_load = std::chrono::high_resolution_clock::now();
+        vocabulary.load(vocab_file);
+        auto end_load = std::chrono::high_resolution_clock::now();
+        auto load_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_load - start_load).count();
+        if (vocabulary.empty()) {
+            std::cerr << "Error: loaded vocabulary is empty: " << vocab_file
+                      << std::endl;
+            return 1;
+        }
+        std::cout << "  Vocabulary size: " << vocabulary.size() << " words"
+                  << std::endl;
+        std::cout << "  Load time: " << load_time << " ms" << std::endl;
+    } else {
+        std::cout << "Creating vocabulary from sequence "
+                  << "(pass --vocab orb_vocabulary.yml.gz to reuse a "
+                  << "pretrained one)..." << std::endl;
+        auto start_voc = std::chrono::high_resolution_clock::now();
+        vocabulary = OrbVocabulary(k, L, DBoW2::TF_IDF, DBoW2::L1_NORM);
+        vocabulary.create(all_features);
+        auto end_voc = std::chrono::high_resolution_clock::now();
+        auto voc_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_voc - start_voc).count();
+        std::cout << "  Vocabulary size: " << vocabulary.size() << " words"
+                  << std::endl;
+        std::cout << "  Creation time: " << voc_time << " ms" << std::endl;
+    }
     std::cout << std::endl;
 
-    // Transform all keyframes to BoW representation
+    // Transform all keyframes: BoW vector (for database queries) plus the
+    // FeatureVector / direct index (for fast feature matching below).
     std::cout << "Computing BoW vectors for all keyframes..." << std::endl;
     for (auto& kf : keyframes) {
         vocabulary.transform(kf.descriptors_vec, kf.bow_vector,
@@ -355,7 +453,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << std::endl;
 
-    // Create database with direct index
+    // Create the image database with the direct index enabled.
     std::cout << "Creating image database..." << std::endl;
     OrbDatabase database(vocabulary, true, direct_index_level);
 
@@ -413,7 +511,8 @@ int main(int argc, char* argv[]) {
                 // Perform geometric verification
                 std::vector<cv::DMatch> matches;
                 int num_matches = matchFeatures(keyframes[best_candidate],
-                                                current_kf, matches);
+                                                current_kf, matches,
+                                                match_ratio);
                 std::cout << std::setw(12) << num_matches;
 
                 std::vector<cv::DMatch> inlier_matches;
