@@ -9,6 +9,10 @@
  *
  * This is the core technique used in visual SLAM systems like ORB-SLAM
  * for detecting when the robot revisits a previously seen location.
+ *
+ * The sequence is always read from a directory of real images. By default it
+ * uses the sample frames bundled in this chapter's data/ folder; pass a
+ * different directory with --data <dir>.
  */
 
 #include "DBoW2/DBoW2.h"
@@ -24,7 +28,6 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
-#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -59,121 +62,6 @@ struct Keyframe {
     DBoW2::BowVector bow_vector;
     DBoW2::FeatureVector feature_vector;
 };
-
-/**
- * Generate a sequence of images simulating robot motion with loop closures
- *
- * Creates a scenario where the robot:
- * 1. Moves through different areas (unique images)
- * 2. Returns to previously visited areas (loop closures)
- */
-std::vector<cv::Mat> generateSequenceWithLoops(int num_unique_places,
-                                                int width = 640,
-                                                int height = 480) {
-    std::vector<cv::Mat> sequence;
-    std::vector<cv::Mat> unique_places;
-    std::random_device rd;
-    std::mt19937 gen(rd());
-
-    // Generate unique place images
-    for (int place = 0; place < num_unique_places; ++place) {
-        cv::Mat img(height, width, CV_8UC1);
-
-        // Create distinct pattern for each place
-        double freq_x = 0.02 + place * 0.005;
-        double freq_y = 0.015 + place * 0.003;
-        double phase = place * 0.5;
-
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                double val = 128.0 +
-                    60.0 * std::sin(x * freq_x + phase) +
-                    60.0 * std::cos(y * freq_y + phase);
-                img.at<uchar>(y, x) = cv::saturate_cast<uchar>(val);
-            }
-        }
-
-        // Add distinctive features (shapes) for each place
-        std::uniform_int_distribution<> pos_dist_x(50, width - 50);
-        std::uniform_int_distribution<> pos_dist_y(50, height - 50);
-        std::uniform_int_distribution<> size_dist(15, 50);
-
-        int num_features = 20 + place * 3;
-        for (int f = 0; f < num_features; ++f) {
-            int x = pos_dist_x(gen);
-            int y = pos_dist_y(gen);
-            int size = size_dist(gen);
-
-            // Use place ID to create consistent patterns within same place
-            int shape_type = (place + f) % 3;
-            uchar color = static_cast<uchar>((place * 37 + f * 13) % 256);
-
-            switch (shape_type) {
-                case 0:
-                    cv::circle(img, cv::Point(x, y), size/2, cv::Scalar(color), -1);
-                    break;
-                case 1:
-                    cv::rectangle(img, cv::Point(x-size/2, y-size/2),
-                                  cv::Point(x+size/2, y+size/2),
-                                  cv::Scalar(color), -1);
-                    break;
-                case 2:
-                    cv::ellipse(img, cv::Point(x, y), cv::Size(size, size/2),
-                                45.0 * place, 0, 360, cv::Scalar(color), -1);
-                    break;
-            }
-        }
-
-        // Add slight noise
-        cv::Mat noise(height, width, CV_8UC1);
-        cv::randn(noise, 0, 5);
-        img += noise;
-
-        cv::GaussianBlur(img, img, cv::Size(3, 3), 0);
-        unique_places.push_back(img);
-    }
-
-    // Create sequence with intentional loop closures
-    // Trajectory: 0->1->2->3->4->5->6->7->8->9 -> 3->4 -> 10->11 -> 0->1
-    //             ^^^^^^^^^^^^^^^               ^^^^^    ^^^^^     ^^^^^
-    //             new places                    loop     new      loop
-
-    // First pass through places 0-9
-    for (int i = 0; i < std::min(10, num_unique_places); ++i) {
-        // Add with slight viewpoint change simulation
-        cv::Mat view = unique_places[i].clone();
-        sequence.push_back(view);
-    }
-
-    // Loop closure: revisit places 3 and 4
-    if (num_unique_places > 4) {
-        for (int i = 3; i <= 4; ++i) {
-            cv::Mat view = unique_places[i].clone();
-            // Add slight perspective variation
-            std::normal_distribution<> noise_dist(0, 3);
-            cv::Mat noise(height, width, CV_8UC1);
-            cv::randn(noise, 0, 3);
-            view += noise;
-            sequence.push_back(view);
-        }
-    }
-
-    // New places
-    for (int i = 10; i < std::min(12, num_unique_places); ++i) {
-        sequence.push_back(unique_places[i].clone());
-    }
-
-    // Loop closure: revisit places 0 and 1
-    for (int i = 0; i <= 1; ++i) {
-        cv::Mat view = unique_places[i].clone();
-        cv::Mat noise(height, width, CV_8UC1);
-        cv::randn(noise, 0, 3);
-        view += noise;
-        sequence.push_back(view);
-    }
-
-    return sequence;
-}
 
 /**
  * Match features between two keyframes using FeatureVector
@@ -320,7 +208,8 @@ int main(int argc, char* argv[]) {
 
     // CLI flags:
     //   --no-vis / --headless        disable OpenCV windows
-    //   --data <dir>                 load real images from a directory
+    //   --data <dir>                 image directory to load
+    //                                (default: bundled part2_ch01_09/data)
     //   --stride <N>                 take every Nth image (default 1)
     //   --max <N>                    cap loaded images at N (default unlimited)
     //   --min-inliers <N>            RANSAC inliers required for a LOOP (def 80)
@@ -370,46 +259,57 @@ int main(int argc, char* argv[]) {
     auto orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2,
                                 cv::ORB::HARRIS_SCORE, 31, 20);
 
-    // Build image sequence: from real directory if --data given, else synthetic
-    std::vector<cv::Mat> image_sequence;
-    if (!data_dir.empty() && std::filesystem::is_directory(data_dir)) {
-        std::cout << "Loading real images from: " << data_dir
-                  << "  (stride=" << stride;
-        if (max_frames > 0) std::cout << ", max=" << max_frames;
-        std::cout << ")" << std::endl;
-
-        std::vector<std::filesystem::path> image_paths;
-        for (const auto& entry :
-             std::filesystem::directory_iterator(data_dir)) {
-            const auto& p = entry.path();
-            const std::string ext = p.extension().string();
-            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                ext == ".bmp" || ext == ".PNG" || ext == ".JPG") {
-                image_paths.push_back(p);
+    // Resolve the image directory. A --data override wins; otherwise fall back
+    // to the sample frames shipped in this chapter's data/ folder. The binary
+    // normally runs from build/, so "../data" resolves to part2_ch01_09/data.
+    if (data_dir.empty()) {
+        for (const char* candidate : {"../data", "data", "./data"}) {
+            if (std::filesystem::is_directory(candidate)) {
+                data_dir = candidate;
+                break;
             }
         }
-        std::sort(image_paths.begin(), image_paths.end());
+        if (data_dir.empty()) data_dir = "../data";
+    }
 
-        for (size_t i = 0; i < image_paths.size(); i += stride) {
-            cv::Mat img =
-                cv::imread(image_paths[i].string(), cv::IMREAD_GRAYSCALE);
-            if (!img.empty()) image_sequence.push_back(img);
-            if (max_frames > 0 &&
-                static_cast<int>(image_sequence.size()) >= max_frames)
-                break;
+    if (!std::filesystem::is_directory(data_dir)) {
+        std::cerr << "Error: image directory not found: " << data_dir << "\n"
+                  << "       Pass one with --data <dir> (expected the bundled "
+                  << "part2_ch01_09/data folder)." << std::endl;
+        return 1;
+    }
+
+    // Load the real image sequence from disk.
+    std::cout << "Loading images from: " << data_dir << "  (stride=" << stride;
+    if (max_frames > 0) std::cout << ", max=" << max_frames;
+    std::cout << ")" << std::endl;
+
+    std::vector<std::filesystem::path> image_paths;
+    for (const auto& entry : std::filesystem::directory_iterator(data_dir)) {
+        const auto& p = entry.path();
+        const std::string ext = p.extension().string();
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".bmp" || ext == ".PNG" || ext == ".JPG") {
+            image_paths.push_back(p);
         }
-        std::cout << "  Loaded " << image_sequence.size()
-                  << " frames from disk" << std::endl;
-    } else {
-        if (!data_dir.empty()) {
-            std::cerr << "Warning: --data path is not a directory: "
-                      << data_dir << " (falling back to synthetic)"
-                      << std::endl;
-        }
-        std::cout << "Generating image sequence with simulated loop closures..."
-                  << std::endl;
-        const int num_unique_places = 12;
-        image_sequence = generateSequenceWithLoops(num_unique_places);
+    }
+    std::sort(image_paths.begin(), image_paths.end());
+
+    std::vector<cv::Mat> image_sequence;
+    for (size_t i = 0; i < image_paths.size(); i += stride) {
+        cv::Mat img = cv::imread(image_paths[i].string(), cv::IMREAD_GRAYSCALE);
+        if (!img.empty()) image_sequence.push_back(img);
+        if (max_frames > 0 &&
+            static_cast<int>(image_sequence.size()) >= max_frames)
+            break;
+    }
+    std::cout << "  Loaded " << image_sequence.size() << " frames from disk"
+              << std::endl;
+
+    if (image_sequence.empty()) {
+        std::cerr << "Error: no images loaded from " << data_dir
+                  << " (expected .png/.jpg/.jpeg/.bmp files)." << std::endl;
+        return 1;
     }
     std::cout << "  Sequence length: " << image_sequence.size() << " frames"
               << std::endl;
