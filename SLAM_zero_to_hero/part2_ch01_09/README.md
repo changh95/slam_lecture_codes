@@ -76,12 +76,12 @@ Builds a vocabulary from the sequence, queries each frame against the database,
 runs RANSAC geometric verification, and shows OpenCV windows for accepted /
 rejected candidates plus a final BoW similarity heatmap.
 
-Images are always read from a directory. With no `--data` flag it uses the
-sample frames bundled in `data/` (resolved as `../data` when run from `build/`).
+Images are read from a directory passed with `--data` (required). Sample
+frames are bundled in `data/`.
 
 ```bash
-# Default: bundled data/ frames, with windows
-./build/loop_closure_detection
+# Bundled sample frames in data/, with windows
+./build/loop_closure_detection --data data
 
 # A different image directory, headless (text only)
 ./build/loop_closure_detection --data /path/to/images --no-vis
@@ -89,7 +89,7 @@ sample frames bundled in `data/` (resolved as `../data` when run from `build/`).
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--data <dir>` | image directory to load | bundled `data/` |
+| `--data <dir>` | image directory to load | **required** |
 | `--stride <N>` | use every Nth image | 1 |
 | `--max <N>` | cap loaded frame count | unlimited |
 | `--min-inliers <N>` | RANSAC inliers required for a LOOP | 80 |

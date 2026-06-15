@@ -10,9 +10,9 @@
  * This is the core technique used in visual SLAM systems like ORB-SLAM
  * for detecting when the robot revisits a previously seen location.
  *
- * The sequence is always read from a directory of real images. By default it
- * uses the sample frames bundled in this chapter's data/ folder; pass a
- * different directory with --data <dir>.
+ * The sequence is read from a directory of real images supplied via the
+ * required --data <dir> flag (sample frames are bundled in this chapter's
+ * data/ folder).
  */
 
 #include "DBoW2/DBoW2.h"
@@ -208,8 +208,7 @@ int main(int argc, char* argv[]) {
 
     // CLI flags:
     //   --no-vis / --headless        disable OpenCV windows
-    //   --data <dir>                 image directory to load
-    //                                (default: bundled part2_ch01_09/data)
+    //   --data <dir>                 image directory to load (REQUIRED)
     //   --stride <N>                 take every Nth image (default 1)
     //   --max <N>                    cap loaded images at N (default unlimited)
     //   --min-inliers <N>            RANSAC inliers required for a LOOP (def 80)
@@ -241,6 +240,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // --data is mandatory: there is no synthetic fallback.
+    if (data_dir.empty()) {
+        std::cerr << "Error: --data <dir> is required.\n"
+                  << "Usage: loop_closure_detection --data <image-dir> "
+                  << "[--stride N] [--max N] [--min-inliers N] "
+                  << "[--score-threshold X] [--temporal-gap N] [--no-vis]"
+                  << std::endl;
+        return 1;
+    }
+
     // Parameters
     const int k = 9;       // Branching factor
     const int L = 3;       // Depth levels (smaller for faster demo)
@@ -259,23 +268,10 @@ int main(int argc, char* argv[]) {
     auto orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2,
                                 cv::ORB::HARRIS_SCORE, 31, 20);
 
-    // Resolve the image directory. A --data override wins; otherwise fall back
-    // to the sample frames shipped in this chapter's data/ folder. The binary
-    // normally runs from build/, so "../data" resolves to part2_ch01_09/data.
-    if (data_dir.empty()) {
-        for (const char* candidate : {"../data", "data", "./data"}) {
-            if (std::filesystem::is_directory(candidate)) {
-                data_dir = candidate;
-                break;
-            }
-        }
-        if (data_dir.empty()) data_dir = "../data";
-    }
-
+    // Make sure the requested image directory exists.
     if (!std::filesystem::is_directory(data_dir)) {
-        std::cerr << "Error: image directory not found: " << data_dir << "\n"
-                  << "       Pass one with --data <dir> (expected the bundled "
-                  << "part2_ch01_09/data folder)." << std::endl;
+        std::cerr << "Error: image directory not found: " << data_dir
+                  << " (pass a valid directory with --data <dir>)." << std::endl;
         return 1;
     }
 
