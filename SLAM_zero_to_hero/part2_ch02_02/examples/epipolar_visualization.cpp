@@ -253,6 +253,11 @@ int main(int argc, char* argv[]) {
 
     // Display if possible
     try {
+        // WINDOW_NORMAL makes the window user-resizable (plain imshow defaults to
+        // WINDOW_AUTOSIZE, which locks the window to the image size — awkward for
+        // this very wide side-by-side image). KEEPRATIO preserves aspect on resize.
+        cv::namedWindow("Epipolar Geometry", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+        cv::resizeWindow("Epipolar Geometry", 1800, 280);
         cv::imshow("Epipolar Geometry", combined);
         std::cout << "Press any key to exit..." << std::endl;
         cv::waitKey(0);
