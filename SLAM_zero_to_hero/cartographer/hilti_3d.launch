@@ -1,0 +1,28 @@
+<!--
+  Cartographer 3D launch for Hilti exp14_basement_2.bag
+  Run with: roslaunch cartographer_ros hilti_3d.launch bag:=/data/exp14_basement_2.bag
+-->
+<launch>
+  <param name="/use_sim_time" value="true" />
+
+  <!-- Static transform: imu_link is the tracking frame; treat hesai_lidar as identical
+       (no extrinsics applied — fine for occupancy/trajectory smoke test, not for benchmarking) -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="imu_to_lidar"
+        args="0 0 0 0 0 0 imu_link hesai_lidar" />
+
+  <node name="cartographer_node" pkg="cartographer_ros"
+      type="cartographer_node" args="
+          -configuration_directory $(find cartographer_ros)/configuration_files
+          -configuration_basename hilti_3d.lua"
+      output="screen">
+    <remap from="points2" to="/hesai/pandar"/>
+    <remap from="imu" to="/alphasense/imu"/>
+  </node>
+
+  <node name="cartographer_occupancy_grid_node" pkg="cartographer_ros"
+      type="cartographer_occupancy_grid_node" args="-resolution 0.1" />
+
+  <arg name="bag" default="/data/exp14_basement_2.bag"/>
+  <node pkg="rosbag" type="play" name="rosbag_player"
+        args="--clock --quiet $(arg bag)"/>
+</launch>
