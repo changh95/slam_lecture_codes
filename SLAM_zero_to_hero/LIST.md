@@ -1,56 +1,57 @@
 # SLAM Algorithm Dataset Compatibility
 
-## Datasets Already Downloaded
+## Datasets Already Downloaded (`~/data/`)
 
-- **KITTI** (LiDAR + stereo camera + GPS/IMU)
-- **EuRoC MAV** (stereo + IMU)
-- **TUM 3D** (RGB-D)
+| Dataset | Path | Sensors | Used by |
+|---|---|---|---|
+| **EuRoC MAV** | `~/data/euroc_mav/MH_01_easy/` | stereo + IMU | basalt, kimera, orb_slam2 (mono/stereo) |
+| **TUM RGB-D** | `~/data/tum_rgbd/rgbd_dataset_freiburg{1,2,3}_*` | RGB-D | orb_slam2 (rgbd_tum), pin_slam, gaussian_splatting_slam, mast3r_slam |
+| **Hilti 2022** | `~/data/hilti_2022/exp14_basement_2.bag` | Hesai PandarXT-32 + Alphasense IMU + 5x cam | fast_lio2, glim, kiss_slam, cartographer (3D) |
+| **cow_and_lady** | `~/data/cow_and_lady/` | RGB-D + Vicon | voxblox |
 
----
-
-## Algorithms Compatible with Downloaded Datasets
-
-| Algorithm | KITTI | EuRoC MAV | TUM 3D | Notes |
-|-----------|:-----:|:---------:|:------:|-------|
-| orb_slam2 | Yes | Yes | Yes | mono_kitti, stereo_kitti, mono_euroc, stereo_euroc, mono_tum, rgbd_tum |
-| basalt | Yes (via converter) | Yes | - | `--dataset-type euroc`; KITTI requires `basalt_convert_kitti_calib.py`; also supports TUM-VI |
-| kiss_slam | Yes | - | - | `--dataloader kitti`; KISS-ICP also has loaders for MulRan, nuScenes, NCLT, Apollo, etc. |
-| pin_slam | Yes | - | Yes | LiDAR + RGB-D; also supports Replica, Newer College, MulRan, nuScenes, KITTI-360, Hilti, etc. |
-| gaussian_splatting_slam | - | Yes | Yes | MonoGS; also supports Replica |
-| mast3r_slam | - | Yes | Yes | Monocular dense SLAM; also supports 7-Scenes, ETH3D SLAM |
-| cartographer | Yes | - | - | KITTI odometry via kitti2bag ROS bag conversion |
-| dsp_slam | Yes | - | - | KITTI sequences with `config_kitti.json` |
-| kimera | - | Yes | - | Stereo + IMU; EuRoC MAV recommended |
-| octomap | Yes | - | - | `benchmark_kitti` with Velodyne point clouds |
-| suma_pp | Yes | - | - | Semantic LiDAR SLAM; only works with KITTI (RangeNet++ does not generalize) |
-| fast_lio2 | Yes (via rosbag) | - | - | LiDAR + IMU; also supports NCLT dataset |
-| concept_fusion | - | - | - | Supports ICL and ScanNet (not TUM 3D); see below |
-
-**Not compatible with any of the three downloaded datasets:**
-
-| Algorithm | Required Dataset | Notes |
-|-----------|-----------------|-------|
-| concept_fusion | ICL, ScanNet | ScanNet requires institutional access; ICL is freely available |
-| fast_livo2 | FAST-LIVO2 dataset (OneDrive) | LiDAR + Camera + IMU; custom dataset from authors |
-| glim | Custom rosbag data | No standard benchmark datasets supported; uses custom Ouster/Livox/Kinect rosbags |
-| cuvslam | Not specified | NVIDIA cuVSLAM; generic visual SLAM framework, no dataset configs provided |
-| nvblox | Replica, Redwood | NVIDIA real-time 3D reconstruction; used with Replica in benchmarks |
-| voxblox | Not specified | Volumetric mapping library; generic ROS point cloud input |
+KITTI is **not** present at `~/data/`. The `download_kitti.py` script targets `~/data/kitti_vo_slam/` (≈80 GB for the velodyne dump alone) — pull only the splits a given algorithm needs, not the whole archive.
 
 ---
 
-## Additional Datasets Required
+## Algorithms — Dataset Compatibility & Verification Status
 
-These datasets are needed to run algorithms that do not support KITTI, EuRoC MAV, or TUM 3D.
+Status legend: ✅ verified end-to-end (Docker build → real-data run → captured artifacts), 🟡 build verified, run unconfirmed, ❌ not yet attempted.
 
-| Dataset | Size | Sensors | Required By | Access |
+| Algorithm | Status | Verified dataset | Other supported datasets |
+|-----------|:------:|---|---|
+| orb_slam2 | ✅ | TUM RGB-D `freiburg1_xyz` (perf_bench) | KITTI (mono/stereo), EuRoC (mono/stereo) |
+| basalt | ✅ | EuRoC MAV `MH_01_easy` (stereo + IMU, EUCM model) | TUM-VI 512x512, Monado SLAM datasets, KITTI (via `basalt_convert_kitti_calib.py`) |
+| kiss_slam | ✅ | Hilti 2022 `exp14_basement_2.bag` via rosbag loader | KITTI VO (`--dataloader kitti`), KISS-ICP supports MulRan, nuScenes, NCLT, Apollo, generic dirs of `.bin`/`.pcd`/`.ply` |
+| cartographer | ✅ | Hilti 2022 `exp14_basement_2.bag` (3D mode, `hilti_3d.lua`) | KITTI 2D via `kitti2bag` (legacy `velodyne_kitti_2D.lua`), any ROS PointCloud2 + IMU stream |
+| fast_lio2 | ✅ | Hilti 2022 `exp14_basement_2.bag` (perf_bench) | NCLT, any Velodyne/Ouster/Livox rosbag |
+| glim | ✅ | Hilti 2022 `exp14_basement_2.bag` (perf_bench) | Custom Ouster/Livox/Kinect rosbags |
+| kimera | ✅ | EuRoC MAV `MH_01_easy` (perf_bench) | Stereo + IMU only |
+| voxblox | ✅ | cow_and_lady (perf_bench) | Generic ROS PointCloud2 / depth |
+| pin_slam | 🟡 | — | KITTI, TUM RGB-D, Replica, Newer College, MulRan, nuScenes, KITTI-360, Hilti |
+| gaussian_splatting_slam | 🟡 | — | EuRoC, TUM RGB-D, Replica |
+| mast3r_slam | 🟡 | — | EuRoC, TUM RGB-D, 7-Scenes, ETH3D SLAM (perf_bench has 1 numeric run on DGX Spark) |
+| dsp_slam | 🟡 | — | KITTI sequences via `config_kitti.json` |
+| octomap | 🟡 | — | KITTI Velodyne (`benchmark_kitti`) |
+| suma_pp | 🟡 | — | KITTI only (RangeNet++ does not generalize) |
+| concept_fusion | ❌ | — | ICL, ScanNet (ScanNet requires institutional access) |
+| cuvslam | 🟡 | — | NVIDIA cuVSLAM; benchmark in `perf_bench/dgx_spark/cuvslam.json` |
+| nvblox | 🟡 | — | Replica, Redwood; benchmark in `perf_bench/dgx_spark/nvblox.json` |
+| fast_livo2 | ✅ | Hilti 2022 `exp14_basement_2.bag` (uses bundled `mapping_hesaixt32_hilti22.launch`) | FAST-LIVO2 OneDrive bags (Retail_Street, HKUST_Red_Sculpture, MARS_LVIG, NTU VIRAL) |
+
+---
+
+## Additional datasets that would unlock more verified runs
+
+| Dataset | Size | Sensors | Required by | Access |
 |---------|------|---------|-------------|--------|
-| **ICL-NUIM** | ~0.5 GB | Synthetic RGB-D | concept_fusion | [Free download](https://www.doc.ic.ac.uk/~ahanda/VaFRIC/iclnuim.html) |
-| **Replica** | ~2 GB | Synthetic RGB-D | nvblox, gaussian_splatting_slam, pin_slam | [Free download](https://github.com/facebookresearch/Replica-Dataset) |
-| **FAST-LIVO2 dataset** | unknown | LiDAR + Camera + IMU | fast_livo2 | [OneDrive links](https://github.com/hku-mars/FAST-LIVO2) (may rotate; manual download as fallback) |
+| **KITTI VO** (color + velodyne + calib + poses) | ~80 GB total | LiDAR + stereo + IMU | dsp_slam, octomap, suma_pp, optional alt for kiss_slam / orb_slam2 | `download_kitti.py` (S3, free) |
+| **ICL-NUIM** | ~0.5 GB | Synthetic RGB-D | concept_fusion | [Free](https://www.doc.ic.ac.uk/~ahanda/VaFRIC/iclnuim.html) |
+| **Replica** | ~2 GB | Synthetic RGB-D | nvblox, gaussian_splatting_slam, pin_slam | [Free](https://github.com/facebookresearch/Replica-Dataset) |
+| **FAST-LIVO2 reference bags** | ~6 GB+ each | Livox + cam + IMU | fast_livo2 end-to-end run | [OneDrive](https://github.com/hku-mars/FAST-LIVO2#3-dataset) — use `fast_livo2/download_fast_livo2_dataset.sh` |
 
-### Download Priority
+### Recommended download priority
 
-1. **ICL-NUIM** (Medium) -- needed to run concept_fusion (only free dataset it supports)
-2. **Replica** (Low) -- synthetic; additional option for gaussian_splatting_slam, pin_slam, nvblox
-3. **FAST-LIVO2 dataset** (Low) -- only needed for fast_livo2; availability uncertain
+1. **KITTI VO** (high) — unlocks dsp_slam, octomap, suma_pp end-to-end + alternate paths for kiss_slam / cartographer / orb_slam2.
+2. **FAST-LIVO2 Retail_Street.bag** (medium) — only blocker for `fast_livo2` end-to-end verification; OneDrive links rotate so only download when ready to run.
+3. **ICL-NUIM** (medium) — only free dataset concept_fusion supports.
+4. **Replica** (low) — synthetic alternative for already-verified RGB-D pipelines.
