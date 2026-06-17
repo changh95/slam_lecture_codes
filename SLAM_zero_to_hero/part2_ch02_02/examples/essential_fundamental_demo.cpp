@@ -1,121 +1,87 @@
 /**
  * Essential and Fundamental Matrix Estimation
  *
- * This example demonstrates:
- * 1. Finding correspondences between two images
- * 2. Estimating the Fundamental matrix (uncalibrated cameras)
- * 3. Estimating the Essential matrix (calibrated cameras)
- * 4. The relationship between F and E matrices
+ * Pipeline on a real KITTI stereo pair:
+ * 1. ORB feature detection and matching between the two images
+ * 2. Fundamental matrix F (8-point + RANSAC, uncalibrated)
+ * 3. Essential matrix E (5-point + RANSAC, calibrated with KITTI intrinsics)
+ * 4. Pose recovery from E, compared to the known KITTI stereo extrinsic
+ * 5. The relationship E = K'^T * F * K
  *
- * Mathematical Background:
- * - Fundamental matrix F: x'^T * F * x = 0 (image coordinates)
- * - Essential matrix E: x'^T * E * x = 0 (normalized coordinates)
- * - Relationship: E = K'^T * F * K
- *
- * Reference: Hartley & Zisserman, "Multiple View Geometry"
+ * Images default to the bundled data/ pair; pass two paths to override.
  */
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
 
-#include <iostream>
-#include <vector>
-#include <random>
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <vector>
 
 /**
- * Generate synthetic 3D points and their projections
+ * Resolve a file inside the bundled data/ folder, trying ../data first so it
+ * works when run from build/ (and data/ when run from the project root).
  */
-void generateSyntheticData(
-    const cv::Mat& K,
-    const cv::Mat& R,
-    const cv::Mat& t,
+static std::string resolveDataPath(const std::string& name) {
+    for (const std::string& base : {"../data/", "data/", "./data/"}) {
+        if (std::filesystem::exists(base + name)) return base + name;
+    }
+    return "../data/" + name;
+}
+
+/**
+ * Detect and match ORB features between two images (Lowe's ratio test).
+ */
+void detectAndMatchFeatures(
+    const cv::Mat& img1,
+    const cv::Mat& img2,
     std::vector<cv::Point2f>& pts1,
-    std::vector<cv::Point2f>& pts2,
-    int num_points = 50) {
+    std::vector<cv::Point2f>& pts2) {
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> x_dist(-2.0, 2.0);
-    std::uniform_real_distribution<> y_dist(-2.0, 2.0);
-    std::uniform_real_distribution<> z_dist(5.0, 15.0);
+    auto orb = cv::ORB::create(2000);
 
+    std::vector<cv::KeyPoint> kp1, kp2;
+    cv::Mat desc1, desc2;
+    orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
+    orb->detectAndCompute(img2, cv::noArray(), kp2, desc2);
+
+    std::cout << "Keypoints: " << kp1.size() << " in image 1, "
+              << kp2.size() << " in image 2" << std::endl;
+
+    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    std::vector<std::vector<cv::DMatch>> knn_matches;
+    matcher.knnMatch(desc1, desc2, knn_matches, 2);
+
+    const float ratio_thresh = 0.75f;
     pts1.clear();
     pts2.clear();
-
-    for (int i = 0; i < num_points; ++i) {
-        // Random 3D point
-        cv::Mat P = (cv::Mat_<double>(3, 1) <<
-            x_dist(gen), y_dist(gen), z_dist(gen));
-
-        // Project to camera 1 (at origin)
-        cv::Mat p1_h = K * P;
-        cv::Point2f p1(p1_h.at<double>(0) / p1_h.at<double>(2),
-                       p1_h.at<double>(1) / p1_h.at<double>(2));
-
-        // Transform point to camera 2 frame
-        cv::Mat P2 = R * P + t;
-
-        // Project to camera 2
-        cv::Mat p2_h = K * P2;
-        cv::Point2f p2(p2_h.at<double>(0) / p2_h.at<double>(2),
-                       p2_h.at<double>(1) / p2_h.at<double>(2));
-
-        // Only add if both projections are within image bounds
-        if (p1.x > 0 && p1.x < 640 && p1.y > 0 && p1.y < 480 &&
-            p2.x > 0 && p2.x < 640 && p2.y > 0 && p2.y < 480) {
-            pts1.push_back(p1);
-            pts2.push_back(p2);
+    for (const auto& m : knn_matches) {
+        if (m.size() == 2 && m[0].distance < ratio_thresh * m[1].distance) {
+            pts1.push_back(kp1[m[0].queryIdx].pt);
+            pts2.push_back(kp2[m[0].trainIdx].pt);
         }
     }
+
+    std::cout << "Good matches: " << pts1.size() << std::endl;
 }
 
 /**
- * Add noise to point correspondences
- */
-void addNoise(std::vector<cv::Point2f>& pts, double sigma) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::normal_distribution<> noise(0, sigma);
-
-    for (auto& p : pts) {
-        p.x += noise(gen);
-        p.y += noise(gen);
-    }
-}
-
-/**
- * Convert skew-symmetric matrix to vector
- */
-cv::Mat skewSymmetric(const cv::Mat& v) {
-    return (cv::Mat_<double>(3, 3) <<
-        0, -v.at<double>(2), v.at<double>(1),
-        v.at<double>(2), 0, -v.at<double>(0),
-        -v.at<double>(1), v.at<double>(0), 0);
-}
-
-/**
- * Compute Essential matrix from R and t
- */
-cv::Mat computeEssentialFromRT(const cv::Mat& R, const cv::Mat& t) {
-    cv::Mat t_x = skewSymmetric(t);
-    return t_x * R;
-}
-
-/**
- * Verify epipolar constraint: x'^T * F * x = 0
+ * Average absolute epipolar constraint residual |x2^T F x1| over correspondences.
  */
 double verifyEpipolarConstraint(
     const std::vector<cv::Point2f>& pts1,
     const std::vector<cv::Point2f>& pts2,
     const cv::Mat& F) {
 
+    if (pts1.empty()) return 0.0;
     double total_error = 0;
     for (size_t i = 0; i < pts1.size(); ++i) {
         cv::Mat x1 = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
         cv::Mat x2 = (cv::Mat_<double>(3, 1) << pts2[i].x, pts2[i].y, 1.0);
-
         cv::Mat err = x2.t() * F * x1;
         total_error += std::abs(err.at<double>(0, 0));
     }
@@ -123,167 +89,135 @@ double verifyEpipolarConstraint(
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== Essential and Fundamental Matrix Estimation ===\n" << std::endl;
+    std::cout << "=== Essential and Fundamental Matrix Estimation (KITTI stereo pair) ===\n"
+              << std::endl;
 
-    // Camera intrinsic matrix
-    double fx = 500, fy = 500;  // Focal lengths
-    double cx = 320, cy = 240;  // Principal point
+    // Real KITTI stereo pair (cam0/cam1). Override with two image paths.
+    std::string left  = (argc >= 3) ? argv[1] : resolveDataPath("left.png");
+    std::string right = (argc >= 3) ? argv[2] : resolveDataPath("right.png");
+
+    cv::Mat img1 = cv::imread(left, cv::IMREAD_GRAYSCALE);
+    cv::Mat img2 = cv::imread(right, cv::IMREAD_GRAYSCALE);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: failed to load images:\n  " << left << "\n  " << right
+                  << "\nPass two image paths, or run from build/ so ../data resolves."
+                  << std::endl;
+        return 1;
+    }
+    std::cout << "Left:  " << left << "  (" << img1.cols << "x" << img1.rows << ")\n";
+    std::cout << "Right: " << right << "  (" << img2.cols << "x" << img2.rows << ")\n"
+              << std::endl;
+
+    // KITTI odometry seq 00-02 rectified intrinsics (image size 1241x376).
+    const double fx = 718.856, fy = 718.856, cx = 607.1928, cy = 185.2157;
     cv::Mat K = (cv::Mat_<double>(3, 3) <<
         fx, 0, cx,
         0, fy, cy,
         0, 0, 1);
+    std::cout << "Camera Intrinsic Matrix K (KITTI):\n" << K << std::endl << std::endl;
 
-    std::cout << "Camera Intrinsic Matrix K:" << std::endl;
-    std::cout << K << std::endl << std::endl;
+    // Ground-truth extrinsic (cam1 relative to cam0): P1 = K [I | t_gt],
+    // t_gt = [P1(0,3)/fx, 0, 0] = [-0.5372, 0, 0] m, no relative rotation.
+    const double baseline_m = 386.1448 / fx;   // ~0.5372 m
+    cv::Mat R_gt = cv::Mat::eye(3, 3, CV_64F);
+    cv::Mat t_gt = (cv::Mat_<double>(3, 1) << -baseline_m, 0.0, 0.0);
 
-    // Camera 2 pose relative to Camera 1
-    // Rotation (10 degrees around Y axis)
-    double angle = 10.0 * CV_PI / 180.0;
-    cv::Mat R = (cv::Mat_<double>(3, 3) <<
-        std::cos(angle), 0, std::sin(angle),
-        0, 1, 0,
-        -std::sin(angle), 0, std::cos(angle));
-
-    // Translation
-    cv::Mat t = (cv::Mat_<double>(3, 1) << 0.5, 0.0, 0.0);
-
-    std::cout << "Ground Truth Camera 2 Rotation:\n" << R << std::endl;
-    std::cout << "Ground Truth Camera 2 Translation:\n" << t.t() << std::endl;
-    std::cout << std::endl;
-
-    // Compute ground truth Essential and Fundamental matrices
-    cv::Mat E_gt = computeEssentialFromRT(R, t);
-    cv::Mat K_inv = K.inv();
-    cv::Mat F_gt = K_inv.t() * E_gt * K_inv;
-
-    std::cout << "Ground Truth Essential Matrix:\n" << E_gt << std::endl;
-    std::cout << "Ground Truth Fundamental Matrix:\n" << F_gt << std::endl;
-    std::cout << std::endl;
-
-    // Generate synthetic correspondences
+    // ORB correspondences from the real pair.
     std::vector<cv::Point2f> pts1, pts2;
-    generateSyntheticData(K, R, t, pts1, pts2, 100);
-
-    std::cout << "Generated " << pts1.size() << " point correspondences"
-              << std::endl << std::endl;
-
-    // Add some noise
-    std::vector<cv::Point2f> pts1_noisy = pts1;
-    std::vector<cv::Point2f> pts2_noisy = pts2;
-    addNoise(pts1_noisy, 1.0);  // 1 pixel noise
-    addNoise(pts2_noisy, 1.0);
-
-    // =========================================================
-    // Method 1: 8-Point Algorithm for Fundamental Matrix
-    // =========================================================
-    std::cout << "=== 8-Point Algorithm (Fundamental Matrix) ===" << std::endl;
-
-    cv::Mat F_8point = cv::findFundamentalMat(
-        pts1_noisy, pts2_noisy,
-        cv::FM_8POINT  // 8-point algorithm
-    );
-
-    double F_8point_error = verifyEpipolarConstraint(pts1_noisy, pts2_noisy, F_8point);
-    std::cout << "Estimated F (8-point):\n" << F_8point << std::endl;
-    std::cout << "Average epipolar error: " << F_8point_error << std::endl;
+    detectAndMatchFeatures(img1, img2, pts1, pts2);
+    if (pts1.size() < 8) {
+        std::cerr << "Not enough matches for matrix estimation!" << std::endl;
+        return 1;
+    }
     std::cout << std::endl;
 
     // =========================================================
-    // Method 2: RANSAC for Fundamental Matrix (robust to outliers)
+    // Fundamental Matrix: RANSAC (robust) then 8-point on inliers
     // =========================================================
     std::cout << "=== RANSAC (Fundamental Matrix) ===" << std::endl;
 
-    // Add some outliers
-    std::vector<cv::Point2f> pts1_outliers = pts1_noisy;
-    std::vector<cv::Point2f> pts2_outliers = pts2_noisy;
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> outlier_dist(0, 640);
-
-    // Add 20% outliers
-    int num_outliers = pts1_outliers.size() * 0.2;
-    for (int i = 0; i < num_outliers; ++i) {
-        pts1_outliers.push_back(cv::Point2f(outlier_dist(gen), outlier_dist(gen)));
-        pts2_outliers.push_back(cv::Point2f(outlier_dist(gen), outlier_dist(gen)));
-    }
-
     cv::Mat inlier_mask;
     cv::Mat F_ransac = cv::findFundamentalMat(
-        pts1_outliers, pts2_outliers,
-        cv::FM_RANSAC,  // RANSAC
-        3.0,            // RANSAC reprojection threshold
-        0.99,           // Confidence
-        inlier_mask
-    );
+        pts1, pts2, cv::FM_RANSAC, 3.0, 0.99, inlier_mask);
 
-    int num_inliers = cv::countNonZero(inlier_mask);
-    std::cout << "Inliers: " << num_inliers << "/" << pts1_outliers.size() << std::endl;
-
-    double F_ransac_error = verifyEpipolarConstraint(pts1_noisy, pts2_noisy, F_ransac);
+    std::vector<cv::Point2f> in1, in2;
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        if (inlier_mask.at<uchar>(i)) {
+            in1.push_back(pts1[i]);
+            in2.push_back(pts2[i]);
+        }
+    }
+    std::cout << "Inliers: " << in1.size() << "/" << pts1.size() << std::endl;
     std::cout << "Estimated F (RANSAC):\n" << F_ransac << std::endl;
-    std::cout << "Average epipolar error: " << F_ransac_error << std::endl;
+    std::cout << "Average epipolar error (inliers): "
+              << verifyEpipolarConstraint(in1, in2, F_ransac) << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "=== 8-Point Algorithm (Fundamental Matrix, on inliers) ===" << std::endl;
+    cv::Mat F_8point;
+    if (in1.size() >= 8) {
+        F_8point = cv::findFundamentalMat(in1, in2, cv::FM_8POINT);
+        std::cout << "Estimated F (8-point):\n" << F_8point << std::endl;
+        std::cout << "Average epipolar error (inliers): "
+                  << verifyEpipolarConstraint(in1, in2, F_8point) << std::endl;
+    } else {
+        std::cout << "Not enough inliers for a stable 8-point fit." << std::endl;
+    }
     std::cout << std::endl;
 
     // =========================================================
-    // Method 3: 5-Point Algorithm for Essential Matrix
+    // Essential Matrix: 5-Point + RANSAC (calibrated)
     // =========================================================
     std::cout << "=== 5-Point Algorithm (Essential Matrix) ===" << std::endl;
 
-    cv::Mat E_5point = cv::findEssentialMat(
-        pts1_noisy, pts2_noisy,
-        K,
-        cv::RANSAC,     // Method
-        0.999,          // Confidence
-        1.0,            // RANSAC threshold
-        inlier_mask
-    );
+    cv::Mat E_mask;
+    cv::Mat E = cv::findEssentialMat(
+        pts1, pts2, K, cv::RANSAC, 0.999, 1.0, E_mask);
 
-    num_inliers = cv::countNonZero(inlier_mask);
-    std::cout << "Inliers: " << num_inliers << "/" << pts1_noisy.size() << std::endl;
+    int num_inliers = cv::countNonZero(E_mask);
+    std::cout << "Inliers: " << num_inliers << "/" << pts1.size() << std::endl;
+    std::cout << "Estimated E (5-point):\n" << E << std::endl;
 
-    std::cout << "Estimated E (5-point):\n" << E_5point << std::endl;
-    std::cout << std::endl;
-
-    // Verify Essential matrix properties
-    // E should be rank 2 and its two non-zero singular values should be equal
     cv::Mat U, S, Vt;
-    cv::SVD::compute(E_5point, S, U, Vt);
+    cv::SVD::compute(E, S, U, Vt);
     std::cout << "Essential Matrix Singular Values:" << std::endl;
     std::cout << "  s1 = " << S.at<double>(0) << std::endl;
-    std::cout << "  s2 = " << S.at<double>(1) << std::endl;
+    std::cout << "  s2 = " << S.at<double>(1) << " (should ~= s1)" << std::endl;
     std::cout << "  s3 = " << S.at<double>(2) << " (should be ~0)" << std::endl;
     std::cout << std::endl;
 
     // =========================================================
-    // Recover Pose from Essential Matrix
+    // Recover Pose from Essential Matrix + compare to ground truth
     // =========================================================
     std::cout << "=== Pose Recovery from Essential Matrix ===" << std::endl;
 
     cv::Mat R_recovered, t_recovered;
     int num_good = cv::recoverPose(
-        E_5point, pts1_noisy, pts2_noisy, K,
-        R_recovered, t_recovered, inlier_mask
-    );
+        E, pts1, pts2, K, R_recovered, t_recovered, E_mask);
 
     std::cout << "Points in front of both cameras: " << num_good << std::endl;
-    std::cout << "\nRecovered Rotation:\n" << R_recovered << std::endl;
-    std::cout << "\nRecovered Translation (up to scale):\n" << t_recovered.t() << std::endl;
+    std::cout << "Recovered Rotation:\n" << R_recovered << std::endl;
+    std::cout << "Recovered Translation (up to scale):\n" << t_recovered.t() << std::endl;
     std::cout << std::endl;
 
-    // Compare with ground truth
-    std::cout << "=== Comparison with Ground Truth ===" << std::endl;
+    std::cout << "=== Comparison with Ground-Truth Extrinsic ===" << std::endl;
+    std::cout << "GT: R = I, t direction = " << (t_gt / cv::norm(t_gt)).t()
+              << "  (KITTI baseline " << baseline_m << " m)" << std::endl;
 
-    // Rotation error (Frobenius norm)
-    cv::Mat R_diff = R_recovered - R;
-    double rot_error = cv::norm(R_diff, cv::NORM_L2);
-    std::cout << "Rotation error (Frobenius): " << rot_error << std::endl;
+    cv::Mat dR = R_recovered * R_gt.t();
+    cv::Mat rvec_err;
+    cv::Rodrigues(dR, rvec_err);
+    double rot_err_deg = cv::norm(rvec_err) * 180.0 / CV_PI;
 
-    // Translation direction error (since scale is unknown)
-    cv::Mat t_normalized = t / cv::norm(t);
-    double t_dot = t_normalized.dot(t_recovered);
-    double trans_angle = std::acos(std::abs(t_dot)) * 180.0 / CV_PI;
-    std::cout << "Translation direction error: " << trans_angle << " degrees" << std::endl;
+    cv::Mat t_gt_unit = t_gt / cv::norm(t_gt);
+    double cos_ang = std::abs(t_recovered.dot(t_gt_unit));
+    cos_ang = std::min(1.0, std::max(-1.0, cos_ang));
+    double t_err_deg = std::acos(cos_ang) * 180.0 / CV_PI;
+
+    std::cout << "Rotation error vs identity:   " << rot_err_deg << " deg" << std::endl;
+    std::cout << "Translation direction error:  " << t_err_deg << " deg" << std::endl;
+    std::cout << "(Sign of t may flip with image order; direction error uses |cos|.)"
+              << std::endl;
     std::cout << std::endl;
 
     // =========================================================
@@ -292,21 +226,16 @@ int main(int argc, char* argv[]) {
     std::cout << "=== Relationship: E = K'^T * F * K ===" << std::endl;
 
     cv::Mat E_from_F = K.t() * F_ransac * K;
-
-    // Normalize for comparison (Essential matrix is defined up to scale)
     E_from_F = E_from_F / cv::norm(E_from_F, cv::NORM_L2);
-    cv::Mat E_5point_norm = E_5point / cv::norm(E_5point, cv::NORM_L2);
+    cv::Mat E_norm = E / cv::norm(E, cv::NORM_L2);
 
     std::cout << "E from F (normalized):\n" << E_from_F << std::endl;
-    std::cout << "E from 5-point (normalized):\n" << E_5point_norm << std::endl;
+    std::cout << "E from 5-point (normalized):\n" << E_norm << std::endl;
 
-    cv::Mat E_diff = E_from_F - E_5point_norm;
-    // Handle sign ambiguity
-    double diff1 = cv::norm(E_diff, cv::NORM_L2);
-    double diff2 = cv::norm(E_from_F + E_5point_norm, cv::NORM_L2);
-    double min_diff = std::min(diff1, diff2);
-
-    std::cout << "Difference (Frobenius): " << min_diff << std::endl;
+    double diff1 = cv::norm(E_from_F - E_norm, cv::NORM_L2);
+    double diff2 = cv::norm(E_from_F + E_norm, cv::NORM_L2);  // sign ambiguity
+    std::cout << "Difference (Frobenius, sign-resolved): "
+              << std::min(diff1, diff2) << std::endl;
     std::cout << std::endl;
 
     std::cout << "=== Demo Complete ===" << std::endl;

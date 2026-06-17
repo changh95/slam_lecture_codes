@@ -1,19 +1,25 @@
 /**
  * @file relpose_poselib.cpp
- * @brief 5-Point relative pose solver demonstration using PoseLib
+ * @brief 5-point relative pose solver (PoseLib) on a real KITTI stereo pair
  *
- * This example demonstrates the 5-point essential matrix solver from PoseLib.
- * The solver estimates the relative pose (R, t) between two cameras from
- * 5 point correspondences (minimal solver).
+ * Detects and matches ORB features between the bundled KITTI stereo pair,
+ * converts the inlier correspondences to bearing vectors with the KITTI
+ * intrinsics, runs PoseLib's 5-point essential-matrix solver, and compares the
+ * recovered relative pose to the known KITTI stereo extrinsic. OpenCV's
+ * findEssentialMat + recoverPose is shown alongside as a cross-check.
  *
+ * Images default to the bundled data/ pair; pass two paths to override.
  * PoseLib: https://github.com/PoseLib/PoseLib
  */
 
-#include <iostream>
-#include <iomanip>
-#include <vector>
-#include <random>
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -21,50 +27,15 @@
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/calib3d.hpp>
+#include <opencv2/features2d.hpp>
 
-/**
- * @brief Generate synthetic 3D points
- */
-std::vector<Eigen::Vector3d> generatePoints3D(int numPoints) {
-    std::vector<Eigen::Vector3d> points;
-    std::mt19937 rng(42);
-    std::uniform_real_distribution<double> x_dist(-2.0, 2.0);
-    std::uniform_real_distribution<double> y_dist(-2.0, 2.0);
-    std::uniform_real_distribution<double> z_dist(5.0, 15.0);
-
-    for (int i = 0; i < numPoints; i++) {
-        points.emplace_back(x_dist(rng), y_dist(rng), z_dist(rng));
+static std::string resolveDataPath(const std::string& name) {
+    for (const std::string& base : {"../data/", "data/", "./data/"}) {
+        if (std::filesystem::exists(base + name)) return base + name;
     }
-    return points;
+    return "../data/" + name;
 }
 
-/**
- * @brief Project 3D point to bearing vector
- */
-Eigen::Vector3d projectToBearing(const Eigen::Vector3d& point3d,
-                                  const Eigen::Matrix3d& R,
-                                  const Eigen::Vector3d& t) {
-    Eigen::Vector3d p_cam = R * point3d + t;
-    return p_cam.normalized();
-}
-
-/**
- * @brief Add noise to bearing vectors
- */
-void addNoise(std::vector<Eigen::Vector3d>& bearings, double sigma_rad) {
-    std::mt19937 rng(123);
-    std::normal_distribution<double> noise(0.0, sigma_rad);
-
-    for (auto& b : bearings) {
-        Eigen::Vector3d perturb(noise(rng), noise(rng), noise(rng));
-        perturb = perturb - b.dot(perturb) * b;
-        b = (b + perturb).normalized();
-    }
-}
-
-/**
- * @brief Compute rotation error in degrees
- */
 double rotationError(const Eigen::Matrix3d& R_est, const Eigen::Matrix3d& R_gt) {
     Eigen::Matrix3d dR = R_est.transpose() * R_gt;
     double trace = dR.trace();
@@ -72,89 +43,127 @@ double rotationError(const Eigen::Matrix3d& R_est, const Eigen::Matrix3d& R_gt) 
     return angle * 180.0 / M_PI;
 }
 
-/**
- * @brief Compute translation direction error in degrees
- * (translation is only up to scale for essential matrix)
- */
-double translationDirectionError(const Eigen::Vector3d& t_est, const Eigen::Vector3d& t_gt) {
+double translationDirectionError(const Eigen::Vector3d& t_est,
+                                 const Eigen::Vector3d& t_gt) {
     Eigen::Vector3d t1 = t_est.normalized();
     Eigen::Vector3d t2 = t_gt.normalized();
-    double dot = std::clamp(std::abs(t1.dot(t2)), 0.0, 1.0);
+    double dot = std::clamp(std::abs(t1.dot(t2)), 0.0, 1.0);  // sign ambiguous
     return std::acos(dot) * 180.0 / M_PI;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "===========================================\n";
     std::cout << "Relative Pose Demo using PoseLib (5-Point)\n";
+    std::cout << "KITTI stereo pair, real correspondences\n";
     std::cout << "===========================================\n\n";
 
-    // Ground truth relative pose (camera 2 relative to camera 1)
-    Eigen::Matrix3d R_gt;
-    R_gt = Eigen::AngleAxisd(0.15, Eigen::Vector3d::UnitY());  // 15 deg rotation around Y
+    // Real KITTI stereo pair (cam0/cam1). Override with two image paths.
+    std::string left  = (argc >= 3) ? argv[1] : resolveDataPath("left.png");
+    std::string right = (argc >= 3) ? argv[2] : resolveDataPath("right.png");
 
-    Eigen::Vector3d t_gt(0.5, 0.0, 0.0);  // Translation along X
+    cv::Mat img1 = cv::imread(left, cv::IMREAD_GRAYSCALE);
+    cv::Mat img2 = cv::imread(right, cv::IMREAD_GRAYSCALE);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: failed to load images:\n  " << left << "\n  " << right
+                  << "\nPass two image paths, or run from build/ so ../data resolves.\n";
+        return 1;
+    }
+    std::cout << "Left:  " << left << "  (" << img1.cols << "x" << img1.rows << ")\n";
+    std::cout << "Right: " << right << "  (" << img2.cols << "x" << img2.rows << ")\n\n";
 
-    std::cout << "Ground truth rotation R:\n" << R_gt << "\n";
-    std::cout << "Ground truth translation t: " << t_gt.transpose() << "\n\n";
+    // KITTI odometry seq 00-02 rectified intrinsics (image size 1241x376).
+    const double fx = 718.856, fy = 718.856, cx = 607.1928, cy = 185.2157;
+    Eigen::Matrix3d K;
+    K << fx, 0, cx,
+         0, fy, cy,
+         0, 0, 1;
+    cv::Mat cvK = (cv::Mat_<double>(3, 3) << fx, 0, cx, 0, fy, cy, 0, 0, 1);
 
-    // Generate 3D points
-    const int numPoints = 20;
-    auto points3d = generatePoints3D(numPoints);
+    // Ground-truth extrinsic (cam1 relative to cam0): R = I, t along -X.
+    const double baseline_m = 386.1448 / fx;   // ~0.5372 m
+    Eigen::Matrix3d R_gt = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t_gt(-baseline_m, 0.0, 0.0);
+    std::cout << "Ground-truth extrinsic: R = I, t direction = "
+              << t_gt.normalized().transpose() << " (baseline " << baseline_m << " m)\n\n";
 
-    // Project to bearing vectors in both cameras
-    // Camera 1 is at origin (identity pose)
-    std::vector<Eigen::Vector3d> bearings1;
-    std::vector<Eigen::Vector3d> bearings2;
+    // ORB detect + match
+    auto orb = cv::ORB::create(2000);
+    std::vector<cv::KeyPoint> kp1, kp2;
+    cv::Mat desc1, desc2;
+    orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
+    orb->detectAndCompute(img2, cv::noArray(), kp2, desc2);
 
-    Eigen::Matrix3d R1 = Eigen::Matrix3d::Identity();
-    Eigen::Vector3d t1 = Eigen::Vector3d::Zero();
+    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    std::vector<std::vector<cv::DMatch>> knn;
+    matcher.knnMatch(desc1, desc2, knn, 2);
 
-    for (const auto& p3d : points3d) {
-        bearings1.push_back(projectToBearing(p3d, R1, t1));
-        bearings2.push_back(projectToBearing(p3d, R_gt, t_gt));
+    std::vector<cv::Point2f> pts1, pts2;
+    for (const auto& m : knn) {
+        if (m.size() == 2 && m[0].distance < 0.75f * m[1].distance) {
+            pts1.push_back(kp1[m[0].queryIdx].pt);
+            pts2.push_back(kp2[m[0].trainIdx].pt);
+        }
+    }
+    std::cout << "Good matches: " << pts1.size() << "\n";
+    if (pts1.size() < 8) {
+        std::cerr << "Not enough matches for relative pose estimation!\n";
+        return 1;
     }
 
-    // Add small angular noise
-    const double noise_sigma = 0.005;  // radians (~0.3 degrees)
-    addNoise(bearings1, noise_sigma);
-    addNoise(bearings2, noise_sigma);
-    std::cout << "Added angular noise with sigma = " << noise_sigma * 180.0 / M_PI << " deg\n\n";
+    // RANSAC-filter the matches with the essential matrix; reuse for OpenCV ref.
+    cv::Mat mask;
+    cv::Mat E_cv = cv::findEssentialMat(pts1, pts2, cvK, cv::RANSAC, 0.999, 1.0, mask);
+
+    std::vector<cv::Point2f> in1, in2;
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        if (mask.at<uchar>(i)) {
+            in1.push_back(pts1[i]);
+            in2.push_back(pts2[i]);
+        }
+    }
+    std::cout << "RANSAC inliers: " << in1.size() << "/" << pts1.size() << "\n\n";
+    if (in1.size() < 5) {
+        std::cerr << "Not enough inliers for the 5-point solver!\n";
+        return 1;
+    }
+
+    // Convert inlier pixels to bearing vectors with K^-1.
+    Eigen::Matrix3d Kinv = K.inverse();
+    auto toBearing = [&](const cv::Point2f& p) {
+        Eigen::Vector3d ray = Kinv * Eigen::Vector3d(p.x, p.y, 1.0);
+        return ray.normalized();
+    };
+    std::vector<Eigen::Vector3d> bearings1, bearings2;
+    for (size_t i = 0; i < in1.size(); ++i) {
+        bearings1.push_back(toBearing(in1[i]));
+        bearings2.push_back(toBearing(in2[i]));
+    }
 
     // =========================================================================
-    // PoseLib 5-Point Essential Matrix Solver
+    // PoseLib 5-Point Essential Matrix Solver (minimal, first 5 inliers)
     // =========================================================================
-    std::cout << "--- PoseLib 5-Point Solver ---\n";
-    std::cout << "Using first 5 points (minimal solver)\n\n";
+    std::cout << "--- PoseLib 5-Point Solver (first 5 inliers) ---\n";
 
-    // Use first 5 points
     std::vector<Eigen::Vector3d> x1(bearings1.begin(), bearings1.begin() + 5);
     std::vector<Eigen::Vector3d> x2(bearings2.begin(), bearings2.begin() + 5);
 
-    // Call PoseLib relpose_5pt
     std::vector<poselib::CameraPose> solutions;
     int num_solutions = poselib::relpose_5pt(x1, x2, &solutions);
-
     std::cout << "Number of solutions: " << num_solutions << "\n\n";
 
-    // Evaluate each solution
     double best_rot_error = std::numeric_limits<double>::max();
     int best_idx = -1;
-
     for (int i = 0; i < num_solutions; i++) {
         const auto& pose = solutions[i];
-
-        // Convert quaternion to rotation matrix
         Eigen::Quaterniond q(pose.q[0], pose.q[1], pose.q[2], pose.q[3]);
         Eigen::Matrix3d R_est = q.toRotationMatrix();
         Eigen::Vector3d t_est = pose.t;
 
         double rot_err = rotationError(R_est, R_gt);
         double trans_err = translationDirectionError(t_est, t_gt);
-
-        std::cout << "Solution " << i + 1 << ":\n";
-        std::cout << "  Rotation error:    " << std::fixed << std::setprecision(4)
-                  << rot_err << " deg\n";
-        std::cout << "  Translation dir error: " << trans_err << " deg\n";
+        std::cout << "Solution " << i + 1 << ": rot err " << std::fixed
+                  << std::setprecision(4) << rot_err << " deg, trans dir err "
+                  << trans_err << " deg\n";
 
         if (rot_err < best_rot_error) {
             best_rot_error = rot_err;
@@ -163,61 +172,42 @@ int main() {
     }
 
     if (best_idx >= 0) {
-        std::cout << "\nBest solution: #" << best_idx + 1
-                  << " (rotation error = " << best_rot_error << " deg)\n";
-
-        const auto& best_pose = solutions[best_idx];
-        Eigen::Quaterniond q(best_pose.q[0], best_pose.q[1], best_pose.q[2], best_pose.q[3]);
-        std::cout << "\nEstimated rotation:\n" << q.toRotationMatrix() << "\n";
-        std::cout << "Estimated translation (up to scale): " << best_pose.t.transpose() << "\n";
+        const auto& best = solutions[best_idx];
+        Eigen::Quaterniond q(best.q[0], best.q[1], best.q[2], best.q[3]);
+        std::cout << "\nBest solution (closest to GT): #" << best_idx + 1 << "\n";
+        std::cout << "  Rotation error:        " << best_rot_error << " deg\n";
+        std::cout << "  Translation dir error: "
+                  << translationDirectionError(best.t, t_gt) << " deg\n";
+        std::cout << "  Estimated rotation:\n" << q.toRotationMatrix() << "\n";
+        std::cout << "  Estimated translation (up to scale): " << best.t.transpose()
+                  << "\n";
     }
 
     // =========================================================================
-    // Compare with OpenCV 5-Point
+    // OpenCV 5-Point (cross-check on all inliers), also vs ground truth
     // =========================================================================
-    std::cout << "\n--- OpenCV 5-Point (for comparison) ---\n";
-
-    // Use camera matrix to convert bearings to pixels
-    Eigen::Matrix3d K;
-    K << 500.0, 0.0, 320.0,
-         0.0, 500.0, 240.0,
-         0.0, 0.0, 1.0;
-
-    std::vector<cv::Point2f> cvPts1, cvPts2;
-    for (size_t i = 0; i < bearings1.size(); i++) {
-        // Convert bearing to pixel
-        Eigen::Vector3d px1 = K * bearings1[i] / bearings1[i].z();
-        Eigen::Vector3d px2 = K * bearings2[i] / bearings2[i].z();
-        cvPts1.emplace_back(px1.x(), px1.y());
-        cvPts2.emplace_back(px2.x(), px2.y());
-    }
-
-    cv::Mat cvK = (cv::Mat_<double>(3, 3) <<
-        K(0, 0), K(0, 1), K(0, 2),
-        K(1, 0), K(1, 1), K(1, 2),
-        K(2, 0), K(2, 1), K(2, 2));
-
-    cv::Mat E_cv = cv::findEssentialMat(cvPts1, cvPts2, cvK, cv::RANSAC, 0.999, 1.0);
+    std::cout << "\n--- OpenCV 5-Point (cross-check) ---\n";
 
     cv::Mat R_cv, t_cv;
-    cv::recoverPose(E_cv, cvPts1, cvPts2, cvK, R_cv, t_cv);
+    cv::recoverPose(E_cv, in1, in2, cvK, R_cv, t_cv);
 
     Eigen::Matrix3d R_opencv;
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++)
             R_opencv(i, j) = R_cv.at<double>(i, j);
-
     Eigen::Vector3d t_opencv(t_cv.at<double>(0), t_cv.at<double>(1), t_cv.at<double>(2));
 
-    std::cout << "Rotation error:    " << rotationError(R_opencv, R_gt) << " deg\n";
-    std::cout << "Translation dir error: " << translationDirectionError(t_opencv, t_gt) << " deg\n";
+    std::cout << "Rotation error vs GT:        " << rotationError(R_opencv, R_gt)
+              << " deg\n";
+    std::cout << "Translation dir error vs GT: "
+              << translationDirectionError(t_opencv, t_gt) << " deg\n";
 
     std::cout << "\n===========================================\n";
     std::cout << "Notes:\n";
-    std::cout << "- 5-point solver returns up to 10 solutions\n";
-    std::cout << "- PoseLib uses bearing vectors (normalized rays)\n";
+    std::cout << "- 5-point solver returns up to 10 algebraic solutions\n";
+    std::cout << "- PoseLib uses bearing vectors (K^-1 * pixel, normalized)\n";
     std::cout << "- Translation is only recovered up to scale\n";
-    std::cout << "- OpenCV uses RANSAC internally for robustness\n";
+    std::cout << "- GT is the KITTI stereo baseline (R = I, t along -X)\n";
     std::cout << "===========================================\n";
 
     return 0;

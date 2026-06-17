@@ -1,26 +1,36 @@
 /**
  * Pose Recovery from Essential Matrix
  *
- * This example demonstrates:
- * 1. Feature detection and matching between images
- * 2. Essential matrix estimation with RANSAC
+ * Pipeline on a real KITTI stereo pair:
+ * 1. ORB feature detection and matching between the two images
+ * 2. Essential matrix estimation with RANSAC (KITTI intrinsics)
  * 3. Decomposition of E into four possible (R, t) pairs
  * 4. Cheirality check to select the correct solution
  *
- * The Essential matrix can be decomposed into:
- *   E = [t]_x * R
- *
- * where [t]_x is the skew-symmetric matrix of t.
- * There are 4 possible solutions, but only one has all
- * 3D points in front of both cameras (cheirality).
+ * Images default to the bundled data/ pair; pass two paths to override.
  */
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
 #include <iostream>
+#include <string>
 #include <vector>
+
+/**
+ * Resolve a file inside the bundled data/ folder, trying ../data first so it
+ * works when run from build/ (and data/ when run from the project root).
+ */
+static std::string resolveDataPath(const std::string& name) {
+    for (const std::string& base : {"../data/", "data/", "./data/"}) {
+        if (std::filesystem::exists(base + name)) return base + name;
+    }
+    return "../data/" + name;
+}
 
 /**
  * Detect and match ORB features between two images
@@ -32,10 +42,8 @@ void detectAndMatchFeatures(
     std::vector<cv::Point2f>& pts2,
     std::vector<cv::DMatch>& good_matches) {
 
-    // Create ORB detector
     auto orb = cv::ORB::create(2000);
 
-    // Detect keypoints and compute descriptors
     std::vector<cv::KeyPoint> kp1, kp2;
     cv::Mat desc1, desc2;
 
@@ -45,7 +53,6 @@ void detectAndMatchFeatures(
     std::cout << "Keypoints: " << kp1.size() << " in image 1, "
               << kp2.size() << " in image 2" << std::endl;
 
-    // Match descriptors using BFMatcher
     cv::BFMatcher matcher(cv::NORM_HAMMING);
     std::vector<std::vector<cv::DMatch>> knn_matches;
     matcher.knnMatch(desc1, desc2, knn_matches, 2);
@@ -53,14 +60,13 @@ void detectAndMatchFeatures(
     // Lowe's ratio test
     const float ratio_thresh = 0.75f;
     for (const auto& m : knn_matches) {
-        if (m[0].distance < ratio_thresh * m[1].distance) {
+        if (m.size() == 2 && m[0].distance < ratio_thresh * m[1].distance) {
             good_matches.push_back(m[0]);
         }
     }
 
     std::cout << "Good matches: " << good_matches.size() << std::endl;
 
-    // Extract matched points
     pts1.clear();
     pts2.clear();
     for (const auto& m : good_matches) {
@@ -70,7 +76,7 @@ void detectAndMatchFeatures(
 }
 
 /**
- * Triangulate a single point from two views
+ * Triangulate a single point from two views (DLT)
  */
 cv::Mat triangulatePoint(
     const cv::Mat& P1,
@@ -80,7 +86,6 @@ cv::Mat triangulatePoint(
 
     cv::Mat A(4, 4, CV_64F);
 
-    // DLT method
     A.row(0) = pt1.x * P1.row(2) - P1.row(0);
     A.row(1) = pt1.y * P1.row(2) - P1.row(1);
     A.row(2) = pt2.x * P2.row(2) - P2.row(0);
@@ -90,13 +95,13 @@ cv::Mat triangulatePoint(
     cv::SVD::compute(A, S, U, Vt);
 
     cv::Mat X = Vt.row(3).t();
-    X = X / X.at<double>(3);  // Normalize
+    X = X / X.at<double>(3);
 
     return X.rowRange(0, 3).clone();
 }
 
 /**
- * Check cheirality (points in front of camera)
+ * Check cheirality (points in front of both cameras)
  */
 int countPointsInFront(
     const cv::Mat& R,
@@ -105,7 +110,6 @@ int countPointsInFront(
     const std::vector<cv::Point2f>& pts1,
     const std::vector<cv::Point2f>& pts2) {
 
-    // Projection matrices
     cv::Mat P1 = K * cv::Mat::eye(3, 4, CV_64F);  // [I | 0]
 
     cv::Mat Rt;
@@ -116,10 +120,7 @@ int countPointsInFront(
     for (size_t i = 0; i < pts1.size(); ++i) {
         cv::Mat X = triangulatePoint(P1, P2, pts1[i], pts2[i]);
 
-        // Check depth in camera 1
         double z1 = X.at<double>(2);
-
-        // Transform to camera 2 and check depth
         cv::Mat X2 = R * X + t;
         double z2 = X2.at<double>(2);
 
@@ -132,57 +133,46 @@ int countPointsInFront(
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== Pose Recovery from Essential Matrix ===\n" << std::endl;
+    std::cout << "=== Pose Recovery from Essential Matrix (KITTI stereo pair) ===\n"
+              << std::endl;
 
-    cv::Mat img1, img2;
+    // Real KITTI stereo pair (cam0/cam1). Override with two image paths.
+    std::string left  = (argc >= 3) ? argv[1] : resolveDataPath("left.png");
+    std::string right = (argc >= 3) ? argv[2] : resolveDataPath("right.png");
 
-    if (argc >= 3) {
-        // Load images from arguments
-        img1 = cv::imread(argv[1], cv::IMREAD_GRAYSCALE);
-        img2 = cv::imread(argv[2], cv::IMREAD_GRAYSCALE);
-
-        if (img1.empty() || img2.empty()) {
-            std::cerr << "Failed to load images!" << std::endl;
-            return 1;
-        }
-    } else {
-        // Create synthetic test images
-        std::cout << "No images provided, using synthetic test images." << std::endl;
-        std::cout << "Usage: " << argv[0] << " <image1> <image2>" << std::endl;
-        std::cout << std::endl;
-
-        // Create simple synthetic images with features
-        img1 = cv::Mat::zeros(480, 640, CV_8UC1);
-        img2 = cv::Mat::zeros(480, 640, CV_8UC1);
-
-        // Draw random patterns
-        cv::RNG rng(42);
-        for (int i = 0; i < 100; ++i) {
-            int x = rng.uniform(50, 590);
-            int y = rng.uniform(50, 430);
-            int r = rng.uniform(5, 20);
-            cv::circle(img1, cv::Point(x, y), r, cv::Scalar(255), -1);
-            // Slightly shifted in img2 (simulating camera motion)
-            cv::circle(img2, cv::Point(x + 20, y + 5), r, cv::Scalar(255), -1);
-        }
-
-        // Add some structure
-        cv::rectangle(img1, cv::Point(100, 100), cv::Point(200, 200), cv::Scalar(200), 2);
-        cv::rectangle(img2, cv::Point(120, 105), cv::Point(220, 205), cv::Scalar(200), 2);
+    cv::Mat img1 = cv::imread(left, cv::IMREAD_GRAYSCALE);
+    cv::Mat img2 = cv::imread(right, cv::IMREAD_GRAYSCALE);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: failed to load images:\n  " << left << "\n  " << right
+                  << "\nPass two image paths, or run from build/ so ../data resolves."
+                  << std::endl;
+        return 1;
     }
 
-    std::cout << "Image size: " << img1.cols << "x" << img1.rows << std::endl;
-    std::cout << std::endl;
+    std::cout << "Left:  " << left << "  (" << img1.cols << "x" << img1.rows << ")\n";
+    std::cout << "Right: " << right << "  (" << img2.cols << "x" << img2.rows << ")\n"
+              << std::endl;
 
-    // Camera intrinsics (assumed or from calibration)
-    double fx = 500, fy = 500;
-    double cx = img1.cols / 2.0, cy = img1.rows / 2.0;
+    // KITTI odometry seq 00-02 rectified intrinsics (image size 1241x376).
+    const double fx = 718.856, fy = 718.856, cx = 607.1928, cy = 185.2157;
     cv::Mat K = (cv::Mat_<double>(3, 3) <<
         fx, 0, cx,
         0, fy, cy,
         0, 0, 1);
 
-    std::cout << "Camera Intrinsics K:\n" << K << std::endl << std::endl;
+    std::cout << "Camera Intrinsics K (KITTI):\n" << K << std::endl << std::endl;
+
+    // Ground-truth extrinsic of the KITTI stereo rig (cam1 relative to cam0),
+    // from the seq 00-02 projection matrices: P1 = K [I | t_gt] with
+    // t_gt = [P1(0,3)/fx, 0, 0] = [-0.5372, 0, 0] m and no relative rotation
+    // (rectified pair). recoverPose returns t up to scale, so we compare the
+    // recovered translation *direction* against this baseline.
+    const double baseline_m = 386.1448 / fx;   // ~0.5372 m
+    cv::Mat R_gt = cv::Mat::eye(3, 3, CV_64F);
+    cv::Mat t_gt = (cv::Mat_<double>(3, 1) << -baseline_m, 0.0, 0.0);
+    std::cout << "Ground-truth extrinsic (KITTI stereo, cam1 rel. cam0):\n";
+    std::cout << "  R_gt = I,  t_gt = " << t_gt.t()
+              << "  (baseline " << baseline_m << " m)\n" << std::endl;
 
     // Detect and match features
     std::vector<cv::Point2f> pts1, pts2;
@@ -210,18 +200,15 @@ int main(int argc, char* argv[]) {
     std::cout << "RANSAC inliers: " << num_inliers << "/" << pts1.size() << std::endl;
     std::cout << "Essential Matrix E:\n" << E << std::endl;
 
-    // Verify Essential matrix properties
     cv::Mat U, S, Vt;
     cv::SVD::compute(E, S, U, Vt);
     std::cout << "\nSVD of E:" << std::endl;
     std::cout << "  Singular values: " << S.t() << std::endl;
-
-    // E should have rank 2 with two equal singular values
     double sv_ratio = S.at<double>(0) / S.at<double>(1);
     std::cout << "  s1/s2 ratio: " << sv_ratio << " (should be ~1)" << std::endl;
     std::cout << "  s3: " << S.at<double>(2) << " (should be ~0)" << std::endl;
 
-    // Decompose Essential matrix using OpenCV
+    // Decompose Essential matrix
     std::cout << "\n=== Pose Decomposition ===" << std::endl;
 
     cv::Mat R1, R2, t_decomp;
@@ -235,7 +222,6 @@ int main(int argc, char* argv[]) {
     // Four possible solutions: (R1, t), (R1, -t), (R2, t), (R2, -t)
     std::cout << "\n=== Cheirality Check ===" << std::endl;
 
-    // Filter points using inlier mask
     std::vector<cv::Point2f> pts1_inliers, pts2_inliers;
     for (size_t i = 0; i < pts1.size(); ++i) {
         if (inlier_mask.at<uchar>(i)) {
@@ -244,7 +230,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Test all four solutions
     std::vector<std::pair<cv::Mat, cv::Mat>> solutions = {
         {R1, t_decomp},
         {R1, -t_decomp},
@@ -283,7 +268,6 @@ int main(int argc, char* argv[]) {
     std::cout << "\nFinal Rotation:\n" << R_final << std::endl;
     std::cout << "\nFinal Translation (unit):\n" << t_final.t() << std::endl;
 
-    // Extract rotation angles
     cv::Mat rvec;
     cv::Rodrigues(R_final, rvec);
     double angle = cv::norm(rvec) * 180.0 / CV_PI;
@@ -293,7 +277,28 @@ int main(int argc, char* argv[]) {
     std::cout << "Translation direction: [" << t_final.at<double>(0)
               << ", " << t_final.at<double>(1)
               << ", " << t_final.at<double>(2) << "]" << std::endl;
-    std::cout << "(Note: translation scale is unknown from Essential matrix alone)"
+    std::cout << "(Note: translation scale is unknown from the Essential matrix alone;"
+              << " for a rectified stereo pair expect near-pure X translation.)"
+              << std::endl;
+
+    // Compare against the known KITTI stereo extrinsic.
+    std::cout << "\n=== Comparison with Ground-Truth Extrinsic ===" << std::endl;
+
+    cv::Mat dR = R_final * R_gt.t();
+    cv::Mat rvec_err;
+    cv::Rodrigues(dR, rvec_err);
+    double rot_err_deg = cv::norm(rvec_err) * 180.0 / CV_PI;
+
+    cv::Mat t_gt_unit = t_gt / cv::norm(t_gt);
+    double cos_ang = std::abs(t_final.dot(t_gt_unit));  // t_final is already unit
+    cos_ang = std::min(1.0, std::max(-1.0, cos_ang));
+    double t_err_deg = std::acos(cos_ang) * 180.0 / CV_PI;
+
+    std::cout << "Rotation error vs identity:   " << rot_err_deg << " deg" << std::endl;
+    std::cout << "Translation direction error:  " << t_err_deg << " deg" << std::endl;
+    std::cout << "Recovered t (unit):  " << t_final.t() << std::endl;
+    std::cout << "GT baseline (unit):  " << t_gt_unit.t() << std::endl;
+    std::cout << "(Sign of t may flip with image order; direction error uses |cos|.)"
               << std::endl;
 
     std::cout << "\n=== Demo Complete ===" << std::endl;

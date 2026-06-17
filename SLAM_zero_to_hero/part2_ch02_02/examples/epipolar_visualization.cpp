@@ -15,9 +15,21 @@
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
 
+#include <filesystem>
 #include <iostream>
+#include <string>
 #include <vector>
-#include <random>
+
+/**
+ * Resolve a file inside the bundled data/ folder, trying ../data first so it
+ * works when run from build/ (and data/ when run from the project root).
+ */
+static std::string resolveDataPath(const std::string& name) {
+    for (const std::string& base : {"../data/", "data/", "./data/"}) {
+        if (std::filesystem::exists(base + name)) return base + name;
+    }
+    return "../data/" + name;
+}
 
 /**
  * Draw an epipolar line on an image
@@ -67,38 +79,21 @@ cv::Scalar randomColor(cv::RNG& rng) {
 int main(int argc, char* argv[]) {
     std::cout << "=== Epipolar Line Visualization ===\n" << std::endl;
 
-    cv::Mat img1, img2;
+    // Real KITTI stereo pair (cam0/cam1). Override with two image paths.
+    std::string left  = (argc >= 3) ? argv[1] : resolveDataPath("left.png");
+    std::string right = (argc >= 3) ? argv[2] : resolveDataPath("right.png");
 
-    if (argc >= 3) {
-        img1 = cv::imread(argv[1]);
-        img2 = cv::imread(argv[2]);
-
-        if (img1.empty() || img2.empty()) {
-            std::cerr << "Failed to load images!" << std::endl;
-            return 1;
-        }
-    } else {
-        std::cout << "No images provided, creating synthetic test images." << std::endl;
-        std::cout << "Usage: " << argv[0] << " <image1> <image2>" << std::endl;
-        std::cout << std::endl;
-
-        // Create synthetic images
-        img1 = cv::Mat(480, 640, CV_8UC3, cv::Scalar(30, 30, 30));
-        img2 = cv::Mat(480, 640, CV_8UC3, cv::Scalar(30, 30, 30));
-
-        cv::RNG rng(12345);
-        for (int i = 0; i < 80; ++i) {
-            int x = rng.uniform(50, 590);
-            int y = rng.uniform(50, 430);
-            int r = rng.uniform(8, 25);
-            cv::Scalar color(rng.uniform(100, 255),
-                           rng.uniform(100, 255),
-                           rng.uniform(100, 255));
-            cv::circle(img1, cv::Point(x, y), r, color, -1);
-            // Shifted in img2
-            cv::circle(img2, cv::Point(x + 25, y + 3), r, color, -1);
-        }
+    cv::Mat img1 = cv::imread(left);
+    cv::Mat img2 = cv::imread(right);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: failed to load images:\n  " << left << "\n  " << right
+                  << "\nPass two image paths, or run from build/ so ../data resolves."
+                  << std::endl;
+        return 1;
     }
+    std::cout << "Left:  " << left << "  (" << img1.cols << "x" << img1.rows << ")\n";
+    std::cout << "Right: " << right << "  (" << img2.cols << "x" << img2.rows << ")\n"
+              << std::endl;
 
     // Convert to grayscale for feature detection
     cv::Mat gray1, gray2;

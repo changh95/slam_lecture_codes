@@ -13,6 +13,7 @@ part2_ch02_02/
 ├── README.md
 ├── CMakeLists.txt
 ├── Dockerfile
+├── data/                              # KITTI stereo pair (left.png = cam0, right.png = cam1)
 └── examples/
     ├── essential_fundamental_demo.cpp # Essential & Fundamental matrix estimation
     ├── pose_recovery.cpp              # Recover rotation and translation from E
@@ -44,36 +45,48 @@ docker build . -t slam_zero_to_hero:part2_ch02_02
 
 ## Run
 
+All demos default to the bundled KITTI stereo pair (`data/left.png`,
+`data/right.png`) using the KITTI seq 00–02 calibration
+(`fx=fy=718.856, cx=607.1928, cy=185.2157`). The pose-recovering demos compare
+their result against the KITTI stereo ground-truth extrinsic (R = I, baseline
+along −X). Pass two image paths to any demo to use a different pair.
+
 ### Local
 
 ```bash
-# Essential & Fundamental matrix estimation
+# Essential & Fundamental matrices, pose recovery vs GT extrinsic
 ./build/essential_fundamental_demo
 
-# Recover pose (R, t) from the Essential matrix
-./build/pose_recovery image1.jpg image2.jpg
+# Recover pose (R, t) from E, compared to the GT extrinsic
+./build/pose_recovery
 
-# Epipolar line visualization
-./build/epipolar_visualization image1.jpg image2.jpg
+# Epipolar line visualization (writes epipolar_visualization.png)
+./build/epipolar_visualization
 
-# 5-point relative pose using PoseLib
+# 5-point relative pose (PoseLib) vs GT extrinsic
 ./build/relpose_poselib
 
-# 5-point relative pose using OpenGV (Nister, Stewenius solvers)
+# 5-point relative pose (OpenGV: Nister, Stewenius) vs GT extrinsic
 ./build/relpose_opengv
+
+# Override the image pair (works for any demo)
+./build/pose_recovery /path/to/left.png /path/to/right.png
 ```
 
-`pose_recovery` and `epipolar_visualization` take two image paths as arguments;
-the other demos run without arguments.
-
 ### Docker
+
+The `data/` pair is copied into the image, so the demos resolve it via `../data`
+automatically (working directory is `build/`).
 
 ```bash
 docker run -it --rm \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v $(pwd)/data:/data \
     slam_zero_to_hero:part2_ch02_02
+
+# Inside the container
+./pose_recovery
+./essential_fundamental_demo
 ```
 
 ---
