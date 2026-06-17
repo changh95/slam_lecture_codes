@@ -14,3 +14,6 @@ venv/
 
 # oh-my-claudecode state
 .omc/
+
+# Per-project SLAM run outputs (trajectories, local maps, screenshots)
+**/results/
