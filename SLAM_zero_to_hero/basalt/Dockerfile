@@ -1,4 +1,4 @@
-FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu22.04
+FROM docker.io/nvidia/opengl:1.0-glvnd-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
 
@@ -43,27 +43,27 @@ RUN git clone https://github.com/jbeder/yaml-cpp.git -b 0.8.0 && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf yaml-cpp
 
-# Download dataset
-RUN apt-get install -y wget
+RUN apt-get install -y wget sudo
 
-# Valve Index
-RUN wget https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/main/M_monado_datasets/MI_valve_index/MIO_others/MIO05_inspect_easy.zip
-RUN wget https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/main/M_monado_datasets/MI_valve_index/MIP_playing/MIPB_beat_saber/MIPB07_beatsaber_fitbeat_expertplus_2.zip
-RUN unzip MIPB07_beatsaber_fitbeat_expertplus_2.zip
+# Bake in the Valve Index "Beat Saber" sequence so the image ships with an
+# out-of-the-box demo dataset. Larger datasets (EuRoC, TUM-VI) are mounted at
+# run time instead (e.g. -v ~/data/euroc_mav:/datasets:ro).
+RUN wget https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/main/M_monado_datasets/MI_valve_index/MIP_playing/MIPB_beat_saber/MIPB07_beatsaber_fitbeat_expertplus_2.zip && \
+    unzip MIPB07_beatsaber_fitbeat_expertplus_2.zip && \
+    rm MIPB07_beatsaber_fitbeat_expertplus_2.zip
 
-# Samsung Odyssey Plus
-RUN wget https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/main/M_monado_datasets/MO_odyssey_plus/MOO_others/MOO07_mapping_easy.zip
-RUN unzip MOO07_mapping_easy.zip
-
-# Install Basalt
+# Build Basalt from the Monado fork (canonical fork tracked by Monado SLAM datasets).
 RUN git clone --recursive https://gitlab.freedesktop.org/mateosss/basalt.git
-WORKDIR basalt
+WORKDIR /basalt
 # Downgrade Sophus to 1.22.10 (compatible with CMake 3.22 on this base image)
 RUN cd thirdparty/basalt-headers/thirdparty/Sophus && git checkout 1.22.10
-RUN apt-get install -y sudo
 RUN ./scripts/install_deps.sh
 RUN cmake --preset development
-RUN sudo cmake --build build --target install
+RUN cmake --build build --target install -j$(nproc) && ldconfig
+
+WORKDIR /
+ENTRYPOINT []
+CMD ["bash"]
 
 #RUN git clone --recursive https://github.com/changh95/vslam_lecture.git
 #WORKDIR vslam_lecture/basalt_monado

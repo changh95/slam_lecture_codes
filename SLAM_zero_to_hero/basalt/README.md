@@ -1,101 +1,72 @@
-# Basalt for Monado
+# Basalt-VIO
 
-This is a fork of [Basalt](https://gitlab.com/VladyslavUsenko/basalt) improved
-for tracking XR devices with
-[Monado](https://gitlab.freedesktop.org/monado/monado). Many thanks to the
-Basalt authors.
+Visual-Inertial Odometry from the [Monado-VIT](https://gitlab.freedesktop.org/mateosss/basalt) fork of [Basalt](https://gitlab.com/VladyslavUsenko/basalt). VIO + VO modes for stereo + IMU.
 
-## Installation
+- **Repo**: https://gitlab.freedesktop.org/mateosss/basalt
+- **Sensors**: stereo + IMU (EuRoC, TUM-VI, Monado SLAM datasets)
+- **GPU**: not required for VIO; OpenGL needed for `--show-gui 1`
 
-- **Ubuntu**: Download [latest .deb](https://gitlab.freedesktop.org/mateosss/basalt/-/releases) and install with
-
-  ```bash
-  sudo apt install -y ./basalt-monado-ubuntu-2?.04-haswell-amd64.deb
-  ```
-
-- **From source (Linux)**
-
-  ```bash
-  git clone --recursive https://gitlab.freedesktop.org/mateosss/basalt.git
-  cd basalt && ./scripts/install_deps.sh
-  cmake --preset library # use "development" instead of "library" if you want extra binaries and debug symbols
-  sudo cmake --build build --target install
-  ```
-
-- **From source (Windows)**: See the [build guide](doc/monado/Windows.md) for Windows.
-
-## Usage
-
-If you want to run OpenXR application with Monado, you need to set the
-environment variable `VIT_SYSTEM_LIBRARY_PATH` to the path of the basalt library.
-
-By default, Monado will try to load the library from `/usr/lib/libbasalt.so` if
-the environment variable is not set.
-
-If you want to test whether everything is working you can download a short dataset with [EuRoC (ASL) format](https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets) format like [`MOO09_short_1_updown`](https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/main/M_monado_datasets/MO_odyssey_plus/MOO_others/MOO09_short_1_updown.zip?download=true) from the [Monado SLAM datasets](https://huggingface.co/datasets/collabora/monado-slam-datasets):
+## Build
 
 ```bash
-wget https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/main/M_monado_datasets/MO_odyssey_plus/MOO_others/MOO09_short_1_updown.zip
-unzip MOO09_short_1_updown.zip
+podman build -t slam_zero_to_hero:basalt .
 ```
 
-- **Try it standalone with a dataset (requires extra binaries)**
+The image bundles Basalt's stereo-VIO and stereo-VO binaries plus EuRoC, TUM-VI, and Monado-SLAM calibration JSON files installed under `/usr/local/share/basalt/`. EuRoC calibrations available out of the box:
 
-  ```bash
-  basalt_vio --show-gui 1 --dataset-path MOO09_short_1_updown/ --dataset-type euroc --cam-calib /usr/share/basalt/msdmo_calib.json --config-path /usr/share/basalt/msdmo_config.json
-  ```
+| Camera model | Calib file |
+|---|---|
+| EUCM (recommended) | `/usr/local/share/basalt/euroc_eucm_calib.json` |
+| Double-sphere | `/usr/local/share/basalt/euroc_ds_calib.json` |
+| Radial 8-tangent | `/usr/local/share/basalt/euroc_rt8_calib.json` |
 
-- **Use a RealSense camera without Monado (requires extra binaries)**
-  You'll need to calibrate your camera if you want the best results but meanwhile you can try with these calibration files instead.
+## Verified run — EuRoC MH_01_easy (stereo + IMU)
 
-  - RealSense D455 (and maybe also D435)
+```bash
+mkdir -p results
+podman run --rm \
+  -v ~/data/euroc_mav/MH_01_easy:/dataset:ro \
+  -v "$(pwd)/results":/out:rw \
+  -w /out \
+  slam_zero_to_hero:basalt \
+  basalt_vio --show-gui 0 \
+    --dataset-path /dataset \
+    --dataset-type euroc \
+    --cam-calib /usr/local/share/basalt/euroc_eucm_calib.json \
+    --config-path /usr/local/share/basalt/euroc_config.json \
+    --result-path /out/euroc_mh01_metrics.json \
+    --save-trajectory tum \
+    --save-trajectory-fn euroc_mh01_traj.txt \
+    --marg-data /out/euroc_mh01_marg
+```
 
-    ```bash
-    basalt_rs_t265_vio --is-d455 --cam-calib /usr/share/basalt/d455_calib.json --config-path /usr/share/basalt/default_config.json
-    ```
+Output:
 
-  - Realsense T265: Get t265_calib.json from [this issue](https://gitlab.com/VladyslavUsenko/basalt/-/issues/52) and run
+| File | Description |
+|---|---|
+| `results/euroc_mh01_traj.txt` | Trajectory in TUM format (`t tx ty tz qx qy qz qw`) |
+| `results/euroc_mh01_metrics.json` | RMS ATE + frame counts vs. EuRoC ground truth |
+| `results/euroc_mh01_marg/` | Marginalization data (for downstream BA / re-optimization) |
+| `results/stats_{vio,sums,all}.json` | Per-block runtime stats (linearize, QR, solve, marginalize, ...) |
 
-    ```bash
-    basalt_rs_t265_vio --cam-calib t265_calib.json --config-path /usr/share/basalt/default_config.json
-    ```
+Last verified: Ryzen 9 7950X. **3682 frames in 20.3 s wall (≈ 9× real-time)**, **RMS ATE = 0.073 m** vs. the EuRoC Vicon ground truth — in line with published Basalt-VIO numbers for `MH_01_easy`.
 
-- **Try it through `monado-cli` with a dataset**
+For visualization, drop `--show-gui 0` and add the X11 forwarding flags:
 
-  ```bash
-  monado-cli slambatch MOO09_short_1_updown/ /usr/share/basalt/msdmo.toml results
-  ```
+```bash
+xhost +local:root
+podman run --rm \
+  --net=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/data/euroc_mav/MH_01_easy:/dataset:ro \
+  slam_zero_to_hero:basalt \
+  basalt_vio --show-gui 1 \
+    --dataset-path /dataset --dataset-type euroc \
+    --cam-calib /usr/local/share/basalt/euroc_eucm_calib.json \
+    --config-path /usr/local/share/basalt/euroc_config.json
+```
 
-- **Try it with `monado`, a dataset, and an OpenXR app**
+## Other configs
 
-  ```bash
-  # Run monado-service with a fake "euroc device" driver
-  export EUROC_PATH=MOO09_short_1_updown/ # dataset path
-  export EUROC_HMD=false # false for controller tracking
-  export EUROC_PLAY_FROM_START=true # produce samples right away
-  export SLAM_CONFIG=/usr/share/basalt/msdmo.toml # includes calibration
-  export SLAM_SUBMIT_FROM_START=true # consume samples right away
-  export XRT_DEBUG_GUI=1 # enable monado debug ui
-  monado-service &
-
-  # Get and run a sample OpenXR application
-  wget https://gitlab.freedesktop.org/wallbraker/apps/-/raw/main/VirtualGround-x86_64.AppImage
-  chmod +x VirtualGround-x86_64.AppImage
-  ./VirtualGround-x86_64.AppImage normal
-  ```
-
-- **Use a real device in Monado**.
-
-  When using a real device driver you might want to enable the `XRT_DEBUG_GUI=1` and `SLAM_UI=1` environment variables to show debug GUIs of Monado and Basalt respectively.
-
-  Monado has a couple of drivers supporting SLAM tracking (and thus Basalt). Most of them should work without any user input.
-
-  - WMR ([troubleshoot](doc/monado/WMR.md))
-  - Rift S (might need to press "Submit to SLAM", like the Vive Driver).
-  - Northstar / DepthAI ([This hand-tracking guide](https://monado.freedesktop.org/handtracking) has a depthai section).
-  - Vive Driver (Valve Index) ([read before using](doc/monado/Vive.md))
-  - RealSense Driver ([setup](doc/monado/Realsense.md)).
-
-## Development
-
-If you want to set up your build environment for developing and iterating on Basalt, see the [development guide](doc/monado/Development.md).
+- **VO mode (no IMU)**: swap `--config-path` to `/usr/local/share/basalt/euroc_config_vo.json`.
+- **TUM-VI**: `--dataset-type euroc --cam-calib /usr/local/share/basalt/tumvi_512_eucm_calib.json --config-path /usr/local/share/basalt/tumvi_512_config.json` against the TUM-VI 512×512 dataset.
+- **Monado SLAM datasets**: bundled under `/basalt/data/msd/` inside the image.
