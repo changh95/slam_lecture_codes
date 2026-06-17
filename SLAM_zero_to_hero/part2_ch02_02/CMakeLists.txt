@@ -71,6 +71,14 @@ endif()
 # OpenGV 5-point relative pose solvers
 if(opengv_FOUND)
     add_executable(relpose_opengv examples/relpose_opengv.cpp)
+    # OpenGV is built with -march=native (see its CMakeLists.txt), which raises
+    # Eigen's EIGEN_MAX_ALIGN_BYTES from 16 to 32 (AVX). The 5-point solvers return
+    # std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<...>> by value: the buffer
+    # is allocated inside libopengv (32-byte alignment) but freed here. Without the
+    # matching flag this TU uses 16-byte alignment, so the aligned_allocator alloc/free
+    # ABI mismatches and the program aborts with "double free or corruption" at teardown.
+    # Compiling with the same flag keeps the Eigen alignment ABI consistent.
+    target_compile_options(relpose_opengv PRIVATE -march=native)
     target_link_libraries(relpose_opengv
         ${OpenCV_LIBS}
         Eigen3::Eigen
