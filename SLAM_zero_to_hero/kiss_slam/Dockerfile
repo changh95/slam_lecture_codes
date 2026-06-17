@@ -8,7 +8,8 @@ RUN apt-get update -y && apt-get upgrade -y && \
     libeigen3-dev libgl1-mesa-dev && \
     apt-get clean
 
-# Install KISS-SLAM (v0.0.2)
-RUN pip3 install kiss-slam==0.0.2
+# Install KISS-SLAM (v0.0.2) and the pure-Python rosbags reader so the rosbag
+# dataloader works without a ROS install.
+RUN pip3 install kiss-slam==0.0.2 rosbags==0.10.4
 
 WORKDIR /data
