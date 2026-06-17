@@ -10,7 +10,6 @@ Python exercise using the [VPR_Tutorial](https://github.com/stschubert/VPR_Tutor
 part2_ch01_10/
 ├── README.md
 ├── Dockerfile                  # uv-based Python 3.11 + CUDA torch image
-├── Dockerfile_pip              # pip-based alternative
 ├── compare_descriptors.py      # Multi-descriptor comparison script
 └── visualizations/             # Reference output images
 ```
@@ -63,6 +62,17 @@ podman run -it --rm \
 ```
 
 `--shm-size=2g` is required for the torch `DataLoader` shared memory.
+
+### First run needs network access
+
+Neither the dataset nor the model weights are baked into the image. On first
+invocation `datasets/load_dataset.py` auto-downloads the dataset (e.g.
+`GardensPoint_Walking.zip` from tu-chemnitz.de) into `images/`, and `torch.hub`
+pulls each descriptor's weights (AlexNet ~233 MB; VGG16 ~528 MB for
+NetVLAD/PatchNetVLAD; CosPlace/EigenPlaces ResNet50 checkpoints). These are
+cached only inside the container, so a fresh `--rm` run re-downloads them unless
+you persist them with mounts, e.g. `-v $PWD/images:/VPR_Tutorial/images` and
+`-v vpr-hub:/root/.cache/torch/hub`.
 
 ### Inside the container
 
