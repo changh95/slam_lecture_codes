@@ -1,20 +1,21 @@
-# Deep Learning based Visual Place Recognition Tutorial
+# Deep Learning-based Visual Place Recognition
 
-- uses Python codes (Mostly because VPR codes are supported in python natively)
-- Switchable descriptors (HDC-DELF, AlexNet-conv, NetVLAD, PatchNetVLAD, CosPlace, EigenPlaces)
-- Switchable day/night datasets (GardensPoint, StLucia, SFU)
+Python exercise using the [VPR_Tutorial](https://github.com/stschubert/VPR_Tutorial) framework with switchable descriptors and datasets.
 
 ---
 
-# How to build & run
+## Project Structure
 
-The current `Dockerfile` is uv-based (Python 3.11 slim + CUDA torch wheels). It
-clones `stschubert/VPR_Tutorial` into `/VPR_Tutorial`, installs the venv at
-`/opt/venv`, and pre-activates it via `PATH`, so there is no `conda activate`
-step. TensorFlow is intentionally skipped — six of the seven descriptors
-(AlexNet, NetVLAD, PatchNetVLAD, CosPlace, EigenPlaces, SAD) are torch-based
-and work without it. PyQt5 is bundled so `plt.show()` opens real X11 windows
-(`MPLBACKEND=qt5agg` is baked into the image).
+```
+part2_ch01_10/
+├── README.md
+├── Dockerfile                  # uv-based Python 3.11 + CUDA torch image
+├── Dockerfile_pip              # pip-based alternative
+├── compare_descriptors.py      # Multi-descriptor comparison script
+└── visualizations/             # Reference output images
+```
+
+---
 
 ## Build
 
@@ -22,7 +23,18 @@ and work without it. PyQt5 is bundled so `plt.show()` opens real X11 windows
 docker build . -t slam:vpr
 ```
 
-## Run (Docker w/ NVIDIA Container Toolkit)
+Dependencies are installed inside the image:
+- **Python 3.11** (slim base) with **uv** package manager
+- **PyTorch >= 2.7** with CUDA 12.8 wheels (supports sm_120 / RTX 5090)
+- **VPR_Tutorial** (cloned from GitHub): AlexNet, NetVLAD, PatchNetVLAD, CosPlace, EigenPlaces, SAD descriptors
+- **faiss-cpu**, **scikit-image**, **scikit-learn**, **opencv-python-headless**, **matplotlib**, **PyQt5**
+- TensorFlow is intentionally omitted; all six supported descriptors are torch-based.
+
+---
+
+## Run
+
+### Docker (NVIDIA Container Toolkit)
 
 ```bash
 xhost +local:docker
@@ -30,11 +42,11 @@ docker run -it --rm \
     --gpus all \
     --shm-size=2g \
     --env DISPLAY=$DISPLAY \
-    -v /tmp/.X11-unix/:/tmp/.X11-unix:ro \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
     slam:vpr
 ```
 
-## Run (Podman, e.g. RTX 5090 / sm_120 host)
+### Podman (e.g. RTX 5090 / sm_120 host)
 
 ```bash
 xhost +local:
@@ -50,56 +62,50 @@ podman run -it --rm \
     slam:vpr
 ```
 
-`--shm-size=2g` is required: the torch `DataLoader` shares tensors via
-`/dev/shm`, and the default 64 MB is not enough for the demo's batch size.
+`--shm-size=2g` is required for the torch `DataLoader` shared memory.
 
-## Inside the container
+### Inside the container
 
-The working directory is already `/VPR_Tutorial` and the venv is on `PATH`.
+The working directory is `/VPR_Tutorial` and the venv is pre-activated.
 
-### Single-descriptor demo
+**Single-descriptor demo:**
 
 ```bash
 python3 demo.py --descriptor CosPlace --dataset GardensPoint
-# other descriptors: AlexNet, NetVLAD, PatchNetVLAD, EigenPlaces, SAD
-# other datasets:    GardensPoint, StLucia, SFU
+# descriptors: AlexNet, NetVLAD, PatchNetVLAD, CosPlace, EigenPlaces, SAD
+# datasets:    GardensPoint, StLucia, SFU
 ```
 
-This pops up four matplotlib windows: similarity matrix `S`, correct/wrong
-match examples, the `M1` vs `M2` matching decisions, and the precision/recall
-curve.
+Outputs four matplotlib windows: similarity matrix, correct/wrong match examples, matching decisions, and precision/recall curve.
 
-### Multi-descriptor comparison
+**Multi-descriptor comparison:**
 
 ```bash
 python3 /workspace/compare_descriptors.py
 ```
 
-Runs every torch-based descriptor on GardensPoint sequentially and renders
-**one** window combining:
+Runs all torch-based descriptors on GardensPoint and renders a combined window with overlaid PR curves, a metrics table (AUC, R@100P, R@K, wall time), similarity matrices side-by-side, and query→prediction example rows.
 
-- precision/recall curves overlaid for all descriptors,
-- a metrics table (AUC, R@100P, R@K, wall time),
-- the six similarity matrices side-by-side,
-- two query→prediction example rows, with each predicted db image bordered
-  green (correct) or red (wrong).
+To save output to disk, mount a volume:
 
-If the container is mounted with `-v $PWD/visualizations:/out`, the combined
-figure is also dumped to `visualizations/all_descriptors_comparison.png`.
+```bash
+-v $PWD/visualizations:/out
+# saves: visualizations/all_descriptors_comparison.png
+```
 
-### Headless runs
+**Headless (no X server):**
 
-Set `MPLBACKEND=Agg` before invoking the scripts to skip GUI windows when no
-X server is reachable.
+```bash
+MPLBACKEND=Agg python3 demo.py --descriptor CosPlace --dataset GardensPoint
+```
 
-## Results
+---
 
-Reference outputs from a representative run are checked into
-[`visualizations/`](visualizations/). The combined comparison panel:
+## References
 
-![](visualizations/all_descriptors_comparison.png)
-
-Single-descriptor screenshots (`output.png` is the upstream tutorial figure,
-the rest are from this Dockerfile's run on an RTX 5090):
-
-![](output.png)
+- [VPR_Tutorial (stschubert)](https://github.com/stschubert/VPR_Tutorial)
+- [PyTorch](https://pytorch.org/)
+- [faiss](https://github.com/facebookresearch/faiss)
+- [CosPlace](https://github.com/gmberton/CosPlace)
+- [EigenPlaces](https://github.com/gmberton/EigenPlaces)
+- [PatchNetVLAD](https://github.com/QVPR/Patch-NetVLAD)
