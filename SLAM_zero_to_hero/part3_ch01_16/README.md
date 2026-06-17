@@ -1,63 +1,83 @@
 # SymForce: Symbolic Computing for Robotics
 
-Python exercise using [SymForce](https://github.com/symforce-org/symforce) for symbolic math, code generation, and factor-graph optimization in robotics.
+[SymForce](https://github.com/symforce-org/symforce) (Skydio) builds residuals
+symbolically and generates fast Jacobians / code automatically, with a built-in
+factor-graph optimizer. This chapter demonstrates the three canonical SLAM
+back-end problems with SymForce, each with a visualization. The examples are
+pure Python.
 
----
-
-## Project Structure
-
-```
-part3_ch01_16/
-├── README.md
-├── CMakeLists.txt
-├── Dockerfile
-└── examples/
-    └── symforce_basics.py   # Symbolic variables, geometry types, factor graph optimization, code generation
-```
-
-> **Note:** `CMakeLists.txt` conditionally builds `symforce_example` (C++) only when the `symforce` CMake package is found. The primary exercise is the Python script above.
+| Example | Source | Output | Visualize with |
+|---|---|---|---|
+| Curve fitting | `examples/symforce_curve_fitting.py` | `curve_fitting.txt` | `viz/plot_curve_fitting.py` (matplotlib PNG) |
+| Pose-graph optimization | `examples/symforce_pose_graph.py` | `pose_graph.txt` | `viz/plot_pose_graph.py` (matplotlib PNG) |
+| Bundle adjustment (BAL, Trafalgar Square) | `examples/symforce_bundle_adjustment.py` | `bundle_adjustment.txt` | `viz/show_bundle_adjustment.py` (rerun 3D) |
 
 ---
 
 ## Build
 
-Dependencies:
-- **SymForce** (Python) — required. Install via `pip install symforce`.
-- **symforce CMake package** — optional. `symforce_example` (C++) is built only when found.
-
+Docker (recommended — `slam:base` ships SymForce + rerun; matplotlib is added):
 ```bash
-# Local (Python only — no build step needed)
-pip install symforce
-
-# Local (optional C++ build)
-mkdir build && cd build
-cmake ..
-make -j4
-
-# Docker
 docker build . -t slam_zero_to_hero:part3_ch01_16
+docker run -it --rm slam_zero_to_hero:part3_ch01_16
 ```
+
+The image lands you in `run/`, which already contains the BAL problem
+`problem-21-11315-pre.txt`. (Nothing to compile — SymForce examples are Python;
+`pip install symforce matplotlib` to run locally.)
 
 ---
 
-## Run
+## Run + visualize
 
-### Local
-
-```bash
-python3 examples/symforce_basics.py
-```
-
-### Docker
+All commands are run from `run/` (examples are at `../examples`, viz at `../viz`).
 
 ```bash
-docker run -it --rm slam_zero_to_hero:part3_ch01_16
-python3 examples/symforce_basics.py
+# 1) Curve fitting:  y = exp(a x^2 + b x + c)
+python3 ../examples/symforce_curve_fitting.py
+python3 ../viz/plot_curve_fitting.py            # -> curve_fitting.png
+
+# 2) 2D pose-graph optimization (square loop + loop closure)
+python3 ../examples/symforce_pose_graph.py
+python3 ../viz/plot_pose_graph.py               # -> pose_graph.png
+
+# 3) Bundle adjustment on the BAL dataset (subsampled, see note)
+python3 ../examples/symforce_bundle_adjustment.py problem-21-11315-pre.txt
+python3 ../viz/show_bundle_adjustment.py        # -> bundle_adjustment.rrd (one frame per iteration)
+#   open it and scrub the 'iteration' timeline:  rerun bundle_adjustment.rrd
+#   or stream live to a running viewer:           python3 ../viz/show_bundle_adjustment.py --connect
 ```
+
+The first SymForce run compiles the symbolic residual (a few seconds) before
+optimizing. PNGs are written headlessly; copy them out with `docker cp`.
+
+---
+
+## Code notes
+
+- **Residuals are symbolic Python functions.** Each `Factor` references its
+  variables by key; SymForce derives the Jacobian from the symbolic residual and
+  JIT-compiles it once, then reuses it for every observation.
+- **Curve fitting** optimizes a single `sf.V3` of `(a, b, c)`, one factor per
+  data point.
+- **Pose graph** uses `sf.Pose2` with a `prior_residual` anchor and a
+  `between_residual` per odometry/loop edge (measurements from ground truth);
+  residuals are returned in the tangent space via `to_tangent`.
+- **Bundle adjustment** models each camera as `sf.Pose3` (world-to-camera) plus
+  an `sf.V3` calibration `(f, k1, k2)`, with the BAL reprojection
+  `p' = f (1 + k1 r^2 + k2 r^4)(-P/P.z)`. The first camera is held fixed to
+  remove gauge freedom. Camera centers are recovered via
+  `pose.inverse().position()`.
+  - **Subsampling:** the optimizer builds one Python factor per observation, so
+    the full 31843-observation problem is subsampled to the first `MAX_CAM`
+    cameras / `MAX_OBS` observations (defaults 10 / 4000). Override with
+    `symforce_bundle_adjustment.py <file> <MAX_CAM> <MAX_OBS>`.
+
+BAL dataset: https://grail.cs.washington.edu/projects/bal/
 
 ---
 
 ## References
 
-- [SymForce GitHub](https://github.com/symforce-org/symforce)
-- [SymForce Documentation](https://symforce.org/)
+- [SymForce GitHub](https://github.com/symforce-org/symforce) · [paper](https://arxiv.org/abs/2204.07889) · [docs](https://symforce.org/)
+- [BAL dataset](https://grail.cs.washington.edu/projects/bal/)

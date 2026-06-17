@@ -1,219 +1,162 @@
 /**
- * Ceres-Solver Tutorial: Bundle Adjustment with BAL Dataset
+ * Ceres-Solver Tutorial: Bundle Adjustment with the BAL dataset
  *
- * This example demonstrates:
- * 1. Loading BAL dataset
- * 2. Setting up bundle adjustment with Ceres
- * 3. Using loss functions for robustness
+ * Loads a "Bundle Adjustment in the Large" problem, jointly optimizes camera
+ * poses + intrinsics + 3D points with a Huber-robust reprojection cost, and
+ * captures the landmark cloud + camera centers at *every* solver iteration (via
+ * a ceres::IterationCallback). Dumps the per-iteration structure to
+ * `bundle_adjustment.txt` so viz/show_bundle_adjustment.py can animate the
+ * optimization on a rerun timeline.
+ *
+ * BAL camera model (9 params): angle-axis(3), translation(3), f, k1, k2.
+ * Projection: p = -P/P.z;  p' = f * (1 + k1*r^2 + k2*r^4) * p.
  */
 
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
 #include <cmath>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
 
 #include <ceres/ceres.h>
 #include <ceres/rotation.h>
 
 using namespace std;
 
-// ============================================================================
-// BAL Camera Model
-// ============================================================================
-
-// BAL uses angle-axis rotation (3 params) + translation (3) + f, k1, k2
-// Projection: p = -P/P.z, p' = f * (1 + k1*r^2 + k2*r^4) * p
-
 struct BALReprojectionError {
-    BALReprojectionError(double observed_x, double observed_y)
-        : observed_x_(observed_x), observed_y_(observed_y) {}
+    BALReprojectionError(double ox, double oy) : ox_(ox), oy_(oy) {}
 
     template <typename T>
-    bool operator()(const T* const camera,
-                    const T* const point,
-                    T* residuals) const {
-        // camera[0,1,2]: angle-axis rotation
-        // camera[3,4,5]: translation
-        // camera[6]: focal length
-        // camera[7]: k1 (radial distortion)
-        // camera[8]: k2 (radial distortion)
-
-        // Rotate point
+    bool operator()(const T* const camera, const T* const point, T* res) const {
         T p[3];
         ceres::AngleAxisRotatePoint(camera, point, p);
-
-        // Translate
         p[0] += camera[3];
         p[1] += camera[4];
         p[2] += camera[5];
 
-        // Perspective projection
         T xp = -p[0] / p[2];
         T yp = -p[1] / p[2];
 
-        // Radial distortion
         T r2 = xp * xp + yp * yp;
         T distortion = T(1.0) + camera[7] * r2 + camera[8] * r2 * r2;
 
-        // Final projected point
-        T predicted_x = camera[6] * distortion * xp;
-        T predicted_y = camera[6] * distortion * yp;
-
-        // Residuals
-        residuals[0] = predicted_x - observed_x_;
-        residuals[1] = predicted_y - observed_y_;
-
+        res[0] = camera[6] * distortion * xp - ox_;
+        res[1] = camera[6] * distortion * yp - oy_;
         return true;
     }
 
-    static ceres::CostFunction* Create(double observed_x, double observed_y) {
+    static ceres::CostFunction* Create(double ox, double oy) {
         return new ceres::AutoDiffCostFunction<BALReprojectionError, 2, 9, 3>(
-            new BALReprojectionError(observed_x, observed_y));
+            new BALReprojectionError(ox, oy));
     }
 
 private:
-    double observed_x_;
-    double observed_y_;
+    double ox_, oy_;
 };
 
-// ============================================================================
-// BAL Dataset Reader
-// ============================================================================
+// Camera centre in world coords from a BAL camera: C = -R^T * t.
+static void CameraCenter(const double* cam, double* C) {
+    double inv_aa[3] = {-cam[0], -cam[1], -cam[2]};
+    double t[3] = {cam[3], cam[4], cam[5]};
+    double Rt_t[3];
+    ceres::AngleAxisRotatePoint(inv_aa, t, Rt_t);
+    C[0] = -Rt_t[0];
+    C[1] = -Rt_t[1];
+    C[2] = -Rt_t[2];
+}
 
-class BALProblem {
-public:
-    bool LoadFile(const string& filename) {
-        ifstream fin(filename);
-        if (!fin) {
-            cerr << "Error: Cannot open " << filename << endl;
-            return false;
-        }
+// Snapshots the current landmarks + camera centres after every iteration.
+struct StructureRecorder : public ceres::IterationCallback {
+    StructureRecorder(const vector<double>& cameras, const vector<double>& points,
+                      int num_cameras, int num_points)
+        : cameras_(cameras), points_(points),
+          num_cameras_(num_cameras), num_points_(num_points) {}
 
-        fin >> num_cameras_ >> num_points_ >> num_observations_;
-
-        // Allocate memory
-        camera_index_.resize(num_observations_);
-        point_index_.resize(num_observations_);
-        observations_.resize(2 * num_observations_);
-        cameras_.resize(9 * num_cameras_);
-        points_.resize(3 * num_points_);
-
-        // Read observations
-        for (int i = 0; i < num_observations_; ++i) {
-            fin >> camera_index_[i] >> point_index_[i]
-                >> observations_[2 * i] >> observations_[2 * i + 1];
-        }
-
-        // Read cameras
-        for (int i = 0; i < num_cameras_ * 9; ++i) {
-            fin >> cameras_[i];
-        }
-
-        // Read points
-        for (int i = 0; i < num_points_ * 3; ++i) {
-            fin >> points_[i];
-        }
-
-        return true;
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary&) override {
+        point_frames_.push_back(points_);  // copy current landmark positions
+        vector<double> centers(3 * num_cameras_);
+        for (int i = 0; i < num_cameras_; ++i)
+            CameraCenter(&cameras_[9 * i], &centers[3 * i]);
+        camera_frames_.push_back(std::move(centers));
+        return ceres::SOLVER_CONTINUE;
     }
 
-    int num_cameras() const { return num_cameras_; }
-    int num_points() const { return num_points_; }
-    int num_observations() const { return num_observations_; }
-
-    double* mutable_camera(int i) { return &cameras_[9 * i]; }
-    double* mutable_point(int i) { return &points_[3 * i]; }
-
-    int camera_index(int i) const { return camera_index_[i]; }
-    int point_index(int i) const { return point_index_[i]; }
-
-    double observation_x(int i) const { return observations_[2 * i]; }
-    double observation_y(int i) const { return observations_[2 * i + 1]; }
-
-private:
-    int num_cameras_;
-    int num_points_;
-    int num_observations_;
-
-    vector<int> camera_index_;
-    vector<int> point_index_;
-    vector<double> observations_;
-    vector<double> cameras_;
-    vector<double> points_;
+    const vector<double>&cameras_, &points_;
+    int num_cameras_, num_points_;
+    vector<vector<double>> point_frames_, camera_frames_;
 };
-
-// ============================================================================
-// Main
-// ============================================================================
 
 int main(int argc, char** argv) {
-    cout << "=== Ceres-Solver Tutorial: Bundle Adjustment ===\n" << endl;
+    cout << "=== Ceres Tutorial: Bundle Adjustment (BAL) ===\n" << endl;
 
-    string bal_file = "problem-49-7776-pre.txt";
-    if (argc > 1) {
-        bal_file = argv[1];
-    }
-
-    // Load BAL dataset
-    BALProblem bal_problem;
-    if (!bal_problem.LoadFile(bal_file)) {
-        cerr << "\nDownload a BAL dataset from:" << endl;
-        cerr << "https://grail.cs.washington.edu/projects/bal/" << endl;
+    string bal_file = (argc > 1) ? argv[1] : "problem-21-11315-pre.txt";
+    ifstream fin(bal_file);
+    if (!fin) {
+        cerr << "Error: cannot open " << bal_file << "\n"
+             << "Download a BAL dataset from "
+                "https://grail.cs.washington.edu/projects/bal/\n";
         return 1;
     }
 
-    cout << "Loaded BAL problem:" << endl;
-    cout << "  Cameras: " << bal_problem.num_cameras() << endl;
-    cout << "  Points: " << bal_problem.num_points() << endl;
-    cout << "  Observations: " << bal_problem.num_observations() << endl;
+    int num_cameras, num_points, num_obs;
+    fin >> num_cameras >> num_points >> num_obs;
+    cout << "Cameras: " << num_cameras << "  Points: " << num_points
+         << "  Observations: " << num_obs << endl;
 
-    // Build Ceres problem
+    vector<int> cam_idx(num_obs), pt_idx(num_obs);
+    vector<double> obs(2 * num_obs);
+    for (int i = 0; i < num_obs; ++i)
+        fin >> cam_idx[i] >> pt_idx[i] >> obs[2 * i] >> obs[2 * i + 1];
+
+    vector<double> cameras(9 * num_cameras), points(3 * num_points);
+    for (double& v : cameras) fin >> v;
+    for (double& v : points) fin >> v;
+    fin.close();
+
     ceres::Problem problem;
-
-    // Add residual blocks
-    for (int i = 0; i < bal_problem.num_observations(); ++i) {
-        ceres::CostFunction* cost_function = BALReprojectionError::Create(
-            bal_problem.observation_x(i),
-            bal_problem.observation_y(i));
-
-        // Huber loss for robustness
-        ceres::LossFunction* loss_function = new ceres::HuberLoss(1.0);
-
+    for (int i = 0; i < num_obs; ++i) {
         problem.AddResidualBlock(
-            cost_function,
-            loss_function,
-            bal_problem.mutable_camera(bal_problem.camera_index(i)),
-            bal_problem.mutable_point(bal_problem.point_index(i)));
+            BALReprojectionError::Create(obs[2 * i], obs[2 * i + 1]),
+            new ceres::HuberLoss(1.0),
+            &cameras[9 * cam_idx[i]], &points[3 * pt_idx[i]]);
     }
 
-    cout << "\nBuilt Ceres problem:" << endl;
-    cout << "  Residual blocks: " << problem.NumResidualBlocks() << endl;
-    cout << "  Parameter blocks: " << problem.NumParameterBlocks() << endl;
+    // Record the structure at every iteration (iteration 0 = initial state).
+    StructureRecorder recorder(cameras, points, num_cameras, num_points);
 
-    // Solver options
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.minimizer_progress_to_stdout = true;
-    options.max_num_iterations = 50;
+    options.max_num_iterations = 30;
     options.num_threads = 4;
+    options.update_state_every_iteration = true;  // refresh params before callback
+    options.callbacks.push_back(&recorder);
 
-    // Solve
-    cout << "\nOptimizing..." << endl;
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+    cout << "\n" << summary.BriefReport() << endl;
+    cout << "Initial cost: " << summary.initial_cost
+         << "  Final cost: " << summary.final_cost << endl;
+    cout << "RMSE: " << sqrt(2.0 * summary.final_cost / num_obs) << " px" << endl;
 
-    cout << "\n" << summary.FullReport() << endl;
+    const auto& pf = recorder.point_frames_;
+    const auto& cf = recorder.camera_frames_;
+    const int K = static_cast<int>(pf.size());
 
-    // Results
-    cout << "\n=== Results ===" << endl;
-    cout << "Initial cost: " << summary.initial_cost << endl;
-    cout << "Final cost: " << summary.final_cost << endl;
-    cout << "Improvement: " << (1.0 - summary.final_cost / summary.initial_cost) * 100 << "%" << endl;
-    cout << "RMSE: " << sqrt(2.0 * summary.final_cost / bal_problem.num_observations())
-         << " pixels" << endl;
-
-    cout << "\n=== Complete ===" << endl;
+    ofstream out("bundle_adjustment.txt");
+    out << "points " << num_points << "\n";
+    out << "cameras " << num_cameras << "\n";
+    out << "steps " << K << "\n";
+    for (int k = 0; k < K; ++k) {
+        out << "step " << k << "\n";
+        for (int i = 0; i < num_points; ++i)
+            out << pf[k][3 * i] << " " << pf[k][3 * i + 1] << " " << pf[k][3 * i + 2] << "\n";
+        for (int i = 0; i < num_cameras; ++i)
+            out << cf[k][3 * i] << " " << cf[k][3 * i + 1] << " " << cf[k][3 * i + 2] << "\n";
+    }
+    out.close();
+    cout << "\nWrote bundle_adjustment.txt (" << K << " iterations) -> visualize with "
+            "viz/show_bundle_adjustment.py" << endl;
 
     return 0;
 }
