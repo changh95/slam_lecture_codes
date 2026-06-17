@@ -1,251 +1,226 @@
 /**
- * g2o Tutorial: Bundle Adjustment with BAL Dataset
+ * g2o Tutorial: Bundle Adjustment with the BAL dataset
  *
- * This example demonstrates:
- * 1. Loading BAL (Bundle Adjustment in the Large) dataset
- * 2. Setting up bundle adjustment problem in g2o
- * 3. Optimizing camera poses and 3D points
- *
- * BAL dataset format:
- *   <num_cameras> <num_points> <num_observations>
- *   <camera_idx> <point_idx> <x> <y>  (observations)
- *   ...
- *   <camera params: rotation(3), translation(3), focal, k1, k2>
- *   ...
- *   <point: x, y, z>
- *   ...
+ * Implements the BAL camera model with custom g2o types so the projection
+ * matches the data exactly:
+ *   - VertexCamera : 9-DoF (rotation as quaternion + translation + f, k1, k2)
+ *                    with a proper SO(3) update in oplusImpl()
+ *   - VertexPoint  : 3-DoF landmark (marginalized for the Schur complement)
+ *   - EdgeReprojection : reprojection residual  p' = f (1+k1 r^2+k2 r^4)(-P/P.z)
+ * Jacobians are computed numerically by g2o. Dumps `bundle_adjustment.txt`
+ * for viz/show_bundle_adjustment.py (rerun 3D).
  */
 
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
 #include <cmath>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
 
-#include <g2o/core/sparse_optimizer.h>
+#include <Eigen/Geometry>
+#include <g2o/core/base_binary_edge.h>
+#include <g2o/core/base_vertex.h>
 #include <g2o/core/block_solver.h>
+#include <g2o/core/hyper_graph_action.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
-#include <g2o/solvers/dense/linear_solver_dense.h>
-#include <g2o/solvers/eigen/linear_solver_eigen.h>
 #include <g2o/core/robust_kernel_impl.h>
-#include <g2o/types/sba/types_six_dof_expmap.h>
+#include <g2o/core/sparse_optimizer.h>
+#include <g2o/solvers/eigen/linear_solver_eigen.h>
 
-using namespace g2o;
 using namespace std;
 
-// Convert angle-axis to rotation matrix
-Eigen::Matrix3d AngleAxisToRotationMatrix(const Eigen::Vector3d& angle_axis) {
-    double theta = angle_axis.norm();
-    if (theta < 1e-10) {
-        return Eigen::Matrix3d::Identity();
+struct CameraParam {
+    Eigen::Quaterniond q = Eigen::Quaterniond::Identity();
+    Eigen::Vector3d t = Eigen::Vector3d::Zero();
+    double f = 0, k1 = 0, k2 = 0;
+
+    Eigen::Vector2d project(const Eigen::Vector3d& X) const {
+        Eigen::Vector3d pc = q * X + t;
+        Eigen::Vector2d p(-pc[0] / pc[2], -pc[1] / pc[2]);
+        double r2 = p.squaredNorm();
+        double dist = 1.0 + k1 * r2 + k2 * r2 * r2;
+        return f * dist * p;
     }
-    Eigen::Vector3d axis = angle_axis / theta;
-    Eigen::Matrix3d K;
-    K << 0, -axis.z(), axis.y(),
-         axis.z(), 0, -axis.x(),
-        -axis.y(), axis.x(), 0;
-    return Eigen::Matrix3d::Identity() + sin(theta) * K + (1 - cos(theta)) * K * K;
-}
+    Eigen::Vector3d center() const { return -(q.conjugate() * t); }
+};
+
+// 9-DoF camera vertex with proper SO(3) (quaternion) update.
+class VertexCamera : public g2o::BaseVertex<9, CameraParam> {
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    void setToOriginImpl() override { _estimate = CameraParam(); }
+    void oplusImpl(const double* u) override {
+        Eigen::Vector3d w(u[0], u[1], u[2]);
+        double th = w.norm();
+        Eigen::Quaterniond dq =
+            (th < 1e-12) ? Eigen::Quaterniond(1.0, 0.5 * w[0], 0.5 * w[1], 0.5 * w[2])
+                         : Eigen::Quaterniond(Eigen::AngleAxisd(th, w / th));
+        _estimate.q = (dq * _estimate.q).normalized();
+        _estimate.t += Eigen::Vector3d(u[3], u[4], u[5]);
+        _estimate.f += u[6];
+        _estimate.k1 += u[7];
+        _estimate.k2 += u[8];
+    }
+    bool read(istream&) override { return false; }
+    bool write(ostream&) const override { return false; }
+};
+
+class VertexPoint : public g2o::BaseVertex<3, Eigen::Vector3d> {
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    void setToOriginImpl() override { _estimate.setZero(); }
+    void oplusImpl(const double* u) override {
+        _estimate += Eigen::Vector3d(u[0], u[1], u[2]);
+    }
+    bool read(istream&) override { return false; }
+    bool write(ostream&) const override { return false; }
+};
+
+class EdgeReprojection
+    : public g2o::BaseBinaryEdge<2, Eigen::Vector2d, VertexCamera, VertexPoint> {
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    void computeError() override {
+        const auto* cam = static_cast<const VertexCamera*>(_vertices[0]);
+        const auto* pt = static_cast<const VertexPoint*>(_vertices[1]);
+        _error = cam->estimate().project(pt->estimate()) - _measurement;
+    }
+    bool read(istream&) override { return false; }
+    bool write(ostream&) const override { return false; }
+};
+
+// Records the landmark cloud + camera centres after every optimizer iteration.
+struct StructureRecorder : public g2o::HyperGraphAction {
+    StructureRecorder(const std::vector<VertexCamera*>& cams,
+                      const std::vector<VertexPoint*>& pts)
+        : cams_(cams), pts_(pts) {}
+
+    void capture() {
+        std::vector<Eigen::Vector3d> p(pts_.size()), c(cams_.size());
+        for (size_t i = 0; i < pts_.size(); ++i) p[i] = pts_[i]->estimate();
+        for (size_t i = 0; i < cams_.size(); ++i) c[i] = cams_[i]->estimate().center();
+        point_frames.push_back(std::move(p));
+        camera_frames.push_back(std::move(c));
+    }
+
+    g2o::HyperGraphAction* operator()(const g2o::HyperGraph*, Parameters*) override {
+        capture();
+        return this;
+    }
+
+    const std::vector<VertexCamera*>& cams_;
+    const std::vector<VertexPoint*>& pts_;
+    std::vector<std::vector<Eigen::Vector3d>> point_frames, camera_frames;
+};
 
 int main(int argc, char** argv) {
-    cout << "=== g2o Tutorial: Bundle Adjustment with BAL Dataset ===\n" << endl;
+    cout << "=== g2o Tutorial: Bundle Adjustment (BAL) ===\n" << endl;
 
-    // Check for input file
-    string bal_file = "problem-49-7776-pre.txt";  // Default BAL problem
-    if (argc > 1) {
-        bal_file = argv[1];
-    }
-
-    cout << "Reading BAL file: " << bal_file << endl;
-
+    string bal_file = (argc > 1) ? argv[1] : "problem-21-11315-pre.txt";
     ifstream fin(bal_file);
     if (!fin) {
-        cerr << "Error: Cannot open file " << bal_file << endl;
-        cerr << "\nDownload a BAL dataset from:" << endl;
-        cerr << "https://grail.cs.washington.edu/projects/bal/" << endl;
-        cerr << "\nExample datasets:" << endl;
-        cerr << "  problem-49-7776-pre.txt  (49 cameras, 7776 points)" << endl;
-        cerr << "  problem-21-11315-pre.txt (21 cameras, 11315 points)" << endl;
+        cerr << "Error: cannot open " << bal_file << "\n"
+             << "Download a BAL dataset from "
+                "https://grail.cs.washington.edu/projects/bal/\n";
         return 1;
     }
 
-    // =========================================================================
-    // Step 1: Read BAL dataset
-    // =========================================================================
-    cout << "\nStep 1: Reading BAL dataset..." << endl;
+    int num_cameras, num_points, num_obs;
+    fin >> num_cameras >> num_points >> num_obs;
+    cout << "Cameras: " << num_cameras << "  Points: " << num_points
+         << "  Observations: " << num_obs << endl;
 
-    int num_cameras, num_points, num_observations;
-    fin >> num_cameras >> num_points >> num_observations;
+    vector<int> cam_idx(num_obs), pt_idx(num_obs);
+    vector<Eigen::Vector2d> obs(num_obs);
+    for (int i = 0; i < num_obs; ++i)
+        fin >> cam_idx[i] >> pt_idx[i] >> obs[i].x() >> obs[i].y();
 
-    cout << "  Cameras: " << num_cameras << endl;
-    cout << "  Points: " << num_points << endl;
-    cout << "  Observations: " << num_observations << endl;
-
-    // Read observations
-    struct Observation {
-        int camera_idx;
-        int point_idx;
-        double x, y;
-    };
-    vector<Observation> observations(num_observations);
-
-    for (int i = 0; i < num_observations; ++i) {
-        fin >> observations[i].camera_idx >> observations[i].point_idx
-            >> observations[i].x >> observations[i].y;
-    }
-
-    // Read camera parameters
-    // BAL format: rotation(3), translation(3), focal, k1, k2
-    struct Camera {
-        Eigen::Vector3d rotation;  // angle-axis
-        Eigen::Vector3d translation;
-        double focal;
-        double k1, k2;  // distortion
-    };
-    vector<Camera> cameras(num_cameras);
-
+    vector<CameraParam> cams(num_cameras);
+    vector<Eigen::Vector3d> pts(num_points);
     for (int i = 0; i < num_cameras; ++i) {
-        fin >> cameras[i].rotation.x() >> cameras[i].rotation.y() >> cameras[i].rotation.z();
-        fin >> cameras[i].translation.x() >> cameras[i].translation.y() >> cameras[i].translation.z();
-        fin >> cameras[i].focal >> cameras[i].k1 >> cameras[i].k2;
+        Eigen::Vector3d aa, t;
+        double f, k1, k2;
+        fin >> aa.x() >> aa.y() >> aa.z() >> t.x() >> t.y() >> t.z() >> f >> k1 >> k2;
+        double th = aa.norm();
+        cams[i].q = (th < 1e-12) ? Eigen::Quaterniond::Identity()
+                                 : Eigen::Quaterniond(Eigen::AngleAxisd(th, aa / th));
+        cams[i].t = t;
+        cams[i].f = f;
+        cams[i].k1 = k1;
+        cams[i].k2 = k2;
     }
-
-    // Read 3D points
-    vector<Eigen::Vector3d> points(num_points);
-    for (int i = 0; i < num_points; ++i) {
-        fin >> points[i].x() >> points[i].y() >> points[i].z();
-    }
+    for (int i = 0; i < num_points; ++i)
+        fin >> pts[i].x() >> pts[i].y() >> pts[i].z();
     fin.close();
 
-    // =========================================================================
-    // Step 2: Set up g2o optimizer
-    // =========================================================================
-    cout << "\nStep 2: Setting up optimizer..." << endl;
-
-    SparseOptimizer optimizer;
+    // Solver: 9-DoF cameras, 3-DoF points, sparse Schur (Eigen), Levenberg.
+    using BlockSolverType = g2o::BlockSolver<g2o::BlockSolverTraits<9, 3>>;
+    using LinearSolverType = g2o::LinearSolverEigen<BlockSolverType::PoseMatrixType>;
+    auto solver = new g2o::OptimizationAlgorithmLevenberg(
+        std::make_unique<BlockSolverType>(std::make_unique<LinearSolverType>()));
+    g2o::SparseOptimizer optimizer;
+    optimizer.setAlgorithm(solver);
     optimizer.setVerbose(true);
 
-    // BlockSolver_6_3: 6-DOF camera poses, 3-DOF points
-    using BlockSolverType = BlockSolver<BlockSolverTraits<6, 3>>;
-    using LinearSolverType = LinearSolverEigen<BlockSolverType::PoseMatrixType>;
-
-    auto solver = new OptimizationAlgorithmLevenberg(
-        std::make_unique<BlockSolverType>(std::make_unique<LinearSolverType>())
-    );
-    optimizer.setAlgorithm(solver);
-
-    // =========================================================================
-    // Step 3: Add camera vertices
-    // =========================================================================
-    cout << "\nStep 3: Adding camera vertices..." << endl;
-
+    vector<VertexCamera*> vcams(num_cameras);
     for (int i = 0; i < num_cameras; ++i) {
-        // Convert BAL camera to g2o SE3
-        Eigen::Matrix3d R = AngleAxisToRotationMatrix(cameras[i].rotation);
-        Eigen::Vector3d t = cameras[i].translation;
-
-        // g2o uses inverse camera pose (world to camera)
-        SE3Quat pose(R, t);
-
-        VertexSE3Expmap* v = new VertexSE3Expmap();
-        v->setId(i);
-        v->setEstimate(pose);
-
-        // Fix first camera to remove gauge freedom
-        if (i == 0) {
-            v->setFixed(true);
-        }
-
-        optimizer.addVertex(v);
+        vcams[i] = new VertexCamera();
+        vcams[i]->setId(i);
+        vcams[i]->setEstimate(cams[i]);
+        optimizer.addVertex(vcams[i]);
     }
-    cout << "  Added " << num_cameras << " camera vertices" << endl;
-
-    // =========================================================================
-    // Step 4: Add point vertices
-    // =========================================================================
-    cout << "\nStep 4: Adding point vertices..." << endl;
-
+    vector<VertexPoint*> vpts(num_points);
     for (int i = 0; i < num_points; ++i) {
-        VertexPointXYZ* v = new VertexPointXYZ();
-        v->setId(num_cameras + i);
-        v->setEstimate(points[i]);
-        v->setMarginalized(true);  // Schur complement
-
-        optimizer.addVertex(v);
+        vpts[i] = new VertexPoint();
+        vpts[i]->setId(num_cameras + i);
+        vpts[i]->setEstimate(pts[i]);
+        vpts[i]->setMarginalized(true);  // Schur complement
+        optimizer.addVertex(vpts[i]);
     }
-    cout << "  Added " << num_points << " point vertices" << endl;
-
-    // =========================================================================
-    // Step 5: Add observation edges
-    // =========================================================================
-    cout << "\nStep 5: Adding observation edges..." << endl;
-
-    for (int i = 0; i < num_observations; ++i) {
-        EdgeProjectXYZ2UV* edge = new EdgeProjectXYZ2UV();
-
-        edge->setVertex(0, optimizer.vertex(num_cameras + observations[i].point_idx));
-        edge->setVertex(1, optimizer.vertex(observations[i].camera_idx));
-
-        Eigen::Vector2d measurement(observations[i].x, observations[i].y);
-        edge->setMeasurement(measurement);
-
-        // Information matrix (assume unit variance)
-        edge->setInformation(Eigen::Matrix2d::Identity());
-
-        // Robust kernel for outlier rejection
-        edge->setRobustKernel(new RobustKernelHuber());
-
-        // Camera intrinsics (simplified: only focal length)
-        double focal = cameras[observations[i].camera_idx].focal;
-        CameraParameters* cam_params = new CameraParameters(focal, Eigen::Vector2d(0, 0), 0);
-        cam_params->setId(0);
-
-        if (!optimizer.parameter(0)) {
-            optimizer.addParameter(cam_params);
-        }
-        edge->setParameterId(0, 0);
-
-        optimizer.addEdge(edge);
+    for (int i = 0; i < num_obs; ++i) {
+        auto* e = new EdgeReprojection();
+        e->setVertex(0, vcams[cam_idx[i]]);
+        e->setVertex(1, vpts[pt_idx[i]]);
+        e->setMeasurement(obs[i]);
+        e->setInformation(Eigen::Matrix2d::Identity());
+        e->setRobustKernel(new g2o::RobustKernelHuber());
+        optimizer.addEdge(e);
     }
-    cout << "  Added " << num_observations << " observation edges" << endl;
-
-    // =========================================================================
-    // Step 6: Optimize
-    // =========================================================================
-    cout << "\nStep 6: Optimizing..." << endl;
 
     optimizer.initializeOptimization();
-
-    // Compute initial error
     optimizer.computeActiveErrors();
-    double initial_chi2 = optimizer.chi2();
-    cout << "  Initial chi2: " << initial_chi2 << endl;
+    double chi0 = optimizer.chi2();
+    cout << "Initial chi2: " << chi0 << endl;
 
-    // Run optimization
-    int iterations = optimizer.optimize(50);
-    cout << "  Optimization finished in " << iterations << " iterations" << endl;
+    // Record structure after every iteration; capture iteration 0 (initial) now.
+    StructureRecorder recorder(vcams, vpts);
+    recorder.capture();
+    optimizer.addPostIterationAction(&recorder);
 
-    // Compute final error
+    optimizer.optimize(30);
     optimizer.computeActiveErrors();
-    double final_chi2 = optimizer.chi2();
-    cout << "  Final chi2: " << final_chi2 << endl;
-    cout << "  Improvement: " << (1.0 - final_chi2 / initial_chi2) * 100 << "%" << endl;
+    double chi1 = optimizer.chi2();
+    cout << "Final chi2:   " << chi1 << "  (" << (1.0 - chi1 / chi0) * 100 << "% lower)" << endl;
+    cout << "RMSE: " << sqrt(chi1 / num_obs) << " px" << endl;
 
-    // =========================================================================
-    // Step 7: Output results
-    // =========================================================================
-    cout << "\n=== Results Summary ===" << endl;
-    cout << "Problem size:" << endl;
-    cout << "  Cameras: " << num_cameras << endl;
-    cout << "  Points: " << num_points << endl;
-    cout << "  Observations: " << num_observations << endl;
-    cout << "Optimization:" << endl;
-    cout << "  Iterations: " << iterations << endl;
-    cout << "  Initial error: " << initial_chi2 << endl;
-    cout << "  Final error: " << final_chi2 << endl;
-    cout << "  RMSE: " << sqrt(final_chi2 / num_observations) << " pixels" << endl;
+    const auto& pf = recorder.point_frames;
+    const auto& cf = recorder.camera_frames;
+    const int K = static_cast<int>(pf.size());
 
-    cout << "\n=== Complete ===" << endl;
+    ofstream out("bundle_adjustment.txt");
+    out << "points " << num_points << "\n";
+    out << "cameras " << num_cameras << "\n";
+    out << "steps " << K << "\n";
+    for (int k = 0; k < K; ++k) {
+        out << "step " << k << "\n";
+        for (int i = 0; i < num_points; ++i)
+            out << pf[k][i].x() << " " << pf[k][i].y() << " " << pf[k][i].z() << "\n";
+        for (int i = 0; i < num_cameras; ++i)
+            out << cf[k][i].x() << " " << cf[k][i].y() << " " << cf[k][i].z() << "\n";
+    }
+    out.close();
+    cout << "\nWrote bundle_adjustment.txt (" << K << " iterations) -> visualize with "
+            "viz/show_bundle_adjustment.py" << endl;
 
     return 0;
 }

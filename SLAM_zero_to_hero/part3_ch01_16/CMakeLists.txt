@@ -1,34 +1,14 @@
+# SymForce examples in this chapter are pure Python — there is nothing to
+# compile. SymForce *can* generate C++ from the symbolic residuals
+# (Codegen.function(...).generate_function()); this CMakeLists is kept only so
+# the chapter layout matches the other part3 tutorials.
 cmake_minimum_required(VERSION 3.10)
-project(symforce_tutorial LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Build type
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
-endif()
-
-# Find SymForce
-find_package(symforce QUIET)
-
-if(symforce_FOUND)
-    message(STATUS "SymForce found")
-
-    # Example using generated code
-    add_executable(symforce_example examples/symforce_example.cpp)
-    target_link_libraries(symforce_example symforce::symforce_opt)
-else()
-    message(STATUS "SymForce not found - Python examples only")
-    message(STATUS "Install SymForce: pip install symforce")
-endif()
+project(symforce_tutorial NONE)
 
 message(STATUS "")
-message(STATUS "=== SymForce Tutorial ===")
-message(STATUS "")
-message(STATUS "Python examples:")
-message(STATUS "  python3 examples/symforce_basics.py")
-message(STATUS "")
-message(STATUS "Install SymForce:")
-message(STATUS "  pip install symforce")
+message(STATUS "=== SymForce Tutorial (Python only) ===")
+message(STATUS "Run from the examples/ directory:")
+message(STATUS "  python3 examples/symforce_curve_fitting.py")
+message(STATUS "  python3 examples/symforce_pose_graph.py")
+message(STATUS "  python3 examples/symforce_bundle_adjustment.py problem-21-11315-pre.txt")
 message(STATUS "")

@@ -28,8 +28,9 @@ RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y libspdlog-dev && \
     apt-get clean
 
-# Rerun (3D viewer for robotics)
-RUN pip3 install rerun-sdk --break-system-packages
+# Rerun (3D viewer for robotics). Pinned so the SDK matches the desktop viewer
+# version (live gRPC streaming requires the SDK and viewer to match).
+RUN pip3 install rerun-sdk==0.33.0 --break-system-packages
 
 # OpenCV with contrib modules (for ArUco, xfeatures2d/TEBLID, etc.)
 RUN apt-get install -y cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
