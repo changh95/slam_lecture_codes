@@ -1,19 +1,21 @@
 /**
- * @file triangulation_opengv.cpp
- * @brief Triangulation demonstration using OpenGV
+ * Triangulation via OpenGV
  *
- * This example demonstrates triangulation methods from OpenGV:
- * - triangulate: Linear triangulation
- * - triangulate2: Optimal L2 triangulation (Lee & Civera)
- *
- * OpenGV: https://laurentkneip.github.io/opengv/
+ * Same KITTI stereo pipeline as triangulation_demo, but using bearing vectors
+ * instead of pixel coordinates:
+ *   1. ORB detect + match, fundamental-matrix RANSAC outlier rejection.
+ *   2. Convert each inlier pixel to a unit bearing vector via K^-1.
+ *   3. OpenGV CentralRelativeAdapter holds the known stereo relative pose.
+ *   4. Triangulate with:
+ *        opengv::triangulation::triangulate   (linear, DLT-family)
+ *        opengv::triangulation::triangulate2  (optimal L2, Lee & Civera)
+ *   5. Filter by cheirality + 0.2-100 m depth gate, report reprojection error.
+ *   6. Write triangulation_opengv.json for the Rerun viewer.
  */
 
-#include <iostream>
-#include <iomanip>
-#include <vector>
-#include <random>
-#include <cmath>
+#include <opencv2/opencv.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -21,248 +23,195 @@
 #include <opengv/triangulation/methods.hpp>
 #include <opengv/relative_pose/CentralRelativeAdapter.hpp>
 
-#include <opencv2/opencv.hpp>
-#include <opencv2/calib3d.hpp>
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <vector>
 
-/**
- * @brief Generate synthetic 3D points
- */
-std::vector<Eigen::Vector3d> generatePoints3D(int numPoints) {
-    std::vector<Eigen::Vector3d> points;
-    std::mt19937 rng(42);
-    std::uniform_real_distribution<double> x_dist(-2.0, 2.0);
-    std::uniform_real_distribution<double> y_dist(-2.0, 2.0);
-    std::uniform_real_distribution<double> z_dist(5.0, 15.0);
-
-    for (int i = 0; i < numPoints; i++) {
-        points.emplace_back(x_dist(rng), y_dist(rng), z_dist(rng));
+static std::string resolveDataPath(const std::string& name) {
+    for (const std::string& base : {"../data/", "data/", "./data/"}) {
+        if (std::filesystem::exists(base + name)) return base + name;
     }
-    return points;
+    return "../data/" + name;
 }
 
-/**
- * @brief Project 3D point to bearing vector
- */
-Eigen::Vector3d projectToBearing(const Eigen::Vector3d& point3d,
-                                  const Eigen::Matrix3d& R,
-                                  const Eigen::Vector3d& t) {
-    Eigen::Vector3d p_cam = R * point3d + t;
-    return p_cam.normalized();
-}
+static void detectAndMatchFeatures(
+    const cv::Mat& img1,
+    const cv::Mat& img2,
+    std::vector<cv::Point2f>& pts1,
+    std::vector<cv::Point2f>& pts2) {
 
-/**
- * @brief Add noise to bearing vectors
- */
-void addNoise(opengv::bearingVectors_t& bearings, double sigma_rad) {
-    std::mt19937 rng(123);
-    std::normal_distribution<double> noise(0.0, sigma_rad);
+    auto orb = cv::ORB::create(2000);
+    std::vector<cv::KeyPoint> kp1, kp2;
+    cv::Mat desc1, desc2;
+    orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
+    orb->detectAndCompute(img2, cv::noArray(), kp2, desc2);
+    std::cout << "Keypoints: " << kp1.size() << " in left, " << kp2.size() << " in right\n";
 
-    for (auto& b : bearings) {
-        Eigen::Vector3d perturb(noise(rng), noise(rng), noise(rng));
-        perturb = perturb - b.dot(perturb) * b;
-        b = (b + perturb).normalized();
+    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    std::vector<std::vector<cv::DMatch>> knn_matches;
+    matcher.knnMatch(desc1, desc2, knn_matches, 2);
+
+    const float ratio_thresh = 0.75f;
+    pts1.clear(); pts2.clear();
+    for (const auto& m : knn_matches) {
+        if (m.size() == 2 && m[0].distance < ratio_thresh * m[1].distance) {
+            pts1.push_back(kp1[m[0].queryIdx].pt);
+            pts2.push_back(kp2[m[0].trainIdx].pt);
+        }
     }
+    std::cout << "Good matches after ratio test: " << pts1.size() << "\n";
 }
 
-/**
- * @brief Custom DLT triangulation for comparison
- */
-Eigen::Vector3d triangulateDLT(const Eigen::Matrix<double, 3, 4>& P1,
-                                const Eigen::Matrix<double, 3, 4>& P2,
-                                const Eigen::Vector2d& x1,
-                                const Eigen::Vector2d& x2) {
-    Eigen::Matrix4d A;
-    A.row(0) = x1(0) * P1.row(2) - P1.row(0);
-    A.row(1) = x1(1) * P1.row(2) - P1.row(1);
-    A.row(2) = x2(0) * P2.row(2) - P2.row(0);
-    A.row(3) = x2(1) * P2.row(2) - P2.row(1);
+static double reprojection_error(
+    const Eigen::Matrix<double, 3, 4>& P,
+    const Eigen::Vector3d& X,
+    const Eigen::Vector2d& x_obs) {
 
-    Eigen::JacobiSVD<Eigen::Matrix4d> svd(A, Eigen::ComputeFullV);
-    Eigen::Vector4d X_h = svd.matrixV().col(3);
-    return X_h.head<3>() / X_h(3);
+    Eigen::Vector4d X_h; X_h << X, 1.0;
+    Eigen::Vector3d x_proj = P * X_h;
+    if (std::abs(x_proj(2)) < 1e-12) return std::numeric_limits<double>::infinity();
+    Eigen::Vector2d x_reproj(x_proj(0) / x_proj(2), x_proj(1) / x_proj(2));
+    return (x_reproj - x_obs).norm();
 }
 
-int main() {
-    std::cout << "===========================================\n";
-    std::cout << "Triangulation Demo using OpenGV\n";
-    std::cout << "===========================================\n\n";
+static void write_points(std::ofstream& f, const std::string& key,
+                         const std::vector<Eigen::Vector3d>& pts,
+                         const std::vector<int>& indices) {
+    f << "  \"" << key << "\": [\n";
+    for (size_t i = 0; i < pts.size(); ++i) {
+        f << "    {\"i\": " << indices[i]
+          << ", \"xyz\": [" << pts[i](0) << ", " << pts[i](1) << ", " << pts[i](2) << "]}";
+        f << (i + 1 == pts.size() ? "\n" : ",\n");
+    }
+    f << "  ]";
+}
 
-    // Camera 1: Identity pose (at origin)
-    Eigen::Matrix3d R1 = Eigen::Matrix3d::Identity();
-    Eigen::Vector3d t1 = Eigen::Vector3d::Zero();
+int main(int argc, char* argv[]) {
+    std::cout << "=== Triangulation Demo using OpenGV (KITTI stereo pair) ===\n\n";
 
-    // Camera 2: Translated along X (stereo baseline)
-    double baseline = 0.54;  // KITTI-like baseline
-    Eigen::Matrix3d R2 = Eigen::Matrix3d::Identity();
-    Eigen::Vector3d t2(baseline, 0, 0);
+    std::string left_path  = (argc >= 3) ? argv[1] : resolveDataPath("left.png");
+    std::string right_path = (argc >= 3) ? argv[2] : resolveDataPath("right.png");
 
-    // Camera intrinsics for comparison with OpenCV
+    cv::Mat img1 = cv::imread(left_path,  cv::IMREAD_GRAYSCALE);
+    cv::Mat img2 = cv::imread(right_path, cv::IMREAD_GRAYSCALE);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: failed to load images:\n  " << left_path << "\n  " << right_path << "\n";
+        return 1;
+    }
+    std::cout << "Left:  " << left_path  << "  (" << img1.cols << "x" << img1.rows << ")\n";
+    std::cout << "Right: " << right_path << "  (" << img2.cols << "x" << img2.rows << ")\n\n";
+
+    // KITTI seq 00-02 rectified intrinsics + stereo extrinsic.
+    const double fx = 718.856, fy = 718.856, cx = 607.1928, cy = 185.2157;
     Eigen::Matrix3d K;
-    K << 718.856, 0.0, 607.193,
-         0.0, 718.856, 185.216,
-         0.0, 0.0, 1.0;
+    K << fx, 0,  cx,
+         0,  fy, cy,
+         0,  0,  1;
+    const Eigen::Matrix3d K_inv = K.inverse();
 
-    std::cout << "Stereo camera setup:\n";
-    std::cout << "  Baseline: " << baseline << " m\n";
-    std::cout << "  Focal length: " << K(0, 0) << " px\n\n";
+    const double baseline_m = 386.1448 / fx;  // ~0.5372 m
+    Eigen::Matrix3d R12 = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t12(baseline_m, 0, 0);    // cam1's center in cam0's frame
 
-    // Generate ground truth 3D points
-    const int numPoints = 5;
-    std::vector<Eigen::Vector3d> points3d_gt = {
-        {0.0, 0.0, 10.0},
-        {2.0, 1.0, 15.0},
-        {-1.5, -0.5, 8.0},
-        {3.0, -1.0, 20.0},
-        {0.5, 0.5, 5.0}
+    // ORB matches + RANSAC inliers.
+    std::vector<cv::Point2f> pts1_all, pts2_all;
+    detectAndMatchFeatures(img1, img2, pts1_all, pts2_all);
+    if (pts1_all.size() < 8) { std::cerr << "Not enough matches.\n"; return 1; }
+
+    cv::Mat inlier_mask;
+    cv::findFundamentalMat(pts1_all, pts2_all, cv::FM_RANSAC, 1.5, 0.99, inlier_mask);
+
+    std::vector<cv::Point2f> pts1, pts2;
+    for (size_t i = 0; i < pts1_all.size(); ++i) {
+        if (inlier_mask.at<uchar>(i)) { pts1.push_back(pts1_all[i]); pts2.push_back(pts2_all[i]); }
+    }
+    std::cout << "Fundamental RANSAC inliers: " << pts1.size() << "/" << pts1_all.size() << "\n\n";
+
+    // Pixels -> bearing vectors (unit-length 3D directions in each camera).
+    opengv::bearingVectors_t bearings1, bearings2;
+    bearings1.reserve(pts1.size());
+    bearings2.reserve(pts2.size());
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        Eigen::Vector3d r1 = K_inv * Eigen::Vector3d(pts1[i].x, pts1[i].y, 1.0);
+        Eigen::Vector3d r2 = K_inv * Eigen::Vector3d(pts2[i].x, pts2[i].y, 1.0);
+        bearings1.push_back(r1.normalized());
+        bearings2.push_back(r2.normalized());
+    }
+
+    opengv::relative_pose::CentralRelativeAdapter adapter(bearings1, bearings2, t12, R12);
+
+    // Projection matrices (for reprojection-error reporting).
+    Eigen::Matrix<double, 3, 4> P1, P2;
+    P1.block<3, 3>(0, 0) = K;  P1.col(3).setZero();
+    P2.block<3, 3>(0, 0) = K * R12;  P2.col(3) = K * (-R12 * t12);
+
+    const double Z_MIN = 0.2, Z_MAX = 100.0;
+    auto cheirality_ok = [&](const Eigen::Vector3d& X) {
+        return X(2) > Z_MIN && X(2) < Z_MAX;
     };
 
-    std::cout << "Ground Truth 3D Points:\n";
-    for (size_t i = 0; i < points3d_gt.size(); i++) {
-        std::cout << "  Point " << i << ": [" << points3d_gt[i].transpose() << "]\n";
+    std::vector<Eigen::Vector3d> X_lin, X_opt;
+    std::vector<int> idx_lin, idx_opt;
+    double err_lin = 0, err_opt = 0;
+
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        Eigen::Vector3d Xl = opengv::triangulation::triangulate(adapter, i);   // linear DLT
+        Eigen::Vector3d Xo = opengv::triangulation::triangulate2(adapter, i);  // optimal L2
+
+        if (cheirality_ok(Xl)) {
+            X_lin.push_back(Xl); idx_lin.push_back(int(i));
+            err_lin += 0.5 * (reprojection_error(P1, Xl, {pts1[i].x, pts1[i].y})
+                            + reprojection_error(P2, Xl, {pts2[i].x, pts2[i].y}));
+        }
+        if (cheirality_ok(Xo)) {
+            X_opt.push_back(Xo); idx_opt.push_back(int(i));
+            err_opt += 0.5 * (reprojection_error(P1, Xo, {pts1[i].x, pts1[i].y})
+                            + reprojection_error(P2, Xo, {pts2[i].x, pts2[i].y}));
+        }
     }
+
+    auto report = [](const std::string& name, size_t n, double total_err) {
+        std::cout << "  " << std::left << std::setw(26) << name
+                  << " kept " << std::setw(4) << n
+                  << "  avg reproj err = "
+                  << std::fixed << std::setprecision(3)
+                  << (n ? total_err / n : 0.0) << " px\n";
+    };
+    std::cout << "=== Triangulation results (cheirality + depth gate " << Z_MIN << "-" << Z_MAX << " m) ===\n";
+    report("OpenGV linear           ", X_lin.size(), err_lin);
+    report("OpenGV optimal L2       ", X_opt.size(), err_opt);
     std::cout << "\n";
 
-    // Project to bearing vectors
-    opengv::bearingVectors_t bearings1;
-    opengv::bearingVectors_t bearings2;
+    std::ofstream f("triangulation_opengv.json");
+    f << std::fixed << std::setprecision(6);
+    f << "{\n";
+    f << "  \"left_image\": \"" << left_path << "\",\n";
+    f << "  \"right_image\": \"" << right_path << "\",\n";
+    f << "  \"width\": " << img1.cols << ", \"height\": " << img1.rows << ",\n";
+    f << "  \"fx\": " << fx << ", \"fy\": " << fy << ",\n";
+    f << "  \"cx\": " << cx << ", \"cy\": " << cy << ",\n";
+    f << "  \"baseline\": " << baseline_m << ",\n";
 
-    for (const auto& p3d : points3d_gt) {
-        bearings1.push_back(projectToBearing(p3d, R1, t1));
-        bearings2.push_back(projectToBearing(p3d, R2, t2));
-    }
+    f << "  \"keypoints_left\": [";
+    for (size_t i = 0; i < pts1.size(); ++i)
+        f << "[" << pts1[i].x << ", " << pts1[i].y << "]" << (i + 1 == pts1.size() ? "" : ", ");
+    f << "],\n";
+    f << "  \"keypoints_right\": [";
+    for (size_t i = 0; i < pts2.size(); ++i)
+        f << "[" << pts2[i].x << ", " << pts2[i].y << "]" << (i + 1 == pts2.size() ? "" : ", ");
+    f << "],\n";
 
-    // Add small angular noise
-    const double noise_sigma = 0.001;  // radians
-    addNoise(bearings1, noise_sigma);
-    addNoise(bearings2, noise_sigma);
-    std::cout << "Added angular noise with sigma = " << noise_sigma * 180.0 / M_PI << " deg\n\n";
+    write_points(f, "opengv_linear",  X_lin, idx_lin);  f << ",\n";
+    write_points(f, "opengv_optimal", X_opt, idx_opt);  f << "\n";
+    f << "}\n";
 
-    // Create adapter for OpenGV
-    // Note: OpenGV triangulation expects relative pose between cameras
-    opengv::relative_pose::CentralRelativeAdapter adapter(
-        bearings1, bearings2, t2, R2);
-
-    // =========================================================================
-    // OpenGV Linear Triangulation
-    // =========================================================================
-    std::cout << "--- OpenGV Linear Triangulation ---\n";
-
-    double total_error_linear = 0.0;
-
-    for (size_t i = 0; i < points3d_gt.size(); i++) {
-        // OpenGV triangulate returns point in camera 1 frame
-        opengv::point_t pt_linear = opengv::triangulation::triangulate(adapter, i);
-
-        double error = (pt_linear - points3d_gt[i]).norm();
-        total_error_linear += error;
-
-        std::cout << "  Point " << i << ": ["
-                  << std::fixed << std::setprecision(4)
-                  << std::setw(8) << pt_linear.x() << ", "
-                  << std::setw(8) << pt_linear.y() << ", "
-                  << std::setw(8) << pt_linear.z() << "]"
-                  << "  Error: " << error << " m\n";
-    }
-    std::cout << "  Average error: " << total_error_linear / points3d_gt.size() << " m\n\n";
-
-    // =========================================================================
-    // OpenGV Optimal L2 Triangulation (triangulate2)
-    // =========================================================================
-    std::cout << "--- OpenGV Optimal L2 Triangulation ---\n";
-    std::cout << "(Lee & Civera method - optimal in L2 sense)\n";
-
-    double total_error_optimal = 0.0;
-
-    for (size_t i = 0; i < points3d_gt.size(); i++) {
-        opengv::point_t pt_optimal = opengv::triangulation::triangulate2(adapter, i);
-
-        double error = (pt_optimal - points3d_gt[i]).norm();
-        total_error_optimal += error;
-
-        std::cout << "  Point " << i << ": ["
-                  << std::fixed << std::setprecision(4)
-                  << std::setw(8) << pt_optimal.x() << ", "
-                  << std::setw(8) << pt_optimal.y() << ", "
-                  << std::setw(8) << pt_optimal.z() << "]"
-                  << "  Error: " << error << " m\n";
-    }
-    std::cout << "  Average error: " << total_error_optimal / points3d_gt.size() << " m\n\n";
-
-    // =========================================================================
-    // Compare with OpenCV cv::triangulatePoints
-    // =========================================================================
-    std::cout << "--- OpenCV cv::triangulatePoints (for comparison) ---\n";
-
-    // Build projection matrices
-    Eigen::Matrix<double, 3, 4> P1, P2;
-    P1.block<3, 3>(0, 0) = K * R1;
-    P1.block<3, 1>(0, 3) = K * (-R1 * t1);
-    P2.block<3, 3>(0, 0) = K * R2;
-    P2.block<3, 1>(0, 3) = K * (-R2 * t2);
-
-    // Convert bearings to pixel coordinates for OpenCV
-    std::vector<cv::Point2f> pts1_cv, pts2_cv;
-    for (size_t i = 0; i < bearings1.size(); i++) {
-        Eigen::Vector3d px1 = K * bearings1[i] / bearings1[i].z();
-        Eigen::Vector3d px2 = K * bearings2[i] / bearings2[i].z();
-        pts1_cv.emplace_back(px1.x(), px1.y());
-        pts2_cv.emplace_back(px2.x(), px2.y());
-    }
-
-    cv::Mat P1_cv = (cv::Mat_<float>(3, 4) <<
-        P1(0, 0), P1(0, 1), P1(0, 2), P1(0, 3),
-        P1(1, 0), P1(1, 1), P1(1, 2), P1(1, 3),
-        P1(2, 0), P1(2, 1), P1(2, 2), P1(2, 3));
-
-    cv::Mat P2_cv = (cv::Mat_<float>(3, 4) <<
-        P2(0, 0), P2(0, 1), P2(0, 2), P2(0, 3),
-        P2(1, 0), P2(1, 1), P2(1, 2), P2(1, 3),
-        P2(2, 0), P2(2, 1), P2(2, 2), P2(2, 3));
-
-    cv::Mat pts4d;
-    cv::triangulatePoints(P1_cv, P2_cv, pts1_cv, pts2_cv, pts4d);
-
-    double total_error_opencv = 0.0;
-
-    for (int i = 0; i < pts4d.cols; i++) {
-        cv::Mat x = pts4d.col(i);
-        float w = x.at<float>(3, 0);
-        Eigen::Vector3d pt_opencv(
-            x.at<float>(0, 0) / w,
-            x.at<float>(1, 0) / w,
-            x.at<float>(2, 0) / w);
-
-        double error = (pt_opencv - points3d_gt[i]).norm();
-        total_error_opencv += error;
-
-        std::cout << "  Point " << i << ": ["
-                  << std::fixed << std::setprecision(4)
-                  << std::setw(8) << pt_opencv.x() << ", "
-                  << std::setw(8) << pt_opencv.y() << ", "
-                  << std::setw(8) << pt_opencv.z() << "]"
-                  << "  Error: " << error << " m\n";
-    }
-    std::cout << "  Average error: " << total_error_opencv / points3d_gt.size() << " m\n\n";
-
-    // =========================================================================
-    // Summary
-    // =========================================================================
-    std::cout << "===========================================\n";
-    std::cout << "Summary (Average Triangulation Error)\n";
-    std::cout << "===========================================\n";
-    std::cout << "  OpenGV Linear:   " << std::fixed << std::setprecision(6)
-              << total_error_linear / points3d_gt.size() << " m\n";
-    std::cout << "  OpenGV Optimal:  " << total_error_optimal / points3d_gt.size() << " m\n";
-    std::cout << "  OpenCV DLT:      " << total_error_opencv / points3d_gt.size() << " m\n";
-    std::cout << "\n";
-
-    std::cout << "===========================================\n";
-    std::cout << "Notes:\n";
-    std::cout << "- OpenGV uses bearing vectors (normalized rays)\n";
-    std::cout << "- triangulate: Fast linear method\n";
-    std::cout << "- triangulate2: Optimal L2 triangulation\n";
-    std::cout << "- OpenCV uses pixel coordinates + projection matrices\n";
-    std::cout << "===========================================\n";
-
+    std::cout << "Wrote triangulation_opengv.json\n";
+    std::cout << "Visualize with:  python3 ../viz_triangulation.py triangulation_opengv.json\n";
     return 0;
 }
