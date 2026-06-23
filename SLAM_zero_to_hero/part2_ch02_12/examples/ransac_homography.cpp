@@ -1,13 +1,21 @@
 /**
  * RANSAC Homography Estimation
  *
- * This example demonstrates homography estimation using different
- * RANSAC variants in OpenCV for visual SLAM applications.
+ * Run all seven RANSAC / USAC variants on real ORB correspondences from a
+ * KITTI consecutive frame pair (forward motion). The dominant ground plane
+ * and distant facades fit a homography reasonably while the rest of the
+ * scene has parallax outliers -- exactly the regime that exercises RANSAC.
  *
- * Homography relates corresponding points between two images when:
- * - The scene is planar
- * - The camera undergoes pure rotation
- * - The scene is far away (depth variation << distance)
+ * Pipeline:
+ *   1. Load left/right images (data/000024.png, data/000025.png by default).
+ *   2. ORB detect + BF-Hamming + Lowe ratio test (0.75) gives raw matches.
+ *   3. Run RANSAC, LMEDS, four USAC flags, and a Custom UsacParams config.
+ *   4. Per method, report mean inlier reprojection error, inlier count, time.
+ *
+ * No synthetic ground-truth H here: real images don't admit a single GT
+ * homography. The error column is the *mean inlier reprojection error*
+ * |H * x1 - x2| in pixels, which is the metric a robust estimator actually
+ * minimizes.
  */
 
 #include <opencv2/calib3d.hpp>
@@ -17,13 +25,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
-#include <numeric>
-#include <random>
+#include <string>
 #include <vector>
 
-// Timing helper
 class Timer {
 public:
     void start() { start_ = std::chrono::high_resolution_clock::now(); }
@@ -36,198 +43,137 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start_;
 };
 
-// Generate synthetic point correspondences with outliers
-void generateSyntheticData(std::vector<cv::Point2f>& pts1,
-                            std::vector<cv::Point2f>& pts2,
-                            cv::Mat& gtHomography,
-                            int numPoints = 100,
-                            double outlierRatio = 0.3,
-                            double noise = 1.0) {
-    // Ground truth homography (rotation + translation + perspective)
-    gtHomography = (cv::Mat_<double>(3, 3) << 0.9, -0.1, 50,
-                                               0.1, 0.95, 30,
-                                               0.0001, 0.0002, 1.0);
-
-    pts1.clear();
-    pts2.clear();
-
-    std::srand(42);
-
-    int numInliers = static_cast<int>(numPoints * (1.0 - outlierRatio));
-    int numOutliers = numPoints - numInliers;
-
-    // Generate inliers
-    for (int i = 0; i < numInliers; ++i) {
-        float x = static_cast<float>(rand() % 600 + 50);
-        float y = static_cast<float>(rand() % 400 + 50);
-        pts1.emplace_back(x, y);
-
-        // Transform point using homography
-        cv::Mat pt1 = (cv::Mat_<double>(3, 1) << x, y, 1.0);
-        cv::Mat pt2 = gtHomography * pt1;
-        float x2 = static_cast<float>(pt2.at<double>(0) / pt2.at<double>(2));
-        float y2 = static_cast<float>(pt2.at<double>(1) / pt2.at<double>(2));
-
-        // Add Gaussian noise
-        x2 += static_cast<float>((rand() % 100 - 50) / 50.0 * noise);
-        y2 += static_cast<float>((rand() % 100 - 50) / 50.0 * noise);
-        pts2.emplace_back(x2, y2);
+static std::string resolveDataPath(const std::string& name) {
+    for (const std::string& base : {"../data/", "data/", "./data/"}) {
+        if (std::filesystem::exists(base + name)) return base + name;
     }
-
-    // Generate outliers (random correspondences)
-    for (int i = 0; i < numOutliers; ++i) {
-        pts1.emplace_back(rand() % 600 + 50, rand() % 400 + 50);
-        pts2.emplace_back(rand() % 600 + 50, rand() % 400 + 50);
-    }
-
-    // Shuffle points
-    std::vector<size_t> indices(pts1.size());
-    std::iota(indices.begin(), indices.end(), 0);
-    std::mt19937 rng(42);
-    std::shuffle(indices.begin(), indices.end(), rng);
-
-    std::vector<cv::Point2f> shuffled1, shuffled2;
-    for (size_t idx : indices) {
-        shuffled1.push_back(pts1[idx]);
-        shuffled2.push_back(pts2[idx]);
-    }
-    pts1 = shuffled1;
-    pts2 = shuffled2;
+    return "../data/" + name;
 }
 
-// Compute homography error
-double computeHomographyError(const cv::Mat& H1, const cv::Mat& H2) {
-    // Normalize both matrices
-    cv::Mat H1_norm = H1 / H1.at<double>(2, 2);
-    cv::Mat H2_norm = H2 / H2.at<double>(2, 2);
-    return cv::norm(H1_norm - H2_norm, cv::NORM_L2);
-}
+static void detectAndMatch(const cv::Mat& img1, const cv::Mat& img2,
+                           std::vector<cv::Point2f>& pts1,
+                           std::vector<cv::Point2f>& pts2) {
+    auto orb = cv::ORB::create(3000);
+    std::vector<cv::KeyPoint> kp1, kp2;
+    cv::Mat des1, des2;
+    orb->detectAndCompute(img1, cv::noArray(), kp1, des1);
+    orb->detectAndCompute(img2, cv::noArray(), kp2, des2);
+    std::cout << "ORB keypoints: " << kp1.size() << " in img1, " << kp2.size() << " in img2\n";
 
-// Count inliers based on reprojection error
-int countInliers(const std::vector<cv::Point2f>& pts1,
-                 const std::vector<cv::Point2f>& pts2,
-                 const cv::Mat& H,
-                 double threshold) {
-    int count = 0;
-    for (size_t i = 0; i < pts1.size(); ++i) {
-        cv::Mat pt1 = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
-        cv::Mat pt2_proj = H * pt1;
-        float x2 = static_cast<float>(pt2_proj.at<double>(0) / pt2_proj.at<double>(2));
-        float y2 = static_cast<float>(pt2_proj.at<double>(1) / pt2_proj.at<double>(2));
+    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    std::vector<std::vector<cv::DMatch>> knn;
+    matcher.knnMatch(des1, des2, knn, 2);
 
-        double error = std::sqrt(std::pow(x2 - pts2[i].x, 2) + std::pow(y2 - pts2[i].y, 2));
-        if (error < threshold) {
-            ++count;
+    pts1.clear(); pts2.clear();
+    for (const auto& m : knn) {
+        if (m.size() == 2 && m[0].distance < 0.75f * m[1].distance) {
+            pts1.push_back(kp1[m[0].queryIdx].pt);
+            pts2.push_back(kp2[m[0].trainIdx].pt);
         }
     }
-    return count;
+    std::cout << "Ratio-test matches: " << pts1.size() << "\n";
 }
 
-int main() {
-    std::cout << "=== RANSAC Homography Estimation ===" << std::endl;
+// Mean reprojection error |H * x1 - x2| over inliers selected by mask.
+static double meanInlierReproj(const std::vector<cv::Point2f>& pts1,
+                               const std::vector<cv::Point2f>& pts2,
+                               const cv::Mat& H, const cv::Mat& mask) {
+    if (H.empty() || pts1.empty()) return -1.0;
+    double total = 0.0;
+    int n = 0;
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        if (!mask.empty() && !mask.at<uchar>(i)) continue;
+        cv::Mat x1 = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
+        cv::Mat x2p = H * x1;
+        double w = x2p.at<double>(2);
+        if (std::abs(w) < 1e-12) continue;
+        double u = x2p.at<double>(0) / w;
+        double v = x2p.at<double>(1) / w;
+        double dx = u - pts2[i].x;
+        double dy = v - pts2[i].y;
+        total += std::sqrt(dx * dx + dy * dy);
+        ++n;
+    }
+    return n ? total / n : -1.0;
+}
+
+struct MethodResult {
+    std::string name;
+    cv::Mat H;
+    cv::Mat mask;
+    double err;
+    int inliers;
+    double time_ms;
+};
+
+int main(int argc, char* argv[]) {
+    std::cout << "=== RANSAC Homography Estimation (KITTI consecutive frames) ===\n";
     std::cout << std::fixed << std::setprecision(4);
 
-    // Generate synthetic data
+    std::string left_path  = (argc >= 3) ? argv[1] : resolveDataPath("000024.png");
+    std::string right_path = (argc >= 3) ? argv[2] : resolveDataPath("000025.png");
+
+    cv::Mat img1 = cv::imread(left_path, cv::IMREAD_GRAYSCALE);
+    cv::Mat img2 = cv::imread(right_path, cv::IMREAD_GRAYSCALE);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: failed to load images:\n  " << left_path << "\n  " << right_path
+                  << "\nRun from build/ so ../data resolves, or pass two image paths.\n";
+        return 1;
+    }
+    std::cout << "Image 1: " << left_path  << "  (" << img1.cols << "x" << img1.rows << ")\n";
+    std::cout << "Image 2: " << right_path << "  (" << img2.cols << "x" << img2.rows << ")\n\n";
+
     std::vector<cv::Point2f> pts1, pts2;
-    cv::Mat gtH;
-    const int numPoints = 200;
-    const double outlierRatio = 0.4;  // 40% outliers
+    detectAndMatch(img1, img2, pts1, pts2);
+    if (pts1.size() < 4) {
+        std::cerr << "Not enough matches for homography.\n";
+        return 1;
+    }
+
     const double threshold = 3.0;
-
-    generateSyntheticData(pts1, pts2, gtH, numPoints, outlierRatio);
-
-    std::cout << "\nData: " << numPoints << " points, "
-              << static_cast<int>(outlierRatio * 100) << "% outliers\n";
-    std::cout << "Ground truth homography:\n" << gtH << "\n\n";
-
     Timer timer;
 
-    // ========== Method 1: Standard RANSAC ==========
-    std::cout << "--- Method 1: Standard RANSAC ---" << std::endl;
-    timer.start();
-    cv::Mat mask1;
-    cv::Mat H1 = cv::findHomography(pts1, pts2, cv::RANSAC, threshold, mask1, 2000, 0.99);
-    double time1 = timer.elapsedMs();
+    auto run = [&](const std::string& name, auto fn) -> MethodResult {
+        MethodResult r{name, {}, {}, -1.0, 0, 0.0};
+        timer.start();
+        r.H = fn(r.mask);
+        r.time_ms = timer.elapsedMs();
+        if (!r.H.empty()) {
+            r.inliers = cv::countNonZero(r.mask);
+            r.err = meanInlierReproj(pts1, pts2, r.H, r.mask);
+        }
+        std::cout << "\n--- " << name << " ---\n";
+        if (r.H.empty()) {
+            std::cout << "  (no solution)  Time: " << r.time_ms << " ms\n";
+        } else {
+            std::cout << "  Mean inlier reproj err: " << r.err
+                      << " px, Inliers: " << r.inliers << "/" << pts1.size()
+                      << ", Time: " << r.time_ms << " ms\n";
+        }
+        return r;
+    };
 
-    if (!H1.empty()) {
-        double error1 = computeHomographyError(gtH, H1);
-        int inliers1 = cv::countNonZero(mask1);
-        std::cout << "  Error: " << error1 << ", Inliers: " << inliers1
-                  << ", Time: " << time1 << " ms" << std::endl;
-    }
+    std::vector<MethodResult> results;
 
-    // ========== Method 2: LMEDS (Least Median of Squares) ==========
-    std::cout << "\n--- Method 2: LMEDS ---" << std::endl;
-    timer.start();
-    cv::Mat mask2;
-    cv::Mat H2 = cv::findHomography(pts1, pts2, cv::LMEDS, threshold, mask2);
-    double time2 = timer.elapsedMs();
+    results.push_back(run("RANSAC", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::RANSAC, threshold, m, 2000, 0.99);
+    }));
+    results.push_back(run("LMEDS", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::LMEDS, threshold, m);
+    }));
+    results.push_back(run("USAC_DEFAULT", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::USAC_DEFAULT, threshold, m);
+    }));
+    results.push_back(run("USAC_MAGSAC", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::USAC_MAGSAC, threshold, m);
+    }));
+    results.push_back(run("USAC_PROSAC", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::USAC_PROSAC, threshold, m);
+    }));
+    results.push_back(run("USAC_ACCURATE", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::USAC_ACCURATE, threshold, m);
+    }));
 
-    if (!H2.empty()) {
-        double error2 = computeHomographyError(gtH, H2);
-        int inliers2 = cv::countNonZero(mask2);
-        std::cout << "  Error: " << error2 << ", Inliers: " << inliers2
-                  << ", Time: " << time2 << " ms" << std::endl;
-    }
-
-    // ========== Method 3: USAC_DEFAULT ==========
-    std::cout << "\n--- Method 3: USAC_DEFAULT ---" << std::endl;
-    timer.start();
-    cv::Mat mask3;
-    cv::Mat H3 = cv::findHomography(pts1, pts2, cv::USAC_DEFAULT, threshold, mask3);
-    double time3 = timer.elapsedMs();
-
-    if (!H3.empty()) {
-        double error3 = computeHomographyError(gtH, H3);
-        int inliers3 = cv::countNonZero(mask3);
-        std::cout << "  Error: " << error3 << ", Inliers: " << inliers3
-                  << ", Time: " << time3 << " ms" << std::endl;
-    }
-
-    // ========== Method 4: USAC_MAGSAC ==========
-    std::cout << "\n--- Method 4: USAC_MAGSAC ---" << std::endl;
-    timer.start();
-    cv::Mat mask4;
-    cv::Mat H4 = cv::findHomography(pts1, pts2, cv::USAC_MAGSAC, threshold, mask4);
-    double time4 = timer.elapsedMs();
-
-    if (!H4.empty()) {
-        double error4 = computeHomographyError(gtH, H4);
-        int inliers4 = cv::countNonZero(mask4);
-        std::cout << "  Error: " << error4 << ", Inliers: " << inliers4
-                  << ", Time: " << time4 << " ms" << std::endl;
-    }
-
-    // ========== Method 5: USAC_PROSAC ==========
-    std::cout << "\n--- Method 5: USAC_PROSAC ---" << std::endl;
-    timer.start();
-    cv::Mat mask5;
-    cv::Mat H5 = cv::findHomography(pts1, pts2, cv::USAC_PROSAC, threshold, mask5);
-    double time5 = timer.elapsedMs();
-
-    if (!H5.empty()) {
-        double error5 = computeHomographyError(gtH, H5);
-        int inliers5 = cv::countNonZero(mask5);
-        std::cout << "  Error: " << error5 << ", Inliers: " << inliers5
-                  << ", Time: " << time5 << " ms" << std::endl;
-    }
-
-    // ========== Method 6: USAC_ACCURATE ==========
-    std::cout << "\n--- Method 6: USAC_ACCURATE ---" << std::endl;
-    timer.start();
-    cv::Mat mask6;
-    cv::Mat H6 = cv::findHomography(pts1, pts2, cv::USAC_ACCURATE, threshold, mask6);
-    double time6 = timer.elapsedMs();
-
-    if (!H6.empty()) {
-        double error6 = computeHomographyError(gtH, H6);
-        int inliers6 = cv::countNonZero(mask6);
-        std::cout << "  Error: " << error6 << ", Inliers: " << inliers6
-                  << ", Time: " << time6 << " ms" << std::endl;
-    }
-
-    // ========== Method 7: Custom UsacParams ==========
-    std::cout << "\n--- Method 7: Custom UsacParams ---" << std::endl;
     cv::UsacParams usacParams;
     usacParams.sampler = cv::SAMPLING_PROSAC;
     usacParams.score = cv::SCORE_METHOD_MAGSAC;
@@ -239,37 +185,21 @@ int main() {
     usacParams.confidence = 0.999;
     usacParams.maxIterations = 5000;
     usacParams.isParallel = true;
+    results.push_back(run("Custom UsacParams", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, m, usacParams);
+    }));
 
-    timer.start();
-    cv::Mat mask7;
-    cv::Mat H7 = cv::findHomography(pts1, pts2, mask7, usacParams);
-    double time7 = timer.elapsedMs();
-
-    if (!H7.empty()) {
-        double error7 = computeHomographyError(gtH, H7);
-        int inliers7 = cv::countNonZero(mask7);
-        std::cout << "  Error: " << error7 << ", Inliers: " << inliers7
-                  << ", Time: " << time7 << " ms" << std::endl;
+    std::cout << "\n=== Summary ===\n";
+    std::cout << std::left << std::setw(20) << "Method"
+              << std::right << std::setw(12) << "Reproj(px)"
+              << std::setw(12) << "Inliers"
+              << std::setw(12) << "Time(ms)" << "\n";
+    std::cout << std::string(56, '-') << "\n";
+    for (const auto& r : results) {
+        std::cout << std::left << std::setw(20) << r.name
+                  << std::right << std::setw(12) << r.err
+                  << std::setw(12) << r.inliers
+                  << std::setw(12) << r.time_ms << "\n";
     }
-
-    // Summary
-    std::cout << "\n=== Summary ===" << std::endl;
-    std::cout << "Method            | Error   | Inliers | Time (ms)" << std::endl;
-    std::cout << "------------------|---------|---------|----------" << std::endl;
-    if (!H1.empty()) std::cout << "RANSAC            | " << computeHomographyError(gtH, H1)
-                               << " | " << cv::countNonZero(mask1) << "     | " << time1 << std::endl;
-    if (!H2.empty()) std::cout << "LMEDS             | " << computeHomographyError(gtH, H2)
-                               << " | " << cv::countNonZero(mask2) << "     | " << time2 << std::endl;
-    if (!H3.empty()) std::cout << "USAC_DEFAULT      | " << computeHomographyError(gtH, H3)
-                               << " | " << cv::countNonZero(mask3) << "     | " << time3 << std::endl;
-    if (!H4.empty()) std::cout << "USAC_MAGSAC       | " << computeHomographyError(gtH, H4)
-                               << " | " << cv::countNonZero(mask4) << "     | " << time4 << std::endl;
-    if (!H5.empty()) std::cout << "USAC_PROSAC       | " << computeHomographyError(gtH, H5)
-                               << " | " << cv::countNonZero(mask5) << "     | " << time5 << std::endl;
-    if (!H6.empty()) std::cout << "USAC_ACCURATE     | " << computeHomographyError(gtH, H6)
-                               << " | " << cv::countNonZero(mask6) << "     | " << time6 << std::endl;
-    if (!H7.empty()) std::cout << "Custom UsacParams | " << computeHomographyError(gtH, H7)
-                               << " | " << cv::countNonZero(mask7) << "     | " << time7 << std::endl;
-
     return 0;
 }
