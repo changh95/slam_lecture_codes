@@ -71,31 +71,58 @@ The Python viewer reads one or more JSON files and logs the images, ORB
 keypoints, 3D point clouds (color-coded per method), and camera frustums.
 
 ```bash
-# From build/ — spawns the native Rerun viewer (requires a display)
+# Spawn the native Rerun viewer (requires a display)
 python3 ../viz_triangulation.py triangulation_demo.json triangulation_opengv.json
 
-# Headless: save an .rrd file and open it later with the `rerun` binary
+# Stream into an already-running viewer (start it on the host with: rerun &)
+python3 ../viz_triangulation.py --connect triangulation_demo.json triangulation_opengv.json
+#   --connect defaults to rerun+http://127.0.0.1:9876/proxy
+
+# Headless: save an .rrd file and open it later with `rerun out.rrd`
 python3 ../viz_triangulation.py --save out.rrd triangulation_demo.json triangulation_opengv.json
 ```
 
 ### Docker
 
-```bash
-xhost +local:docker
-docker run -it --rm \
-    -e DISPLAY=$DISPLAY \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
-    slam_zero_to_hero:part2_ch02_07
+**Recommended — stream into a Rerun viewer running on the host:**
 
-# Inside the container (working dir is build/)
-./triangulation_demo
-./triangulation_opengv
-python3 ../viz_triangulation.py triangulation_demo.json triangulation_opengv.json
+```bash
+# 1. On the host, open the viewer once:
+rerun &
+
+# 2. Run both demos and stream the result into that viewer:
+docker run --rm --network=host slam_zero_to_hero:part2_ch02_07 bash -c '
+    pip install -q --break-system-packages rerun-sdk==0.33.0   # match the host viewer
+    ./triangulation_demo
+    ./triangulation_opengv
+    python3 ../viz_triangulation.py --connect \
+        triangulation_demo.json triangulation_opengv.json'
 ```
 
-For a headless host, drop the `xhost`/`DISPLAY`/`X11-unix` arguments and run
-`python3 ../viz_triangulation.py --save /workspace/out.rrd ...` instead;
-mount a volume to copy the `.rrd` file out and open it with `rerun out.rrd`.
+`--network=host` lets the container reach the viewer at `127.0.0.1:9876`. Live
+gRPC streaming requires the SDK to match the desktop viewer, so install the
+matching `rerun-sdk` version (here `0.33.0`) — `slam:base` ships an older one.
+
+**Headless — write an `.rrd` and open it afterwards:**
+
+```bash
+docker run --rm -v "$PWD/out:/out" slam_zero_to_hero:part2_ch02_07 bash -c '
+    ./triangulation_demo && ./triangulation_opengv
+    python3 ../viz_triangulation.py --save /out/triangulation.rrd \
+        triangulation_demo.json triangulation_opengv.json'
+rerun out/triangulation.rrd
+```
+
+**X11 — spawn the viewer inside the container** (needs a display):
+
+```bash
+xhost +local:docker
+docker run -it --rm -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+    slam_zero_to_hero:part2_ch02_07
+# inside (working dir is build/):
+./triangulation_demo && ./triangulation_opengv
+python3 ../viz_triangulation.py triangulation_demo.json triangulation_opengv.json
+```
 
 ---
 
