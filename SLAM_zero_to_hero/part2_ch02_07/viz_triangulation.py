@@ -30,7 +30,7 @@ METHOD_COLORS = {
     "midpoint":       (220, 60,  60),   # red
     "stereo":         (240, 200, 0),    # yellow
     "opengv_linear":  (180, 0,   220),  # purple
-    "opengv_optimal": (255, 100, 200),  # pink
+    "opengv_midpoint": (255, 100, 200),  # pink
 }
 
 

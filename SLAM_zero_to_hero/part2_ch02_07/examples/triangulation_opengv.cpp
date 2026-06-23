@@ -8,7 +8,7 @@
  *   3. OpenGV CentralRelativeAdapter holds the known stereo relative pose.
  *   4. Triangulate with:
  *        opengv::triangulation::triangulate   (linear, DLT-family)
- *        opengv::triangulation::triangulate2  (optimal L2, Lee & Civera)
+ *        opengv::triangulation::triangulate2  (mid-point / closest point between the two rays)
  *   5. Filter by cheirality + 0.2-100 m depth gate, report reprojection error.
  *   6. Write triangulation_opengv.json for the Rerun viewer.
  */
@@ -46,7 +46,7 @@ static void detectAndMatchFeatures(
     std::vector<cv::Point2f>& pts1,
     std::vector<cv::Point2f>& pts2) {
 
-    auto orb = cv::ORB::create(2000);
+    auto orb = cv::ORB::create(10000);  // dense feature set -> richer point cloud
     std::vector<cv::KeyPoint> kp1, kp2;
     cv::Mat desc1, desc2;
     orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
@@ -156,23 +156,23 @@ int main(int argc, char* argv[]) {
         return X(2) > Z_MIN && X(2) < Z_MAX;
     };
 
-    std::vector<Eigen::Vector3d> X_lin, X_opt;
-    std::vector<int> idx_lin, idx_opt;
-    double err_lin = 0, err_opt = 0;
+    std::vector<Eigen::Vector3d> X_lin, X_mid;
+    std::vector<int> idx_lin, idx_mid;
+    double err_lin = 0, err_mid = 0;
 
     for (size_t i = 0; i < pts1.size(); ++i) {
         Eigen::Vector3d Xl = opengv::triangulation::triangulate(adapter, i);   // linear DLT
-        Eigen::Vector3d Xo = opengv::triangulation::triangulate2(adapter, i);  // optimal L2
+        Eigen::Vector3d Xm = opengv::triangulation::triangulate2(adapter, i);  // mid-point (closest point between rays)
 
         if (cheirality_ok(Xl)) {
             X_lin.push_back(Xl); idx_lin.push_back(int(i));
             err_lin += 0.5 * (reprojection_error(P1, Xl, {pts1[i].x, pts1[i].y})
                             + reprojection_error(P2, Xl, {pts2[i].x, pts2[i].y}));
         }
-        if (cheirality_ok(Xo)) {
-            X_opt.push_back(Xo); idx_opt.push_back(int(i));
-            err_opt += 0.5 * (reprojection_error(P1, Xo, {pts1[i].x, pts1[i].y})
-                            + reprojection_error(P2, Xo, {pts2[i].x, pts2[i].y}));
+        if (cheirality_ok(Xm)) {
+            X_mid.push_back(Xm); idx_mid.push_back(int(i));
+            err_mid += 0.5 * (reprojection_error(P1, Xm, {pts1[i].x, pts1[i].y})
+                            + reprojection_error(P2, Xm, {pts2[i].x, pts2[i].y}));
         }
     }
 
@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
     };
     std::cout << "=== Triangulation results (cheirality + depth gate " << Z_MIN << "-" << Z_MAX << " m) ===\n";
     report("OpenGV linear           ", X_lin.size(), err_lin);
-    report("OpenGV optimal L2       ", X_opt.size(), err_opt);
+    report("OpenGV mid-point        ", X_mid.size(), err_mid);
     std::cout << "\n";
 
     std::ofstream f("triangulation_opengv.json");
@@ -208,7 +208,7 @@ int main(int argc, char* argv[]) {
     f << "],\n";
 
     write_points(f, "opengv_linear",  X_lin, idx_lin);  f << ",\n";
-    write_points(f, "opengv_optimal", X_opt, idx_opt);  f << "\n";
+    write_points(f, "opengv_midpoint", X_mid, idx_mid);  f << "\n";
     f << "}\n";
 
     std::cout << "Wrote triangulation_opengv.json\n";

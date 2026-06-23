@@ -48,7 +48,7 @@ static void detectAndMatchFeatures(
     std::vector<cv::Point2f>& pts1,
     std::vector<cv::Point2f>& pts2) {
 
-    auto orb = cv::ORB::create(2000);
+    auto orb = cv::ORB::create(10000);  // dense feature set -> richer point cloud
     std::vector<cv::KeyPoint> kp1, kp2;
     cv::Mat desc1, desc2;
     orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);

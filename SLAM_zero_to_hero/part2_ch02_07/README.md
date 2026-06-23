@@ -17,7 +17,7 @@ part2_ch02_07/
 ├── viz_triangulation.py               # Rerun viewer for the JSON output
 └── examples/
     ├── triangulation_demo.cpp         # OpenCV DLT, custom DLT, mid-point, stereo disparity depth
-    └── triangulation_opengv.cpp       # OpenGV linear & optimal L2 triangulation
+    └── triangulation_opengv.cpp       # OpenGV linear & mid-point triangulation
 ```
 
 ---
@@ -57,7 +57,7 @@ triangulation method.
 ./build/triangulation_demo
 # -> writes triangulation_demo.json
 
-# OpenGV linear + optimal L2 (built only when OpenGV is available)
+# OpenGV linear + mid-point (built only when OpenGV is available)
 ./build/triangulation_opengv
 # -> writes triangulation_opengv.json
 
