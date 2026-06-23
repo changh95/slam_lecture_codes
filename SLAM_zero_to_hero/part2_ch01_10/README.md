@@ -11,6 +11,7 @@ part2_ch01_10/
 ├── README.md
 ├── Dockerfile                  # uv-based Python 3.11 + CUDA torch image
 ├── compare_descriptors.py      # Multi-descriptor comparison script
+├── force_gpu.py                # Build-time patch: pin learned descriptors to GPU
 └── visualizations/             # Reference output images
 ```
 
@@ -32,6 +33,14 @@ Dependencies are installed inside the image:
 ---
 
 ## Run
+
+> **GPU is required.** The learned descriptors (AlexNet, NetVLAD, PatchNetVLAD,
+> CosPlace, EigenPlaces) are pinned to CUDA/MPS at build time — upstream they
+> silently fall back to CPU when no GPU is visible, which runs 10–100× slower
+> with no warning. If you launch the container without GPU passthrough they now
+> abort with a message telling you which flags to add. The non-neural SAD
+> baseline still runs on CPU. To intentionally run the models on CPU anyway, set
+> `VPR_ALLOW_CPU=1` in the container environment.
 
 ### Docker (NVIDIA Container Toolkit)
 

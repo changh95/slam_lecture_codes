@@ -33,6 +33,13 @@ RUN uv venv /opt/venv --python 3.11
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
+# The CMD below launches a *login* shell (`bash -l`), which sources /etc/profile
+# and resets PATH back to the system default -- dropping /opt/venv/bin and
+# landing the user on the base image's Python (no numpy/torch). The `ENV PATH`
+# above only survives in non-login shells. Re-add the venv via profile.d so
+# every interactive shell (login or not) starts already inside the venv.
+RUN printf 'export PATH="/opt/venv/bin:$PATH"\n' > /etc/profile.d/10-venv.sh
+
 # Core deps for VPR_Tutorial (torch path only — no TF/tensorflow_hub).
 # - opencv-python-headless avoids X11/GTK pulls; the demo only matplotlib-renders
 # - faiss-cpu for nearest-neighbour search (replaces patchnetvlad's pinned
@@ -78,6 +85,15 @@ RUN sed -i 's|torch.hub.load("gmberton/cosplace", "get_trained_model",|torch.hub
 RUN mkdir -p /root/.cache/torch/hub && \
     printf 'gmberton_cosplace\ngmberton_eigenplaces\npytorch_vision\n' \
         > /root/.cache/torch/hub/trusted_list
+
+# Force the learned descriptors onto the GPU. Upstream each extractor silently
+# falls back to torch.device("cpu") when torch.cuda.is_available() is False --
+# which is exactly what happens when the container is launched without GPU
+# passthrough, so the demo runs 10-100x slower with no warning. This patch makes
+# AlexNet/NetVLAD/PatchNetVLAD/CosPlace/EigenPlaces abort with a clear message
+# instead (set VPR_ALLOW_CPU=1 to override). The SAD baseline is left on CPU.
+COPY force_gpu.py /workspace/force_gpu.py
+RUN python3 /workspace/force_gpu.py
 
 # Install VPR_Tutorial as an editable package (no deps -- we just installed them above).
 RUN uv pip install --no-cache --no-deps -e .
