@@ -23,6 +23,8 @@ import numpy as np
 import rerun as rr
 from PIL import Image
 
+DEFAULT_CONNECT_URL = "rerun+http://127.0.0.1:9876/proxy"
+
 # Distinct color per triangulation method.
 METHOD_COLORS = {
     "opencv":         (0,   200, 0),    # green
@@ -55,15 +57,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("json_files", nargs="+", help="JSON files from the C++ demos")
     ap.add_argument("--save", default=None, help="Save to .rrd instead of spawning a viewer")
-    ap.add_argument("--connect", nargs="?", const="rerun+http://127.0.0.1:9876/proxy",
-                    default=None, metavar="URL",
-                    help="stream to an already-running rerun viewer at this gRPC "
-                         "URL (default rerun+http://127.0.0.1:9876/proxy)")
+    ap.add_argument("--connect", action="store_true",
+                    help="stream to an already-running rerun viewer "
+                         f"at {DEFAULT_CONNECT_URL} (override with --connect-url)")
+    ap.add_argument("--connect-url", default=None, metavar="URL",
+                    help=f"gRPC URL of the running viewer (default {DEFAULT_CONNECT_URL}); "
+                         "implies --connect")
     args = ap.parse_args()
 
-    rr.init("triangulation", spawn=(args.save is None and args.connect is None))
-    if args.connect:
-        rr.connect_grpc(args.connect)
+    # Any supplied --connect-url implies --connect; otherwise fall back to default.
+    connect = args.connect or args.connect_url is not None
+    connect_url = args.connect_url or DEFAULT_CONNECT_URL
+
+    rr.init("triangulation", spawn=(args.save is None and not connect))
+    if connect:
+        rr.connect_grpc(connect_url)
     elif args.save:
         rr.save(args.save)
 
@@ -113,13 +121,13 @@ def main():
                                labels=[method] * len(xyz)))
             print(f"[{source_tag}] {method:>16s}: {len(xyz)} points")
 
-    if args.connect:
+    if connect:
         try:
             rr.flush()  # block until the recording reaches the viewer
         except Exception:
             import time
             time.sleep(2.0)
-        print(f"Streamed to viewer at {args.connect}")
+        print(f"Streamed to viewer at {connect_url}")
     elif args.save:
         print(f"Saved to {args.save}")
     else:

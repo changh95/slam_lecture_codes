@@ -76,7 +76,8 @@ python3 ../viz_triangulation.py triangulation_demo.json triangulation_opengv.jso
 
 # Stream into an already-running viewer (start it on the host with: rerun &)
 python3 ../viz_triangulation.py --connect triangulation_demo.json triangulation_opengv.json
-#   --connect defaults to rerun+http://127.0.0.1:9876/proxy
+#   --connect uses rerun+http://127.0.0.1:9876/proxy by default
+#   override with: --connect-url rerun+http://HOST:PORT/proxy
 
 # Headless: save an .rrd file and open it later with `rerun out.rrd`
 python3 ../viz_triangulation.py --save out.rrd triangulation_demo.json triangulation_opengv.json
@@ -90,9 +91,10 @@ python3 ../viz_triangulation.py --save out.rrd triangulation_demo.json triangula
 # 1. On the host, open the viewer once:
 rerun &
 
-# 2. Run both demos and stream the result into that viewer:
+# 2. Run both demos and stream the result into that viewer.
+#    Set the rerun-sdk version to your host viewer's (check with: rerun --version).
 docker run --rm --network=host slam_zero_to_hero:part2_ch02_07 bash -c '
-    pip install -q --break-system-packages rerun-sdk==0.33.0   # match the host viewer
+    pip install -q --break-system-packages rerun-sdk==0.33.0   # == your host viewer
     ./triangulation_demo
     ./triangulation_opengv
     python3 ../viz_triangulation.py --connect \
@@ -100,8 +102,18 @@ docker run --rm --network=host slam_zero_to_hero:part2_ch02_07 bash -c '
 ```
 
 `--network=host` lets the container reach the viewer at `127.0.0.1:9876`. Live
-gRPC streaming requires the SDK to match the desktop viewer, so install the
-matching `rerun-sdk` version (here `0.33.0`) — `slam:base` ships an older one.
+gRPC streaming is version-sensitive: the container's `rerun-sdk` **must match**
+your host viewer's version. `slam:base` ships an older SDK (`0.28.1`), so the
+`pip install` above upgrades it — set the version to whatever `rerun --version`
+prints on the host.
+
+`--connect` streams to `rerun+http://127.0.0.1:9876/proxy` by default. To target
+a different host/port, pass `--connect-url` (this implies `--connect`):
+
+```bash
+python3 ../viz_triangulation.py --connect-url rerun+http://HOST:PORT/proxy \
+    triangulation_demo.json triangulation_opengv.json
+```
 
 **Headless — write an `.rrd` and open it afterwards:**
 
