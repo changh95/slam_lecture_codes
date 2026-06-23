@@ -19,9 +19,9 @@ import json
 import sys
 from pathlib import Path
 
-import cv2
 import numpy as np
 import rerun as rr
+from PIL import Image
 
 # Distinct color per triangulation method.
 METHOD_COLORS = {
@@ -35,10 +35,10 @@ METHOD_COLORS = {
 
 
 def load_image(path: str) -> np.ndarray:
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    try:
+        return np.asarray(Image.open(path).convert("L"))
+    except FileNotFoundError:
         raise FileNotFoundError(f"Cannot read image: {path}")
-    return img
 
 
 def log_camera(name: str, position: np.ndarray, fx: float, fy: float,
@@ -55,10 +55,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("json_files", nargs="+", help="JSON files from the C++ demos")
     ap.add_argument("--save", default=None, help="Save to .rrd instead of spawning a viewer")
+    ap.add_argument("--connect", nargs="?", const="rerun+http://127.0.0.1:9876/proxy",
+                    default=None, metavar="URL",
+                    help="stream to an already-running rerun viewer at this gRPC "
+                         "URL (default rerun+http://127.0.0.1:9876/proxy)")
     args = ap.parse_args()
 
-    rr.init("triangulation", spawn=(args.save is None))
-    if args.save:
+    rr.init("triangulation", spawn=(args.save is None and args.connect is None))
+    if args.connect:
+        rr.connect_grpc(args.connect)
+    elif args.save:
         rr.save(args.save)
 
     # World axes (1 m each).
@@ -107,7 +113,14 @@ def main():
                                labels=[method] * len(xyz)))
             print(f"[{source_tag}] {method:>16s}: {len(xyz)} points")
 
-    if args.save:
+    if args.connect:
+        try:
+            rr.flush()  # block until the recording reaches the viewer
+        except Exception:
+            import time
+            time.sleep(2.0)
+        print(f"Streamed to viewer at {args.connect}")
+    elif args.save:
         print(f"Saved to {args.save}")
     else:
         print("Rerun viewer launched. Close the window to exit.")
