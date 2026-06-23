@@ -41,7 +41,7 @@ python3 ../viz/plot_curve_fitting.py            # -> curve_fitting.png
 python3 ../examples/symforce_pose_graph.py
 python3 ../viz/plot_pose_graph.py               # -> pose_graph.png
 
-# 3) Bundle adjustment on the BAL dataset (subsampled, see note)
+# 3) Bundle adjustment on the BAL dataset (full problem; takes a while to build)
 python3 ../examples/symforce_bundle_adjustment.py problem-21-11315-pre.txt
 python3 ../viz/show_bundle_adjustment.py        # -> bundle_adjustment.rrd (one frame per iteration)
 #   open it and scrub the 'iteration' timeline:  rerun bundle_adjustment.rrd
@@ -68,10 +68,10 @@ optimizing. PNGs are written headlessly; copy them out with `docker cp`.
   `p' = f (1 + k1 r^2 + k2 r^4)(-P/P.z)`. The first camera is held fixed to
   remove gauge freedom. Camera centers are recovered via
   `pose.inverse().position()`.
-  - **Subsampling:** the optimizer builds one Python factor per observation, so
-    the full 31843-observation problem is subsampled to the first `MAX_CAM`
-    cameras / `MAX_OBS` observations (defaults 10 / 4000). Override with
-    `symforce_bundle_adjustment.py <file> <MAX_CAM> <MAX_OBS>`.
+  - **Full problem, no subsampling:** all cameras, points, and observations are
+    used. The optimizer builds one Python factor per observation, so constructing
+    the full Trafalgar problem (36455 observations) takes a while before the
+    solver runs.
 
 BAL dataset: https://grail.cs.washington.edu/projects/bal/
 

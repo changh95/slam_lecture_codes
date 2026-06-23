@@ -72,18 +72,20 @@ struct StructureRecorder : public ceres::IterationCallback {
         : cameras_(cameras), points_(points),
           num_cameras_(num_cameras), num_points_(num_points) {}
 
-    ceres::CallbackReturnType operator()(const ceres::IterationSummary&) override {
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary& s) override {
         point_frames_.push_back(points_);  // copy current landmark positions
         vector<double> centers(3 * num_cameras_);
         for (int i = 0; i < num_cameras_; ++i)
             CameraCenter(&cameras_[9 * i], &centers[3 * i]);
         camera_frames_.push_back(std::move(centers));
+        errors_.push_back(2.0 * s.cost);  // total squared reprojection error
         return ceres::SOLVER_CONTINUE;
     }
 
     const vector<double>&cameras_, &points_;
     int num_cameras_, num_points_;
     vector<vector<double>> point_frames_, camera_frames_;
+    vector<double> errors_;
 };
 
 int main(int argc, char** argv) {
@@ -148,7 +150,7 @@ int main(int argc, char** argv) {
     out << "cameras " << num_cameras << "\n";
     out << "steps " << K << "\n";
     for (int k = 0; k < K; ++k) {
-        out << "step " << k << "\n";
+        out << "step " << k << " " << recorder.errors_[k] << "\n";
         for (int i = 0; i < num_points; ++i)
             out << pf[k][3 * i] << " " << pf[k][3 * i + 1] << " " << pf[k][3 * i + 2] << "\n";
         for (int i = 0; i < num_cameras; ++i)

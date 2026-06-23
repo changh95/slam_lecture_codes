@@ -17,10 +17,10 @@ Data format::
     points <Np>
     cameras <Nc>
     steps <K>
-    step 0
+    step 0 <total_reprojection_error>
     <x y z>   x Np      # landmarks at iteration 0 (initial)
     <x y z>   x Nc      # camera centers at iteration 0
-    step 1
+    step 1 <total_reprojection_error>
     ...                 # K blocks total
 """
 import argparse
@@ -44,14 +44,24 @@ def parse(path):
         idx += 1
     steps = []
     while idx < len(lines):
-        assert lines[idx].split()[0] == "step", lines[idx]
+        tok = lines[idx].split()
+        assert tok[0] == "step", lines[idx]
+        err = float(tok[2]) if len(tok) > 2 else None  # total reprojection error
         idx += 1
         pts = np.array([[float(v) for v in lines[idx + i].split()] for i in range(Np)])
         idx += Np
         cams = np.array([[float(v) for v in lines[idx + i].split()] for i in range(Nc)])
         idx += Nc
-        steps.append((pts, cams))
+        steps.append((pts, cams, err))
     return Np, Nc, steps
+
+
+def log_scalar(path, value):
+    """Log one scalar sample (rerun renamed Scalar -> Scalars across versions)."""
+    if hasattr(rr, "Scalars"):
+        rr.log(path, rr.Scalars(value))
+    else:
+        rr.log(path, rr.Scalar(value))
 
 
 def set_iter(k):
@@ -75,6 +85,8 @@ def main():
                     default=None, metavar="URL",
                     help="stream to an already-running rerun viewer at this gRPC "
                          "URL (default rerun+http://127.0.0.1:9876/proxy)")
+    ap.add_argument("--name", default="part3_bundle_adjustment",
+                    help="rerun application/recording name (shown in the viewer)")
     args = ap.parse_args()
 
     try:
@@ -83,32 +95,27 @@ def main():
         sys.exit(f"[show_bundle_adjustment] cannot open {args.data}; run the "
                  f"bundle_adjustment example first to generate it.")
 
-    rr.init("part3_bundle_adjustment", spawn=args.spawn)
+    rr.init(args.name, spawn=args.spawn)
     if args.connect:
         rr.connect_grpc(args.connect)
     elif not args.spawn:
         rr.save(args.out)
 
-    # BAL leaves a few poorly-constrained landmarks that drift to huge
-    # coordinates during optimization; logging them raw would blow up the 3D
-    # auto-framing. Drop the worst ~1% (by final-frame distance from the median)
-    # using a single mask applied to every frame so point identity is stable.
-    last_pts = steps[-1][0]
-    med = np.median(last_pts, axis=0)
-    d = np.linalg.norm(last_pts - med, axis=1)
-    mask = d <= np.percentile(d, 99)
-
     # Static grey reference: the initial landmark cloud, shown at every step.
     rr.log("world/initial_points",
-           rr.Points3D(steps[0][0][mask], colors=[120, 120, 120], radii=0.012),
+           rr.Points3D(steps[0][0], colors=[120, 120, 120], radii=0.012),
            static=True)
 
-    # Per-iteration landmarks (green) and camera centers (blue).
-    for k, (pts, cams) in enumerate(steps):
+    # Per-iteration landmarks (green), camera centers (blue), and the total
+    # reprojection error as a scalar time series (shown as a graph in rerun).
+    # All landmarks are logged (no filtering).
+    for k, (pts, cams, err) in enumerate(steps):
         set_iter(k)
         rr.log("world/landmarks",
-               rr.Points3D(pts[mask], colors=[80, 200, 120], radii=0.02))
+               rr.Points3D(pts, colors=[80, 200, 120], radii=0.02))
         rr.log("world/cameras", rr.Points3D(cams, colors=[0, 120, 255], radii=0.12))
+        if err is not None:
+            log_scalar("reprojection_error", err)
 
     if args.connect:
         try:

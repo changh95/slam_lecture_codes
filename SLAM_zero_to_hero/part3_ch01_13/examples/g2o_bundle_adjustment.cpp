@@ -91,9 +91,10 @@ public:
 
 // Records the landmark cloud + camera centres after every optimizer iteration.
 struct StructureRecorder : public g2o::HyperGraphAction {
-    StructureRecorder(const std::vector<VertexCamera*>& cams,
+    StructureRecorder(g2o::SparseOptimizer* opt,
+                      const std::vector<VertexCamera*>& cams,
                       const std::vector<VertexPoint*>& pts)
-        : cams_(cams), pts_(pts) {}
+        : opt_(opt), cams_(cams), pts_(pts) {}
 
     void capture() {
         std::vector<Eigen::Vector3d> p(pts_.size()), c(cams_.size());
@@ -101,6 +102,8 @@ struct StructureRecorder : public g2o::HyperGraphAction {
         for (size_t i = 0; i < cams_.size(); ++i) c[i] = cams_[i]->estimate().center();
         point_frames.push_back(std::move(p));
         camera_frames.push_back(std::move(c));
+        opt_->computeActiveErrors();
+        errors.push_back(opt_->chi2());  // total squared reprojection error
     }
 
     g2o::HyperGraphAction* operator()(const g2o::HyperGraph*, Parameters*) override {
@@ -108,9 +111,11 @@ struct StructureRecorder : public g2o::HyperGraphAction {
         return this;
     }
 
+    g2o::SparseOptimizer* opt_;
     const std::vector<VertexCamera*>& cams_;
     const std::vector<VertexPoint*>& pts_;
     std::vector<std::vector<Eigen::Vector3d>> point_frames, camera_frames;
+    std::vector<double> errors;
 };
 
 int main(int argc, char** argv) {
@@ -193,7 +198,7 @@ int main(int argc, char** argv) {
     cout << "Initial chi2: " << chi0 << endl;
 
     // Record structure after every iteration; capture iteration 0 (initial) now.
-    StructureRecorder recorder(vcams, vpts);
+    StructureRecorder recorder(&optimizer, vcams, vpts);
     recorder.capture();
     optimizer.addPostIterationAction(&recorder);
 
@@ -212,7 +217,7 @@ int main(int argc, char** argv) {
     out << "cameras " << num_cameras << "\n";
     out << "steps " << K << "\n";
     for (int k = 0; k < K; ++k) {
-        out << "step " << k << "\n";
+        out << "step " << k << " " << recorder.errors[k] << "\n";
         for (int i = 0; i < num_points; ++i)
             out << pf[k][i].x() << " " << pf[k][i].y() << " " << pf[k][i].z() << "\n";
         for (int i = 0; i < num_cameras; ++i)
