@@ -69,10 +69,11 @@ int main(int argc, char** argv) {
     LevenbergMarquardtOptimizer optimizer(graph, initial, params);
 
     // Capture the landmarks + camera centres at every iteration (frame 0 = initial).
-    struct Frame { vector<Point3> pts, cams; };
+    struct Frame { vector<Point3> pts, cams; double err; };
     vector<Frame> frames;
-    auto grab = [&](const Values& v) {
+    auto grab = [&](const Values& v, double err) {
         Frame fr;
+        fr.err = err;
         fr.pts.reserve(nT);
         fr.cams.reserve(nC);
         for (size_t j = 0; j < nT; ++j) fr.pts.push_back(v.at<Point3>(Symbol('p', j)));
@@ -81,12 +82,12 @@ int main(int argc, char** argv) {
         frames.push_back(std::move(fr));
     };
 
-    grab(optimizer.values());
+    grab(optimizer.values(), e0);
     double prev = e0;
     for (int k = 0; k < 25; ++k) {
         optimizer.iterate();
-        grab(optimizer.values());
         double e = optimizer.error();
+        grab(optimizer.values(), e);
         if (k > 2 && prev - e < 1e-3 * prev) { prev = e; break; }
         prev = e;
     }
@@ -103,7 +104,7 @@ int main(int argc, char** argv) {
     out << "cameras " << nC << "\n";
     out << "steps " << frames.size() << "\n";
     for (size_t k = 0; k < frames.size(); ++k) {
-        out << "step " << k << "\n";
+        out << "step " << k << " " << 2.0 * frames[k].err << "\n";
         for (const Point3& p : frames[k].pts)
             out << p.x() << " " << p.y() << " " << p.z() << "\n";
         for (const Point3& c : frames[k].cams)

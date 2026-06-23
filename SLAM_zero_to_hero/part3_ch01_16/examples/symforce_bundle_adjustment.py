@@ -6,10 +6,10 @@ model: angle-axis rotation + translation + f, k1, k2), and jointly optimizes
 camera poses and 3D points with SymForce's optimizer. Dumps
 `bundle_adjustment.txt` for viz/show_bundle_adjustment.py (rerun 3D).
 
-Because the SymForce optimizer builds one Python factor per observation, the
-full Trafalgar problem (problem-21-11315, 36455 observations) is subsampled to keep the demo
-fast: by default the first MAX_CAM cameras and up to MAX_OBS of their
-observations. Override:  symforce_bundle_adjustment.py <file> <MAX_CAM> <MAX_OBS>
+The full BAL problem is used (no subsampling). Note SymForce builds one Python
+factor per observation, so constructing the full Trafalgar problem
+(problem-21-11315, 36455 observations) takes a while before the solver runs.
+Pass a different BAL file as the first argument if desired.
 """
 import sys
 
@@ -50,17 +50,17 @@ def load_bal(path):
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "problem-21-11315-pre.txt"
-    MAX_CAM = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-    MAX_OBS = int(sys.argv[3]) if len(sys.argv) > 3 else 4000
 
     print("=== SymForce Tutorial: Bundle Adjustment (BAL) ===\n")
     nC, nP, obs, cams, pts = load_bal(path)
 
-    sub = [o for o in obs if o[0] < MAX_CAM][:MAX_OBS]
-    used_c = sorted({o[0] for o in sub})
-    used_p = sorted({o[1] for o in sub})
-    print(f"Full problem : {nC} cameras, {nP} points, {len(obs)} observations")
-    print(f"Subsampled   : {len(used_c)} cameras, {len(used_p)} points, {len(sub)} observations")
+    # Use the full problem (no subsampling): all observations, cameras, points.
+    sub = obs
+    used_c = list(range(nC))
+    used_p = sorted({o[1] for o in obs})
+    print(f"Problem: {nC} cameras, {len(used_p)} points, {len(obs)} observations "
+          f"(full, no subsampling)")
+    print("Building factors (one per observation; this can take a while)...")
 
     eps = sf.numeric_epsilon
     values = Values()
@@ -123,14 +123,15 @@ def main():
         v = optimizer.load_iteration_values(it.values)  # values_t -> keyed Values
         pts_f = [np.array(v[f"pt{p}"]).flatten() for p in used_p]
         cams_f = [cam_center(v, c) for c in used_c]
-        frames.append((pts_f, cams_f))
+        # total squared reprojection error (SymForce error is 0.5 * sum of squares)
+        frames.append((pts_f, cams_f, 2.0 * it.new_error))
 
     with open("bundle_adjustment.txt", "w") as f:
         f.write(f"points {len(used_p)}\n")
         f.write(f"cameras {len(used_c)}\n")
         f.write(f"steps {len(frames)}\n")
-        for k, (pts_f, cams_f) in enumerate(frames):
-            f.write(f"step {k}\n")
+        for k, (pts_f, cams_f, err) in enumerate(frames):
+            f.write(f"step {k} {err}\n")
             for p in pts_f:
                 f.write(f"{p[0]} {p[1]} {p[2]}\n")
             for c in cams_f:
