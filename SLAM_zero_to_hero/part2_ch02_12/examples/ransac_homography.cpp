@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -105,6 +106,28 @@ struct MethodResult {
     int inliers;
     double time_ms;
 };
+
+// Stack the two frames vertically and draw match segments colored by the
+// inlier mask (green = inlier, red = outlier). KITTI frames are wide, so
+// vertical stacking keeps the window on screen.
+static cv::Mat drawMatchesVis(const cv::Mat& img1, const cv::Mat& img2,
+                              const std::vector<cv::Point2f>& pts1,
+                              const std::vector<cv::Point2f>& pts2,
+                              const cv::Mat& mask) {
+    cv::Mat top, bottom, vis;
+    cv::cvtColor(img1, top, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(img2, bottom, cv::COLOR_GRAY2BGR);
+    cv::vconcat(top, bottom, vis);
+    const cv::Point2f yoff(0.0f, static_cast<float>(img1.rows));
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        bool inlier = !mask.empty() && mask.at<uchar>(i);
+        cv::Scalar color = inlier ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+        cv::circle(vis, pts1[i], 3, color, -1);
+        cv::circle(vis, pts2[i] + yoff, 3, color, -1);
+        cv::line(vis, pts1[i], pts2[i] + yoff, color, 1);
+    }
+    return vis;
+}
 
 int main(int argc, char* argv[]) {
     std::cout << "=== RANSAC Homography Estimation (KITTI consecutive frames) ===\n";
@@ -200,6 +223,24 @@ int main(int argc, char* argv[]) {
                   << std::right << std::setw(12) << r.err
                   << std::setw(12) << r.inliers
                   << std::setw(12) << r.time_ms << "\n";
+    }
+
+    // Visualization: classic RANSAC vs USAC_MAGSAC inlier masks side by side.
+    const auto& ransac = results[0];   // "RANSAC"
+    const auto& magsac = results[3];   // "USAC_MAGSAC"
+    if (!ransac.H.empty() && !magsac.H.empty()) {
+        cv::Mat visRansac = drawMatchesVis(img1, img2, pts1, pts2, ransac.mask);
+        cv::Mat visMagsac = drawMatchesVis(img1, img2, pts1, pts2, magsac.mask);
+        cv::imwrite("homography_ransac_matches.jpg", visRansac);
+        cv::imwrite("homography_usac_magsac_matches.jpg", visMagsac);
+        std::cout << "\nSaved: homography_ransac_matches.jpg, "
+                     "homography_usac_magsac_matches.jpg\n";
+        if (std::getenv("DISPLAY") != nullptr) {
+            cv::imshow("RANSAC matches (green=inlier, red=outlier)", visRansac);
+            cv::imshow("USAC_MAGSAC matches (green=inlier, red=outlier)", visMagsac);
+            std::cout << "Press any key to exit..." << std::endl;
+            cv::waitKey(0);
+        }
     }
     return 0;
 }

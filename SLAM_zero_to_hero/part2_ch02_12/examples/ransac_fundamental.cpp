@@ -24,7 +24,9 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -109,6 +111,75 @@ struct MethodResult {
     int inliers;
     double time_ms;
 };
+
+// Stack the two frames vertically and draw match segments colored by the
+// inlier mask (green = inlier, red = outlier).
+static cv::Mat drawMatchesVis(const cv::Mat& img1, const cv::Mat& img2,
+                              const std::vector<cv::Point2f>& pts1,
+                              const std::vector<cv::Point2f>& pts2,
+                              const cv::Mat& mask) {
+    cv::Mat top, bottom, vis;
+    cv::cvtColor(img1, top, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(img2, bottom, cv::COLOR_GRAY2BGR);
+    cv::vconcat(top, bottom, vis);
+    const cv::Point2f yoff(0.0f, static_cast<float>(img1.rows));
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        bool inlier = !mask.empty() && mask.at<uchar>(i);
+        cv::Scalar color = inlier ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+        cv::circle(vis, pts1[i], 3, color, -1);
+        cv::circle(vis, pts2[i] + yoff, 3, color, -1);
+        cv::line(vis, pts1[i], pts2[i] + yoff, color, 1);
+    }
+    return vis;
+}
+
+// Epipolar geometry: for a subset of inliers, draw each point and the
+// epipolar line of its correspondence in the other image (same color).
+// Points must lie on their lines if F is correct.
+static cv::Mat drawEpipolarVis(const cv::Mat& img1, const cv::Mat& img2,
+                               const std::vector<cv::Point2f>& pts1,
+                               const std::vector<cv::Point2f>& pts2,
+                               const cv::Mat& F, const cv::Mat& mask,
+                               int maxLines = 25) {
+    std::vector<cv::Point2f> in1, in2;
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        if (mask.at<uchar>(i)) {
+            in1.push_back(pts1[i]);
+            in2.push_back(pts2[i]);
+        }
+    }
+    const int step = std::max(1, static_cast<int>(in1.size()) / maxLines);
+    std::vector<cv::Point2f> s1, s2;
+    for (size_t i = 0; i < in1.size(); i += step) {
+        s1.push_back(in1[i]);
+        s2.push_back(in2[i]);
+    }
+
+    std::vector<cv::Vec3f> linesIn2, linesIn1;
+    cv::computeCorrespondEpilines(s1, 1, F, linesIn2);
+    cv::computeCorrespondEpilines(s2, 2, F, linesIn1);
+
+    cv::Mat top, bottom;
+    cv::cvtColor(img1, top, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(img2, bottom, cv::COLOR_GRAY2BGR);
+    cv::RNG rng(12345);
+    auto drawLine = [](cv::Mat& img, const cv::Vec3f& l, const cv::Scalar& color) {
+        if (std::abs(l[1]) < 1e-6f) return;  // near-vertical line, skip
+        cv::Point2d p0(0.0, -l[2] / l[1]);
+        cv::Point2d p1(img.cols, -(l[2] + l[0] * img.cols) / l[1]);
+        cv::line(img, p0, p1, color, 1);
+    };
+    for (size_t i = 0; i < s1.size(); ++i) {
+        cv::Scalar color(rng.uniform(64, 255), rng.uniform(64, 255), rng.uniform(64, 255));
+        drawLine(top, linesIn1[i], color);
+        drawLine(bottom, linesIn2[i], color);
+        cv::circle(top, s1[i], 4, color, -1);
+        cv::circle(bottom, s2[i], 4, color, -1);
+    }
+    cv::Mat vis;
+    cv::vconcat(top, bottom, vis);
+    return vis;
+}
 
 int main(int argc, char* argv[]) {
     std::cout << "=== RANSAC Fundamental Matrix Estimation (KITTI consecutive frames) ===\n";
@@ -239,6 +310,22 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "\nUSAC_MAGSAC mean |x2^T F x1| on inliers: "
                   << (n ? total / n : 0.0) << " (expected ~0)\n";
+    }
+
+    // Visualization: USAC_MAGSAC inlier/outlier matches + epipolar geometry.
+    if (!magsac.F.empty() && magsac.F.rows == 3 && !magsac.mask.empty()) {
+        cv::Mat visMatches = drawMatchesVis(img1, img2, pts1, pts2, magsac.mask);
+        cv::Mat visEpi = drawEpipolarVis(img1, img2, pts1, pts2, magsac.F, magsac.mask);
+        cv::imwrite("fundamental_usac_magsac_matches.jpg", visMatches);
+        cv::imwrite("fundamental_epipolar_lines.jpg", visEpi);
+        std::cout << "Saved: fundamental_usac_magsac_matches.jpg, "
+                     "fundamental_epipolar_lines.jpg\n";
+        if (std::getenv("DISPLAY") != nullptr) {
+            cv::imshow("USAC_MAGSAC matches (green=inlier, red=outlier)", visMatches);
+            cv::imshow("Epipolar lines (USAC_MAGSAC inliers)", visEpi);
+            std::cout << "Press any key to exit..." << std::endl;
+            cv::waitKey(0);
+        }
     }
     return 0;
 }

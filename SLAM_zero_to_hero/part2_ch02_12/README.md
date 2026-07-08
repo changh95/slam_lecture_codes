@@ -73,6 +73,21 @@ docker run -it --rm \
     slam_zero_to_hero:part2_ch02_12
 ```
 
+### Visualization
+
+When a display is available (`DISPLAY` set, X11 socket mounted in Docker), the demos
+open result windows; press any key to close them. The same visualizations are always
+saved as JPEGs next to the executable:
+
+| Demo | Windows / files |
+|------|-----------------|
+| `ransac_homography` | RANSAC vs USAC_MAGSAC match masks (`homography_ransac_matches.jpg`, `homography_usac_magsac_matches.jpg`) |
+| `ransac_fundamental` | USAC_MAGSAC match mask + epipolar lines (`fundamental_usac_magsac_matches.jpg`, `fundamental_epipolar_lines.jpg`) |
+| `ransac_custom` | Line fit + homography reprojection (`custom_ransac_line.jpg`, `custom_ransac_homography.jpg`) |
+
+Match visualizations draw inliers in green and outliers in red. Without a display
+(headless run), the windows are skipped and only the JPEGs are written.
+
 ---
 
 ## References

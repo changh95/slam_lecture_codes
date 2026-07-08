@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -380,7 +381,7 @@ std::pair<cv::Mat, std::vector<bool>> ransacHomography(
 // Test Functions
 // ============================================================================
 
-void testLineFitting() {
+cv::Mat testLineFitting() {
     std::cout << "\n========== Line Fitting RANSAC Test ==========" << std::endl;
 
     // Generate synthetic data: line y = 0.5x + 100 with outliers
@@ -419,9 +420,24 @@ void testLineFitting() {
     // Count inliers
     int inlierCount = std::count(mask.begin(), mask.end(), true);
     std::cout << "Inliers found: " << inlierCount << " (expected ~70)" << std::endl;
+
+    // Visualization: points colored by inlier mask, estimated line in blue.
+    cv::Mat canvas(420, 400, CV_8UC3, cv::Scalar(255, 255, 255));
+    if (std::abs(line.b) > 1e-6) {
+        cv::Point2d p0(0.0, -line.c / line.b);
+        cv::Point2d p1(canvas.cols, -(line.c + line.a * canvas.cols) / line.b);
+        cv::line(canvas, p0, p1, cv::Scalar(255, 0, 0), 2);
+    }
+    for (size_t i = 0; i < points.size(); ++i) {
+        cv::Scalar color = mask[i] ? cv::Scalar(0, 200, 0) : cv::Scalar(0, 0, 255);
+        cv::circle(canvas, points[i], 3, color, -1);
+    }
+    cv::putText(canvas, "green=inlier  red=outlier  blue=fit", cv::Point(10, 20),
+                cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(0, 0, 0), 1);
+    return canvas;
 }
 
-void testHomography() {
+cv::Mat testHomography() {
     std::cout << "\n========== Homography RANSAC Test ==========" << std::endl;
 
     // Ground truth homography
@@ -500,20 +516,51 @@ void testHomography() {
                       << ", Time: " << cvTime << " ms" << std::endl;
         }
     }
+
+    // Visualization: observed destination points (circles) vs source points
+    // projected through the estimated H (crosses). For inliers the cross
+    // must land inside its circle.
+    cv::Mat canvas(640, 640, CV_8UC3, cv::Scalar(255, 255, 255));
+    for (size_t i = 0; i < shuffledDst.size(); ++i) {
+        cv::Scalar color = mask[i] ? cv::Scalar(0, 200, 0) : cv::Scalar(0, 0, 255);
+        cv::circle(canvas, shuffledDst[i], 5, color, 1);
+        if (!H.empty()) {
+            cv::Mat p = (cv::Mat_<double>(3, 1) << shuffledSrc[i].x, shuffledSrc[i].y, 1.0);
+            cv::Mat pp = H * p;
+            if (std::abs(pp.at<double>(2)) > 1e-10) {
+                cv::Point proj(static_cast<int>(pp.at<double>(0) / pp.at<double>(2)),
+                               static_cast<int>(pp.at<double>(1) / pp.at<double>(2)));
+                cv::drawMarker(canvas, proj, color, cv::MARKER_CROSS, 8, 1);
+            }
+        }
+    }
+    cv::putText(canvas, "circle=observed dst  cross=H*src  green=inlier  red=outlier",
+                cv::Point(10, 20), cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(0, 0, 0), 1);
+    return canvas;
 }
 
 int main() {
     std::cout << "=== Custom RANSAC Implementation ===" << std::endl;
     std::cout << "Understanding RANSAC internals for Visual SLAM" << std::endl;
 
-    testLineFitting();
-    testHomography();
+    cv::Mat lineVis = testLineFitting();
+    cv::Mat homographyVis = testHomography();
 
     std::cout << "\n=== Key Takeaways ===" << std::endl;
     std::cout << "1. RANSAC requires minimum sample size (2 for line, 4 for homography)" << std::endl;
     std::cout << "2. Adaptive iteration count saves computation" << std::endl;
     std::cout << "3. Model refinement using all inliers improves accuracy" << std::endl;
     std::cout << "4. Degenerate configuration checking prevents bad solutions" << std::endl;
+
+    cv::imwrite("custom_ransac_line.jpg", lineVis);
+    cv::imwrite("custom_ransac_homography.jpg", homographyVis);
+    std::cout << "\nSaved: custom_ransac_line.jpg, custom_ransac_homography.jpg" << std::endl;
+    if (std::getenv("DISPLAY") != nullptr) {
+        cv::imshow("Custom RANSAC: line fitting", lineVis);
+        cv::imshow("Custom RANSAC: homography", homographyVis);
+        std::cout << "Press any key to exit..." << std::endl;
+        cv::waitKey(0);
+    }
 
     return 0;
 }
