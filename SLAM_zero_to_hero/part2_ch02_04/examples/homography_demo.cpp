@@ -1,290 +1,270 @@
 /**
- * Homography Estimation and Decomposition Demo
+ * @file homography_demo.cpp
+ * @brief Homography Estimation and Decomposition on Real Images
  *
- * This example demonstrates:
- * 1. Estimating homography from point correspondences
- * 2. Homography decomposition into rotation, translation, and normal
- * 3. Using homography for image warping and rectification
- * 4. RANSAC-based robust homography estimation
+ * Part 1 — Estimation (Oxford VGG "wall" dataset, planar brick wall):
+ *   1. Match ORB features between two views of a planar scene
+ *   2. Estimate H with plain DLT (all matches) and with RANSAC
+ *   3. Compare both against the dataset's ground-truth homography
+ *   4. Warp image 1 into image 3 and blend to verify alignment
  *
- * A homography H relates points on a plane between two views:
- *   x' = H * x
+ * Part 2 — Decomposition (KITTI odometry seq 00, turning vehicle):
+ *   1. Estimate H between two frames of a ~21 degree turn
+ *   2. Decompose H into {R, t/d, n} with the real KITTI intrinsics
+ *   3. Compare the recovered rotation against the KITTI ground-truth poses
  *
- * For calibrated cameras:
- *   H = K * (R - t*n'/d) * K^(-1)
- *
- * where n' is the plane normal and d is the distance to the plane.
+ * A homography H relates points on a plane (or any points under pure
+ * rotation) between two views:
+ *   x' = H * x,   H = K * (R - t*n^T/d) * K^(-1)
+ * where n is the plane normal and d the distance to the plane.
  */
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
 
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include <vector>
-#include <random>
-#include <cmath>
 
 /**
- * Generate synthetic planar points and their transformed projections
+ * @brief Detect ORB features and match with ratio test
  */
-void generatePlanarCorrespondences(
-    const cv::Mat& H,
+static void detectAndMatch(
+    const cv::Mat& img1,
+    const cv::Mat& img2,
     std::vector<cv::Point2f>& pts1,
     std::vector<cv::Point2f>& pts2,
-    int num_points = 50,
-    double noise_sigma = 0.0) {
+    float ratio_thresh) {
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> x_dist(100, 540);
-    std::uniform_real_distribution<> y_dist(100, 380);
-    std::normal_distribution<> noise(0, noise_sigma);
+    cv::Ptr<cv::ORB> orb = cv::ORB::create(5000);
+    std::vector<cv::KeyPoint> kp1, kp2;
+    cv::Mat desc1, desc2;
+    orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
+    orb->detectAndCompute(img2, cv::noArray(), kp2, desc2);
+
+    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    std::vector<std::vector<cv::DMatch>> knn_matches;
+    matcher.knnMatch(desc1, desc2, knn_matches, 2);
 
     pts1.clear();
     pts2.clear();
-
-    for (int i = 0; i < num_points; ++i) {
-        cv::Point2f p1(x_dist(gen), y_dist(gen));
-
-        // Transform point using homography
-        cv::Mat p1_h = (cv::Mat_<double>(3, 1) << p1.x, p1.y, 1.0);
-        cv::Mat p2_h = H * p1_h;
-
-        cv::Point2f p2(p2_h.at<double>(0) / p2_h.at<double>(2),
-                       p2_h.at<double>(1) / p2_h.at<double>(2));
-
-        // Add noise
-        if (noise_sigma > 0) {
-            p1.x += noise(gen);
-            p1.y += noise(gen);
-            p2.x += noise(gen);
-            p2.y += noise(gen);
+    for (const auto& m : knn_matches) {
+        if (m.size() >= 2 && m[0].distance < ratio_thresh * m[1].distance) {
+            pts1.push_back(kp1[m[0].queryIdx].pt);
+            pts2.push_back(kp2[m[0].trainIdx].pt);
         }
-
-        pts1.push_back(p1);
-        pts2.push_back(p2);
     }
 }
 
 /**
- * Verify homography: compute reprojection error
+ * @brief Load a 3x3 matrix from a whitespace-separated text file
  */
-double computeHomographyError(
-    const cv::Mat& H,
-    const std::vector<cv::Point2f>& pts1,
-    const std::vector<cv::Point2f>& pts2) {
-
-    double total_error = 0;
-    for (size_t i = 0; i < pts1.size(); ++i) {
-        cv::Mat p1_h = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
-        cv::Mat p2_h = H * p1_h;
-
-        cv::Point2f p2_proj(p2_h.at<double>(0) / p2_h.at<double>(2),
-                            p2_h.at<double>(1) / p2_h.at<double>(2));
-
-        double dx = p2_proj.x - pts2[i].x;
-        double dy = p2_proj.y - pts2[i].y;
-        total_error += std::sqrt(dx * dx + dy * dy);
+static cv::Mat load3x3(const std::string& path) {
+    std::ifstream file(path);
+    if (!file) {
+        std::cerr << "Error: could not open " << path << std::endl;
+        std::exit(1);
     }
+    cv::Mat M(3, 3, CV_64F);
+    for (int i = 0; i < 9; ++i) file >> M.at<double>(i / 3, i % 3);
+    return M;
+}
 
-    return total_error / pts1.size();
+/**
+ * @brief Load KITTI pose rows (3x4 row-major per line) as 4x4 matrices
+ */
+static std::vector<cv::Mat> loadKittiPoses(const std::string& path) {
+    std::ifstream file(path);
+    if (!file) {
+        std::cerr << "Error: could not open " << path << std::endl;
+        std::exit(1);
+    }
+    std::vector<cv::Mat> poses;
+    double v[12];
+    while (file >> v[0] >> v[1] >> v[2] >> v[3] >> v[4] >> v[5]
+                >> v[6] >> v[7] >> v[8] >> v[9] >> v[10] >> v[11]) {
+        cv::Mat T = cv::Mat::eye(4, 4, CV_64F);
+        for (int i = 0; i < 12; ++i) T.at<double>(i / 4, i % 4) = v[i];
+        poses.push_back(T);
+    }
+    return poses;
+}
+
+/**
+ * @brief Mean transfer error between two homographies over an image grid
+ *
+ * Compares where H_est and H_gt send the same grid of points; this
+ * measures the estimate against the ground truth over the whole image,
+ * not just at the matched features.
+ */
+static double gridErrorVsGroundTruth(
+    const cv::Mat& H_est, const cv::Mat& H_gt, const cv::Size& img_size) {
+
+    std::vector<cv::Point2f> grid;
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 20; ++x)
+            grid.emplace_back(x * (img_size.width - 1) / 19.0f,
+                              y * (img_size.height - 1) / 11.0f);
+
+    std::vector<cv::Point2f> proj_est, proj_gt;
+    cv::perspectiveTransform(grid, proj_est, H_est);
+    cv::perspectiveTransform(grid, proj_gt, H_gt);
+
+    double total = 0;
+    for (size_t i = 0; i < grid.size(); ++i)
+        total += cv::norm(proj_est[i] - proj_gt[i]);
+    return total / grid.size();
+}
+
+/**
+ * @brief Rotation angle (degrees) of a rotation matrix
+ */
+static double rotationAngleDeg(const cv::Mat& R) {
+    double tr = std::min(3.0, std::max(-1.0, cv::trace(R)[0]));
+    return std::acos((tr - 1.0) / 2.0) * 180.0 / CV_PI;
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== Homography Estimation and Decomposition ===\n" << std::endl;
+    const std::string data_dir = (argc > 1) ? argv[1] : "data";
 
-    // Camera intrinsic matrix
-    double fx = 500, fy = 500;
-    double cx = 320, cy = 240;
-    cv::Mat K = (cv::Mat_<double>(3, 3) <<
-        fx, 0, cx,
-        0, fy, cy,
-        0, 0, 1);
-
-    std::cout << "Camera Intrinsics K:\n" << K << std::endl << std::endl;
-
-    // Create a ground truth homography
-    // H = K * (R - t*n'/d) * K^(-1)
-
-    // Rotation (15 degrees around Z axis)
-    double angle = 15.0 * CV_PI / 180.0;
-    cv::Mat R = (cv::Mat_<double>(3, 3) <<
-        std::cos(angle), -std::sin(angle), 0,
-        std::sin(angle), std::cos(angle), 0,
-        0, 0, 1);
-
-    // Translation (camera moves along X)
-    cv::Mat t = (cv::Mat_<double>(3, 1) << 0.3, 0.0, 0.0);
-
-    // Plane normal (ground plane, pointing up)
-    cv::Mat n = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 1.0);
-
-    // Distance to plane
-    double d = 5.0;
-
-    // Compute homography
-    cv::Mat tn = t * n.t();
-    cv::Mat H_normalized = R - tn / d;
-    cv::Mat K_inv = K.inv();
-    cv::Mat H_gt = K * H_normalized * K_inv;
-
-    // Normalize so H[2,2] = 1
-    H_gt = H_gt / H_gt.at<double>(2, 2);
-
-    std::cout << "Ground Truth:" << std::endl;
-    std::cout << "  Rotation angle: " << angle * 180.0 / CV_PI << " degrees" << std::endl;
-    std::cout << "  Translation: " << t.t() << std::endl;
-    std::cout << "  Plane normal: " << n.t() << std::endl;
-    std::cout << "  Plane distance: " << d << std::endl;
-    std::cout << "\nGround Truth Homography:\n" << H_gt << std::endl;
-    std::cout << std::endl;
-
-    // Generate correspondences
-    std::vector<cv::Point2f> pts1, pts2;
-    generatePlanarCorrespondences(H_gt, pts1, pts2, 100, 1.0);  // 1 pixel noise
-
-    std::cout << "Generated " << pts1.size() << " point correspondences"
-              << std::endl << std::endl;
+    std::cout << "=== Homography Estimation and Decomposition (real images) ===\n"
+              << std::endl;
 
     // =========================================================
-    // Method 1: DLT (Direct Linear Transform)
+    // Part 1: Estimation on a planar scene (Oxford VGG "wall")
     // =========================================================
-    std::cout << "=== DLT Homography Estimation ===" << std::endl;
+    std::cout << "--- Part 1: Estimation vs ground truth (wall, planar) ---"
+              << std::endl;
 
-    cv::Mat H_dlt = cv::findHomography(pts1, pts2, 0);  // Method 0 = DLT
-    H_dlt = H_dlt / H_dlt.at<double>(2, 2);
+    cv::Mat wall1 = cv::imread(data_dir + "/wall_img1.png");
+    cv::Mat wall3 = cv::imread(data_dir + "/wall_img3.png");
+    if (wall1.empty() || wall3.empty()) {
+        std::cerr << "Error: could not load wall images from " << data_dir
+                  << " (run from the chapter root, or pass the data dir as arg)"
+                  << std::endl;
+        return 1;
+    }
+    cv::Mat H_gt = load3x3(data_dir + "/wall_H1to3p.txt");
+    H_gt /= H_gt.at<double>(2, 2);
 
-    double error_dlt = computeHomographyError(H_dlt, pts1, pts2);
-    std::cout << "Estimated H (DLT):\n" << H_dlt << std::endl;
-    std::cout << "Mean reprojection error: " << error_dlt << " pixels" << std::endl;
-    std::cout << std::endl;
+    // Loose ratio test on purpose: keeps ~10% natural mismatches so the
+    // DLT-vs-RANSAC comparison below is meaningful.
+    std::vector<cv::Point2f> pts1, pts3;
+    detectAndMatch(wall1, wall3, pts1, pts3, 0.85f);
+    std::cout << "Matches (ratio 0.85): " << pts1.size() << std::endl;
 
-    // =========================================================
-    // Method 2: RANSAC (Robust to outliers)
-    // =========================================================
-    std::cout << "=== RANSAC Homography Estimation ===" << std::endl;
-
-    // Add outliers
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> outlier_dist(0, 640);
-
-    std::vector<cv::Point2f> pts1_outliers = pts1;
-    std::vector<cv::Point2f> pts2_outliers = pts2;
-
-    int num_outliers = pts1.size() * 0.2;  // 20% outliers
-    for (int i = 0; i < num_outliers; ++i) {
-        pts1_outliers.push_back(cv::Point2f(outlier_dist(gen), outlier_dist(gen)));
-        pts2_outliers.push_back(cv::Point2f(outlier_dist(gen), outlier_dist(gen)));
+    if (pts1.size() < 10) {
+        std::cerr << "Error: not enough matches!" << std::endl;
+        return 1;
     }
 
+    // DLT on all matches (no robustness)
+    cv::Mat H_dlt = cv::findHomography(pts1, pts3, 0);
+
+    // RANSAC
     cv::Mat inlier_mask;
-    cv::Mat H_ransac = cv::findHomography(
-        pts1_outliers, pts2_outliers,
-        cv::RANSAC,     // Method
-        3.0,            // RANSAC threshold
-        inlier_mask,
-        2000,           // Max iterations
-        0.995           // Confidence
-    );
-    H_ransac = H_ransac / H_ransac.at<double>(2, 2);
-
+    cv::Mat H_ransac =
+        cv::findHomography(pts1, pts3, cv::RANSAC, 3.0, inlier_mask, 2000, 0.995);
     int num_inliers = cv::countNonZero(inlier_mask);
-    double error_ransac = computeHomographyError(H_ransac, pts1, pts2);
 
-    std::cout << "Inliers: " << num_inliers << "/" << pts1_outliers.size() << std::endl;
-    std::cout << "Estimated H (RANSAC):\n" << H_ransac << std::endl;
-    std::cout << "Mean reprojection error: " << error_ransac << " pixels" << std::endl;
-    std::cout << std::endl;
+    std::cout << "RANSAC inliers: " << num_inliers << "/" << pts1.size()
+              << " (" << 100.0 * num_inliers / pts1.size() << "%)" << std::endl;
+    std::cout << "\nGround-truth H (VGG H1to3p):\n" << H_gt << std::endl;
+    std::cout << "\nEstimated H (RANSAC):\n"
+              << H_ransac / H_ransac.at<double>(2, 2) << std::endl;
+
+    double err_dlt = gridErrorVsGroundTruth(H_dlt, H_gt, wall1.size());
+    double err_ransac = gridErrorVsGroundTruth(H_ransac, H_gt, wall1.size());
+    std::cout << "\nMean grid transfer error vs ground truth:" << std::endl;
+    std::cout << "  DLT (all matches, ~10% outliers): " << err_dlt << " px"
+              << std::endl;
+    std::cout << "  RANSAC:                           " << err_ransac << " px"
+              << std::endl;
+
+    // Warp wall1 into wall3's frame and blend to verify alignment
+    cv::Mat warped, blend;
+    cv::warpPerspective(wall1, warped, H_ransac, wall3.size());
+    cv::addWeighted(wall3, 0.5, warped, 0.5, 0, blend);
+    cv::imwrite("wall_warped.png", warped);
+    cv::imwrite("wall_blend.png", blend);
+    std::cout << "\nSaved: wall_warped.png, wall_blend.png "
+                 "(blend should show a sharp, aligned wall)" << std::endl;
+
+    if (std::getenv("DISPLAY") != nullptr) {
+        cv::imshow("wall img3", wall3);
+        cv::imshow("wall img1 warped into img3 (RANSAC H)", warped);
+        cv::imshow("50/50 blend (sharp bricks = sub-pixel H)", blend);
+        std::cout << "Press any key to continue..." << std::endl;
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+    }
 
     // =========================================================
-    // Homography Decomposition
+    // Part 2: Decomposition on KITTI (turning vehicle)
     // =========================================================
-    std::cout << "=== Homography Decomposition ===" << std::endl;
+    std::cout << "\n--- Part 2: Decomposition vs KITTI ground truth (turn) ---"
+              << std::endl;
 
+    cv::Mat kitti1 = cv::imread(data_dir + "/kitti00_turn_003677.png");
+    cv::Mat kitti2 = cv::imread(data_dir + "/kitti00_turn_003682.png");
+    if (kitti1.empty() || kitti2.empty()) {
+        std::cerr << "Error: could not load KITTI turn images" << std::endl;
+        return 1;
+    }
+
+    // KITTI odometry seq 00, camera 0 intrinsics (P0 in calib.txt)
+    cv::Mat K = (cv::Mat_<double>(3, 3) <<
+        718.856, 0.0, 607.1928,
+        0.0, 718.856, 185.2157,
+        0.0, 0.0, 1.0);
+
+    std::vector<cv::Point2f> kpts1, kpts2;
+    detectAndMatch(kitti1, kitti2, kpts1, kpts2, 0.75f);
+    std::cout << "Matches: " << kpts1.size() << std::endl;
+
+    cv::Mat kitti_mask;
+    cv::Mat H_kitti =
+        cv::findHomography(kpts1, kpts2, cv::RANSAC, 3.0, kitti_mask, 2000, 0.995);
+    std::cout << "RANSAC inliers: " << cv::countNonZero(kitti_mask) << "/"
+              << kpts1.size() << std::endl;
+
+    // Ground truth relative motion from the KITTI poses (frames 3677, 3682)
+    auto poses = loadKittiPoses(data_dir + "/kitti00_turn_poses.txt");
+    if (poses.size() != 2) {
+        std::cerr << "Error: expected 2 poses in kitti00_turn_poses.txt"
+                  << std::endl;
+        return 1;
+    }
+    cv::Mat T_rel = poses[0].inv() * poses[1];
+    cv::Mat R_gt = T_rel(cv::Rect(0, 0, 3, 3));
+    cv::Mat t_gt = T_rel(cv::Rect(3, 0, 1, 3));
+    std::cout << "\nGround truth (KITTI poses, frame 3677 -> 3682):" << std::endl;
+    std::cout << "  Rotation: " << rotationAngleDeg(R_gt) << " degrees"
+              << std::endl;
+    std::cout << "  Translation: " << cv::norm(t_gt) << " m" << std::endl;
+
+    // Decompose H = K (R - t n^T / d) K^-1  ->  4 mathematical solutions
     std::vector<cv::Mat> Rs, ts, normals;
-    int num_solutions = cv::decomposeHomographyMat(
-        H_ransac, K, Rs, ts, normals);
-
-    std::cout << "Number of solutions: " << num_solutions << std::endl;
+    int num_solutions = cv::decomposeHomographyMat(H_kitti, K, Rs, ts, normals);
+    std::cout << "\nDecomposition solutions: " << num_solutions
+              << " (twofold ambiguity; cheirality + a reference plane resolve it)"
+              << std::endl;
 
     for (int i = 0; i < num_solutions; ++i) {
-        std::cout << "\nSolution " << (i + 1) << ":" << std::endl;
-
-        // Rotation to angle-axis
-        cv::Mat rvec;
-        cv::Rodrigues(Rs[i], rvec);
-        double rot_angle = cv::norm(rvec) * 180.0 / CV_PI;
-
-        std::cout << "  Rotation angle: " << rot_angle << " degrees" << std::endl;
-        std::cout << "  Translation: " << ts[i].t() << std::endl;
-        std::cout << "  Normal: " << normals[i].t() << std::endl;
-
-        // Check if solution is physically plausible
-        // Normal should point towards camera (z > 0 in camera frame)
-        bool valid = normals[i].at<double>(2) > 0;
-        std::cout << "  Physically valid: " << (valid ? "Yes" : "No") << std::endl;
+        std::cout << "  Solution " << (i + 1) << ": rotation = "
+                  << rotationAngleDeg(Rs[i]) << " deg"
+                  << ", t/d = " << ts[i].t()
+                  << ", n = " << normals[i].t() << std::endl;
     }
-    std::cout << std::endl;
-
-    // =========================================================
-    // Image Warping Demo
-    // =========================================================
-    std::cout << "=== Image Warping Demo ===" << std::endl;
-
-    // Create a synthetic image with a checkerboard pattern
-    cv::Mat src_img(480, 640, CV_8UC3, cv::Scalar(200, 200, 200));
-
-    // Draw checkerboard
-    int square_size = 40;
-    for (int y = 0; y < src_img.rows; y += square_size) {
-        for (int x = 0; x < src_img.cols; x += square_size) {
-            if (((x / square_size) + (y / square_size)) % 2 == 0) {
-                cv::rectangle(src_img,
-                    cv::Point(x, y),
-                    cv::Point(x + square_size, y + square_size),
-                    cv::Scalar(50, 50, 50), -1);
-            }
-        }
-    }
-
-    // Add some circles for reference
-    cv::circle(src_img, cv::Point(320, 240), 50, cv::Scalar(0, 0, 255), 3);
-    cv::circle(src_img, cv::Point(200, 150), 30, cv::Scalar(0, 255, 0), 3);
-    cv::circle(src_img, cv::Point(450, 350), 40, cv::Scalar(255, 0, 0), 3);
-
-    // Warp image using homography
-    cv::Mat dst_img;
-    cv::warpPerspective(src_img, dst_img, H_gt, src_img.size());
-
-    // Save images
-    cv::imwrite("homography_original.png", src_img);
-    cv::imwrite("homography_warped.png", dst_img);
-
-    std::cout << "Saved images:" << std::endl;
-    std::cout << "  homography_original.png" << std::endl;
-    std::cout << "  homography_warped.png" << std::endl;
-
-    // Combine for visualization
-    cv::Mat combined;
-    cv::hconcat(src_img, dst_img, combined);
-    cv::imwrite("homography_comparison.png", combined);
-    std::cout << "  homography_comparison.png" << std::endl;
-
-    // =========================================================
-    // Inverse Warping (Rectification)
-    // =========================================================
-    std::cout << "\n=== Inverse Warping ===" << std::endl;
-
-    cv::Mat H_inv = H_gt.inv();
-    cv::Mat rectified;
-    cv::warpPerspective(dst_img, rectified, H_inv, dst_img.size());
-
-    cv::imwrite("homography_rectified.png", rectified);
-    std::cout << "Saved: homography_rectified.png (should match original)" << std::endl;
+    std::cout << "\nNote: the scene is not planar, but the turn is "
+                 "rotation-dominant and the buildings are distant, so the "
+                 "recovered rotation is close to the ground truth. The "
+                 "translation is only known up to the plane distance d."
+              << std::endl;
 
     std::cout << "\n=== Demo Complete ===" << std::endl;
-
     return 0;
 }

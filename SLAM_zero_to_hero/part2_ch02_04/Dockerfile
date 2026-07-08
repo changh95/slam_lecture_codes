@@ -12,4 +12,5 @@ RUN cd /workspace/part2_ch02_04 && \
 # Create output directory for visualization results
 RUN mkdir -p /output
 
-WORKDIR /workspace/part2_ch02_04/build
+# Run from the chapter root so the demos find the default data/ paths
+WORKDIR /workspace/part2_ch02_04

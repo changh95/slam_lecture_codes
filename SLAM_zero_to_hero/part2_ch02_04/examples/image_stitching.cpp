@@ -2,8 +2,16 @@
  * @file image_stitching.cpp
  * @brief Image Stitching / Panorama Demo using OpenCV
  *
- * This example demonstrates how to stitch two overlapping images
- * into a panorama using homography estimation.
+ * Stitches two real KITTI frames into a panorama using homography
+ * estimation. The default pair (seq 00, frames 3677 -> 3682) is taken
+ * while the car turns ~21 degrees: the motion is rotation-dominant and
+ * the scene is distant, so a single homography aligns the views well.
+ *
+ * Try the forward-motion pair to see when this breaks down:
+ *   ./image_stitching data/kitti00_fwd_000024.png data/kitti00_fwd_000025.png
+ * Forward translation through a 3D scene violates the homography model:
+ * the second view is just a "zoom" of the first (no new field of view)
+ * and nearby structure ghosts due to parallax.
  *
  * Pipeline:
  * 1. Detect ORB features in both images
@@ -17,52 +25,11 @@
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
 
+#include <cstdlib>
 #include <iostream>
+#include <string>
 #include <vector>
 #include <cmath>
-
-/**
- * @brief Create synthetic overlapping images for testing
- */
-void createSyntheticImages(cv::Mat& img1, cv::Mat& img2) {
-    // Create a large "scene" image
-    cv::Mat scene(400, 800, CV_8UC3, cv::Scalar(100, 100, 100));
-
-    // Draw some features on the scene
-    std::vector<cv::Point> polygons = {
-        {100, 100}, {200, 80}, {250, 150}, {180, 200}, {100, 180}
-    };
-    cv::fillPoly(scene, std::vector<std::vector<cv::Point>>{polygons}, cv::Scalar(0, 0, 255));
-
-    cv::circle(scene, cv::Point(400, 150), 50, cv::Scalar(0, 255, 0), -1);
-    cv::circle(scene, cv::Point(450, 200), 30, cv::Scalar(255, 255, 0), -1);
-
-    cv::rectangle(scene, cv::Point(550, 100), cv::Point(700, 250), cv::Scalar(255, 0, 0), -1);
-
-    // Add some texture (grid pattern)
-    for (int y = 0; y < scene.rows; y += 20) {
-        cv::line(scene, cv::Point(0, y), cv::Point(scene.cols, y), cv::Scalar(80, 80, 80), 1);
-    }
-    for (int x = 0; x < scene.cols; x += 20) {
-        cv::line(scene, cv::Point(x, 0), cv::Point(x, scene.rows), cv::Scalar(80, 80, 80), 1);
-    }
-
-    // Add random dots for more features
-    cv::RNG rng(42);
-    for (int i = 0; i < 200; ++i) {
-        int x = rng.uniform(0, scene.cols);
-        int y = rng.uniform(0, scene.rows);
-        cv::circle(scene, cv::Point(x, y), 3, cv::Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255)), -1);
-    }
-
-    // Extract two overlapping regions
-    img1 = scene(cv::Rect(0, 0, 500, 400)).clone();
-    img2 = scene(cv::Rect(300, 0, 500, 400)).clone();
-
-    // Add labels
-    cv::putText(img1, "Image 1", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255), 2);
-    cv::putText(img2, "Image 2", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255), 2);
-}
 
 /**
  * @brief Detect and match features between two images
@@ -75,7 +42,7 @@ void detectAndMatch(
     std::vector<cv::DMatch>& good_matches) {
 
     // Create ORB detector
-    cv::Ptr<cv::ORB> orb = cv::ORB::create(2000);
+    cv::Ptr<cv::ORB> orb = cv::ORB::create(3000);
 
     // Detect keypoints and compute descriptors
     std::vector<cv::KeyPoint> kp1, kp2;
@@ -183,25 +150,19 @@ cv::Mat warpAndBlend(
         static_cast<int>(offset.y),
         img1.cols, img1.rows)));
 
-    // Simple blending: average in overlap, otherwise copy
+    // Simple compositing: img1 on top in the overlap. Averaging instead
+    // would reveal residual parallax as ghosting (try it: any structure
+    // off the dominant plane cannot be aligned by a single homography).
     for (int y = 0; y < canvas_size.height; ++y) {
         for (int x = 0; x < canvas_size.width; ++x) {
             cv::Vec3b p1 = img1_canvas.at<cv::Vec3b>(y, x);
             cv::Vec3b p2 = img2_warped.at<cv::Vec3b>(y, x);
 
             bool has_p1 = (p1[0] != 0 || p1[1] != 0 || p1[2] != 0);
-            bool has_p2 = (p2[0] != 0 || p2[1] != 0 || p2[2] != 0);
 
-            if (has_p1 && has_p2) {
-                // Average blend
-                canvas.at<cv::Vec3b>(y, x) = cv::Vec3b(
-                    (p1[0] + p2[0]) / 2,
-                    (p1[1] + p2[1]) / 2,
-                    (p1[2] + p2[2]) / 2
-                );
-            } else if (has_p1) {
+            if (has_p1) {
                 canvas.at<cv::Vec3b>(y, x) = p1;
-            } else if (has_p2) {
+            } else {
                 canvas.at<cv::Vec3b>(y, x) = p2;
             }
         }
@@ -250,25 +211,23 @@ int main(int argc, char* argv[]) {
     std::cout << "Image Stitching / Panorama Demo" << std::endl;
     std::cout << "==========================================" << std::endl;
 
-    cv::Mat img1, img2;
-
-    // Load images or create synthetic ones
+    // Default: KITTI seq 00 turning pair (rotation-dominant -> good panorama)
+    std::string path1 = "data/kitti00_turn_003677.png";
+    std::string path2 = "data/kitti00_turn_003682.png";
     if (argc >= 3) {
-        img1 = cv::imread(argv[1]);
-        img2 = cv::imread(argv[2]);
-
-        if (img1.empty() || img2.empty()) {
-            std::cerr << "Error: Could not load images!" << std::endl;
-            std::cout << "Usage: " << argv[0] << " [image1.jpg image2.jpg]" << std::endl;
-            std::cout << "Running with synthetic images..." << std::endl;
-            createSyntheticImages(img1, img2);
-        } else {
-            std::cout << "Loaded images: " << argv[1] << ", " << argv[2] << std::endl;
-        }
-    } else {
-        std::cout << "No images provided. Using synthetic images." << std::endl;
-        createSyntheticImages(img1, img2);
+        path1 = argv[1];
+        path2 = argv[2];
     }
+
+    cv::Mat img1 = cv::imread(path1);
+    cv::Mat img2 = cv::imread(path2);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: could not load " << path1 << " / " << path2 << std::endl;
+        std::cout << "Usage: " << argv[0] << " [image1 image2]" << std::endl;
+        std::cout << "(run from the chapter root so the default data/ paths resolve)" << std::endl;
+        return -1;
+    }
+    std::cout << "Loaded images: " << path1 << ", " << path2 << std::endl;
 
     std::cout << "\nImage sizes: " << img1.cols << "x" << img1.rows
               << ", " << img2.cols << "x" << img2.rows << std::endl;
@@ -289,20 +248,21 @@ int main(int argc, char* argv[]) {
     cv::Mat inlier_mask;
     cv::Mat H = cv::findHomography(pts2, pts1, cv::RANSAC, 3.0, inlier_mask, 2000, 0.995);
 
-    int inliers = cv::countNonZero(inlier_mask);
-    std::cout << "  Inliers: " << inliers << "/" << pts1.size() << std::endl;
-    std::cout << "  Homography:\n" << H << std::endl;
-
     if (H.empty()) {
         std::cerr << "Error: Could not compute homography!" << std::endl;
         return -1;
     }
 
+    int inliers = cv::countNonZero(inlier_mask);
+    std::cout << "  Inliers: " << inliers << "/" << pts1.size() << std::endl;
+    std::cout << "  Homography:\n" << H << std::endl;
+
     // Step 3: Compute canvas size
     std::cout << "\n--- Step 3: Canvas Size Calculation ---" << std::endl;
     cv::Point2f offset;
     cv::Size canvas_size = computeCanvasSize(img1, img2, H, offset);
-    std::cout << "  Canvas size: " << canvas_size.width << "x" << canvas_size.height << std::endl;
+    std::cout << "  Canvas size: " << canvas_size.width << "x" << canvas_size.height
+              << " (input " << img1.cols << "x" << img1.rows << ")" << std::endl;
     std::cout << "  Offset: (" << offset.x << ", " << offset.y << ")" << std::endl;
 
     // Step 4: Warp and blend
@@ -313,20 +273,20 @@ int main(int argc, char* argv[]) {
     // Visualizations
     cv::Mat matches_vis = drawMatchesVisualization(img1, img2, pts1, pts2, inlier_mask);
 
-    // Display results
-    cv::imshow("Image 1", img1);
-    cv::imshow("Image 2", img2);
-    cv::imshow("Matches (Green=Inliers, Red=Outliers)", matches_vis);
-    cv::imshow("Panorama", panorama);
-
-    std::cout << "\n--- Results ---" << std::endl;
-    std::cout << "Press any key to exit..." << std::endl;
-    cv::waitKey(0);
-
     // Save results
     cv::imwrite("panorama_result.jpg", panorama);
     cv::imwrite("matches_visualization.jpg", matches_vis);
-    std::cout << "Saved: panorama_result.jpg, matches_visualization.jpg" << std::endl;
+    std::cout << "\nSaved: panorama_result.jpg, matches_visualization.jpg" << std::endl;
+
+    // Display results (only when a display is available)
+    if (std::getenv("DISPLAY") != nullptr) {
+        cv::imshow("Image 1", img1);
+        cv::imshow("Image 2", img2);
+        cv::imshow("Matches (Green=Inliers, Red=Outliers)", matches_vis);
+        cv::imshow("Panorama", panorama);
+        std::cout << "Press any key to exit..." << std::endl;
+        cv::waitKey(0);
+    }
 
     return 0;
 }

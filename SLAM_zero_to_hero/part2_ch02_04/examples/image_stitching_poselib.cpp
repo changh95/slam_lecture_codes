@@ -2,18 +2,26 @@
  * @file image_stitching_poselib.cpp
  * @brief Image Stitching using PoseLib 4-point Homography Solver
  *
- * This example demonstrates image stitching using PoseLib's minimal
- * homography solver with a custom RANSAC implementation.
+ * Same panorama experiment as image_stitching.cpp (KITTI seq 00 turning
+ * pair by default), but the homography is estimated with PoseLib's
+ * minimal 4-point solver inside a hand-rolled RANSAC loop.
+ *
+ * The solver runs in normalized coordinates; the pixel homography is
+ * recovered as H_pixel = K * H_norm * K^-1. Any invertible K works for
+ * this round trip, so an approximate K built from the image size is
+ * used — for a homography, K only acts as data normalization here.
  *
  * PoseLib: https://github.com/PoseLib/PoseLib
  */
 
-#include <iostream>
-#include <iomanip>
-#include <vector>
-#include <random>
-#include <cmath>
 #include <algorithm>
+#include <cstdlib>
+#include <iomanip>
+#include <iostream>
+#include <numeric>
+#include <random>
+#include <string>
+#include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -24,40 +32,6 @@
 #include <opencv2/calib3d.hpp>
 
 /**
- * @brief Create synthetic overlapping images for testing
- */
-void createSyntheticImages(cv::Mat& img1, cv::Mat& img2) {
-    cv::Mat scene(400, 800, CV_8UC3, cv::Scalar(100, 100, 100));
-
-    // Draw features
-    std::vector<cv::Point> polygons = {{100, 100}, {200, 80}, {250, 150}, {180, 200}, {100, 180}};
-    cv::fillPoly(scene, std::vector<std::vector<cv::Point>>{polygons}, cv::Scalar(0, 0, 255));
-
-    cv::circle(scene, cv::Point(400, 150), 50, cv::Scalar(0, 255, 0), -1);
-    cv::circle(scene, cv::Point(450, 200), 30, cv::Scalar(255, 255, 0), -1);
-    cv::rectangle(scene, cv::Point(550, 100), cv::Point(700, 250), cv::Scalar(255, 0, 0), -1);
-
-    // Grid pattern
-    for (int y = 0; y < scene.rows; y += 20)
-        cv::line(scene, cv::Point(0, y), cv::Point(scene.cols, y), cv::Scalar(80, 80, 80), 1);
-    for (int x = 0; x < scene.cols; x += 20)
-        cv::line(scene, cv::Point(x, 0), cv::Point(x, scene.rows), cv::Scalar(80, 80, 80), 1);
-
-    // Random dots
-    cv::RNG rng(42);
-    for (int i = 0; i < 200; ++i) {
-        cv::circle(scene, cv::Point(rng.uniform(0, scene.cols), rng.uniform(0, scene.rows)),
-                   3, cv::Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255)), -1);
-    }
-
-    img1 = scene(cv::Rect(0, 0, 500, 400)).clone();
-    img2 = scene(cv::Rect(300, 0, 500, 400)).clone();
-
-    cv::putText(img1, "Image 1", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255), 2);
-    cv::putText(img2, "Image 2", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255), 2);
-}
-
-/**
  * @brief Detect and match features
  */
 void detectAndMatch(
@@ -66,7 +40,7 @@ void detectAndMatch(
     std::vector<cv::Point2f>& pts1,
     std::vector<cv::Point2f>& pts2) {
 
-    cv::Ptr<cv::ORB> orb = cv::ORB::create(2000);
+    cv::Ptr<cv::ORB> orb = cv::ORB::create(3000);
 
     std::vector<cv::KeyPoint> kp1, kp2;
     cv::Mat desc1, desc2;
@@ -151,6 +125,10 @@ Eigen::Matrix3d ransacHomographyPoseLib(
     auto norm1 = pixelToNormalized(pts1, fx, fy, cx, cy);
     auto norm2 = pixelToNormalized(pts2, fx, fy, cx, cy);
 
+    Eigen::Matrix3d K;
+    K << fx, 0, cx, 0, fy, cy, 0, 0, 1;
+    Eigen::Matrix3d K_inv = K.inverse();
+
     std::mt19937 gen(42);
     int best_inliers = 0;
     Eigen::Matrix3d best_H = Eigen::Matrix3d::Identity();
@@ -172,9 +150,6 @@ Eigen::Matrix3d ransacHomographyPoseLib(
         if (num_solutions == 0) continue;
 
         // Convert to pixel coordinates: H_pixel = K * H_norm * K^-1
-        Eigen::Matrix3d K;
-        K << fx, 0, cx, 0, fy, cy, 0, 0, 1;
-        Eigen::Matrix3d K_inv = K.inverse();
         Eigen::Matrix3d H_pixel = K * H_norm * K_inv;
 
         // Count inliers
@@ -268,19 +243,17 @@ cv::Mat warpAndBlend(
     cv::Mat img1_canvas = cv::Mat::zeros(canvas_size, img1.type());
     img1.copyTo(img1_canvas(cv::Rect((int)offset.x, (int)offset.y, img1.cols, img1.rows)));
 
+    // Simple compositing: img1 on top in the overlap (see image_stitching.cpp)
     for (int y = 0; y < canvas_size.height; ++y) {
         for (int x = 0; x < canvas_size.width; ++x) {
             cv::Vec3b p1 = img1_canvas.at<cv::Vec3b>(y, x);
             cv::Vec3b p2 = img2_warped.at<cv::Vec3b>(y, x);
 
             bool has_p1 = (p1[0] || p1[1] || p1[2]);
-            bool has_p2 = (p2[0] || p2[1] || p2[2]);
 
-            if (has_p1 && has_p2) {
-                canvas.at<cv::Vec3b>(y, x) = cv::Vec3b((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2);
-            } else if (has_p1) {
+            if (has_p1) {
                 canvas.at<cv::Vec3b>(y, x) = p1;
-            } else if (has_p2) {
+            } else {
                 canvas.at<cv::Vec3b>(y, x) = p2;
             }
         }
@@ -294,21 +267,26 @@ int main(int argc, char* argv[]) {
     std::cout << "Image Stitching using PoseLib" << std::endl;
     std::cout << "==========================================" << std::endl;
 
-    cv::Mat img1, img2;
-
+    // Default: KITTI seq 00 turning pair (rotation-dominant -> good panorama)
+    std::string path1 = "data/kitti00_turn_003677.png";
+    std::string path2 = "data/kitti00_turn_003682.png";
     if (argc >= 3) {
-        img1 = cv::imread(argv[1]);
-        img2 = cv::imread(argv[2]);
-        if (img1.empty() || img2.empty()) {
-            std::cout << "Could not load images. Using synthetic images." << std::endl;
-            createSyntheticImages(img1, img2);
-        }
-    } else {
-        std::cout << "No images provided. Using synthetic images." << std::endl;
-        createSyntheticImages(img1, img2);
+        path1 = argv[1];
+        path2 = argv[2];
     }
 
-    // Camera parameters (approximate)
+    cv::Mat img1 = cv::imread(path1);
+    cv::Mat img2 = cv::imread(path2);
+    if (img1.empty() || img2.empty()) {
+        std::cerr << "Error: could not load " << path1 << " / " << path2 << std::endl;
+        std::cout << "Usage: " << argv[0] << " [image1 image2]" << std::endl;
+        std::cout << "(run from the chapter root so the default data/ paths resolve)" << std::endl;
+        return -1;
+    }
+    std::cout << "Loaded images: " << path1 << ", " << path2 << std::endl;
+
+    // Approximate camera parameters from the image size; for a
+    // homography this only normalizes the data (see file header).
     double fx = img1.cols;
     double fy = img1.cols;
     double cx = img1.cols / 2.0;
@@ -344,22 +322,24 @@ int main(int argc, char* argv[]) {
     std::cout << "\n--- Step 3: Canvas Size ---" << std::endl;
     cv::Point2f offset;
     cv::Size canvas_size = computeCanvasSize(img1, img2, H, offset);
-    std::cout << "  Size: " << canvas_size.width << "x" << canvas_size.height << std::endl;
+    std::cout << "  Size: " << canvas_size.width << "x" << canvas_size.height
+              << " (input " << img1.cols << "x" << img1.rows << ")" << std::endl;
 
     // Step 4: Warp and blend
     std::cout << "\n--- Step 4: Warping ---" << std::endl;
     cv::Mat panorama = warpAndBlend(img1, img2, H, canvas_size, offset);
 
-    // Display
-    cv::imshow("Image 1", img1);
-    cv::imshow("Image 2", img2);
-    cv::imshow("Panorama (PoseLib)", panorama);
-
-    std::cout << "\nPress any key to exit..." << std::endl;
-    cv::waitKey(0);
-
     cv::imwrite("panorama_poselib.jpg", panorama);
-    std::cout << "Saved: panorama_poselib.jpg" << std::endl;
+    std::cout << "\nSaved: panorama_poselib.jpg" << std::endl;
+
+    // Display (only when a display is available)
+    if (std::getenv("DISPLAY") != nullptr) {
+        cv::imshow("Image 1", img1);
+        cv::imshow("Image 2", img2);
+        cv::imshow("Panorama (PoseLib)", panorama);
+        std::cout << "Press any key to exit..." << std::endl;
+        cv::waitKey(0);
+    }
 
     return 0;
 }
