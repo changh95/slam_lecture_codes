@@ -4,6 +4,13 @@ project("ransac_usac_tutorial" LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Default to an optimized build: Eigen-heavy code is orders of magnitude
+# slower at -O0, which skews the timing comparisons these demos print.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 # Find OpenCV (required)
 find_package(OpenCV REQUIRED)
 if(OpenCV_FOUND)

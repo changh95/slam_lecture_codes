@@ -233,29 +233,30 @@ cv::Mat computeHomographyDLT(const std::vector<cv::Point2f>& src,
     return H;
 }
 
+// Squared reprojection error of point a mapped by the 3x3 homography (row-major
+// double pointer) against point b. Plain-double math: scoring runs once per
+// point per iteration, so it must not allocate.
+static inline double projectError(const double* H,
+                                  const cv::Point2f& a,
+                                  const cv::Point2f& b) {
+    double w = H[6] * a.x + H[7] * a.y + H[8];
+    if (std::abs(w) < 1e-12) return std::numeric_limits<double>::max();
+    double x = (H[0] * a.x + H[1] * a.y + H[2]) / w;
+    double y = (H[3] * a.x + H[4] * a.y + H[5]) / w;
+    double dx = x - b.x;
+    double dy = y - b.y;
+    return dx * dx + dy * dy;
+}
+
 /**
- * Compute symmetric transfer error for homography
+ * Compute symmetric transfer error for homography.
+ * Hinv is computed once per model by the caller, not per point.
  */
-double computeTransferError(const cv::Mat& H,
+double computeTransferError(const cv::Mat& H, const cv::Mat& Hinv,
                             const cv::Point2f& src,
                             const cv::Point2f& dst) {
-    // Forward projection error
-    cv::Mat p1 = (cv::Mat_<double>(3, 1) << src.x, src.y, 1.0);
-    cv::Mat p2_proj = H * p1;
-    double x2 = p2_proj.at<double>(0) / p2_proj.at<double>(2);
-    double y2 = p2_proj.at<double>(1) / p2_proj.at<double>(2);
-    double fwdError = std::pow(x2 - dst.x, 2) + std::pow(y2 - dst.y, 2);
-
-    // Backward projection error
-    cv::Mat Hinv = H.inv();
-    cv::Mat p2 = (cv::Mat_<double>(3, 1) << dst.x, dst.y, 1.0);
-    cv::Mat p1_proj = Hinv * p2;
-    double x1 = p1_proj.at<double>(0) / p1_proj.at<double>(2);
-    double y1 = p1_proj.at<double>(1) / p1_proj.at<double>(2);
-    double bwdError = std::pow(x1 - src.x, 2) + std::pow(y1 - src.y, 2);
-
-    // Symmetric transfer error
-    return fwdError + bwdError;
+    return projectError(H.ptr<double>(), src, dst)
+         + projectError(Hinv.ptr<double>(), dst, src);
 }
 
 /**
@@ -293,16 +294,27 @@ std::pair<cv::Mat, std::vector<bool>> ransacHomography(
     int iteration = 0;
     int adaptiveMaxIters = maxIterations;
 
-    while (iteration < adaptiveMaxIters && iteration < maxIterations) {
-        // 1. Random sample: select 4 points
-        std::vector<int> indices(n);
-        std::iota(indices.begin(), indices.end(), 0);
-        std::shuffle(indices.begin(), indices.end(), rng);
+    std::uniform_int_distribution<int> dist(0, n - 1);
+    std::vector<cv::Point2f> sampleSrc(sampleSize), sampleDst(sampleSize);
+    std::vector<bool> currentMask(n, false);
 
-        std::vector<cv::Point2f> sampleSrc(sampleSize), sampleDst(sampleSize);
+    while (iteration < adaptiveMaxIters && iteration < maxIterations) {
+        // 1. Random sample: 4 distinct indices by rejection sampling
+        //    (O(sampleSize), not an O(n) shuffle of all indices)
+        int idx[sampleSize];
         for (int i = 0; i < sampleSize; ++i) {
-            sampleSrc[i] = srcPoints[indices[i]];
-            sampleDst[i] = dstPoints[indices[i]];
+            bool duplicate;
+            do {
+                idx[i] = dist(rng);
+                duplicate = false;
+                for (int j = 0; j < i; ++j) {
+                    if (idx[j] == idx[i]) duplicate = true;
+                }
+            } while (duplicate);
+        }
+        for (int i = 0; i < sampleSize; ++i) {
+            sampleSrc[i] = srcPoints[idx[i]];
+            sampleDst[i] = dstPoints[idx[i]];
         }
 
         // Check for degenerate configuration (3 collinear points)
@@ -322,13 +334,14 @@ std::pair<cv::Mat, std::vector<bool>> ransacHomography(
             ++iteration;
             continue;
         }
+        cv::Mat Hinv = H.inv();  // once per model, reused for every point
 
         // 3. Count inliers
         int inlierCount = 0;
-        std::vector<bool> currentMask(n, false);
+        std::fill(currentMask.begin(), currentMask.end(), false);
 
         for (int i = 0; i < n; ++i) {
-            double error = computeTransferError(H, srcPoints[i], dstPoints[i]);
+            double error = computeTransferError(H, Hinv, srcPoints[i], dstPoints[i]);
             if (error < thresholdSq) {
                 currentMask[i] = true;
                 ++inlierCount;

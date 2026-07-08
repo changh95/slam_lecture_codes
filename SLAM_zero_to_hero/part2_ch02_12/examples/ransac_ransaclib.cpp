@@ -203,9 +203,13 @@ public:
             A(i, 8) = 1.0;
         }
 
-        // Solve
-        Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeFullV);
-        Eigen::VectorXd f = svd.matrixV().col(8);
+        // Solve min ||A f|| via normal equations: the solution is the
+        // eigenvector of A^T A (9x9) with the smallest eigenvalue. This runs
+        // inside every local-optimization step, so a fixed-size eigensolve
+        // beats a tall-matrix SVD by a wide margin.
+        Eigen::Matrix<double, 9, 9> AtA = A.transpose() * A;
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 9, 9>> eig(AtA);
+        Eigen::Matrix<double, 9, 1> f = eig.eigenvectors().col(0);
 
         Eigen::Matrix3d F_normalized;
         F_normalized << f(0), f(1), f(2),
@@ -370,14 +374,17 @@ int main() {
     // ========== RansacLib: LocallyOptimizedMSAC ==========
     std::cout << "--- RansacLib: LocallyOptimizedMSAC ---" << std::endl;
 
-    // Configure RANSAC options
+    // Configure RANSAC options. Realistic settings: let the adaptive stopping
+    // criterion decide when to quit (no artificial iteration floor) and keep
+    // local optimization to a couple of rounds -- LO cost is
+    // num_lo_steps_ x num_lsq_iterations_ refits per new best model.
     ransac_lib::LORansacOptions options;
-    options.min_num_iterations_ = 100;
+    options.min_num_iterations_ = 10;
     options.max_num_iterations_ = 10000;
     options.squared_inlier_threshold_ = squaredThreshold;
     options.min_sample_multiplicator_ = 7;
-    options.num_lsq_iterations_ = 4;
-    options.num_lo_steps_ = 10;
+    options.num_lsq_iterations_ = 2;
+    options.num_lo_steps_ = 2;
     options.random_seed_ = 42;
 
     // Create solver
@@ -399,13 +406,19 @@ int main() {
     std::cout << "  Iterations: " << stats.num_iterations << std::endl;
     std::cout << "  Time: " << std::fixed << std::setprecision(2) << ransaclibTime << " ms\n";
 
-    // Compute Sampson error with ground truth inliers
+    // Sampson error over the model's inliers (an all-points average would be
+    // dominated by the 35% outliers).
     double avgError = 0.0;
+    int errCount = 0;
     for (int i = 0; i < data.rows(); ++i) {
-        avgError += solver.EvaluateModelOnPoint(bestModel, i);
+        double e = solver.EvaluateModelOnPoint(bestModel, i);
+        if (e < squaredThreshold) {
+            avgError += e;
+            ++errCount;
+        }
     }
-    avgError /= data.rows();
-    std::cout << "  Avg Sampson error: " << std::setprecision(6) << avgError << "\n\n";
+    if (errCount > 0) avgError /= errCount;
+    std::cout << "  Avg Sampson error (inliers): " << std::setprecision(6) << avgError << "\n\n";
 
     // ========== OpenCV: USAC_MAGSAC for comparison ==========
     std::cout << "--- OpenCV: USAC_MAGSAC (for comparison) ---" << std::endl;
