@@ -4,6 +4,7 @@
  */
 
 #include "apriltag_pnp.hpp"
+#include "rerun_stream.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -297,7 +298,17 @@ bool parseArgs(int argc, char** argv, const std::string& method, PipelineOptions
                   << "  --video <path>       Input video (default: " << opts->video << ")\n"
                   << "  --output <path>      Output JSON (default: " << opts->output << ")\n"
                   << "  --max-frames <n>     Stop after n frames (default: whole video)\n"
-                  << "  --verbose            Per-frame console output\n";
+                  << "  --verbose            Per-frame console output\n"
+                  << "  --no-stream          Disable live rerun streaming\n"
+                  << "  --stream-url <url>   Rerun viewer gRPC URL (default: "
+                  << opts->stream_url << ")\n"
+                  << "  --stream-recording <id>\n"
+                  << "                       Rerun recording id (default: "
+                  << opts->stream_recording << "; all methods share it so they\n"
+                  << "                       overlay in one viewer recording)\n"
+                  << "  --no-stream-images   Do not stream video frames/detections\n"
+                  << "                       (identical for all methods - skip for\n"
+                  << "                       every demo after the first)\n";
     };
 
     for (int i = 1; i < argc; i++) {
@@ -313,6 +324,14 @@ bool parseArgs(int argc, char** argv, const std::string& method, PipelineOptions
             opts->max_frames = std::stoi(argv[++i]);
         } else if (arg == "--verbose") {
             opts->verbose = true;
+        } else if (arg == "--no-stream") {
+            opts->stream = false;
+        } else if (arg == "--no-stream-images") {
+            opts->stream_images = false;
+        } else if (arg == "--stream-url" && i + 1 < argc) {
+            opts->stream_url = argv[++i];
+        } else if (arg == "--stream-recording" && i + 1 < argc) {
+            opts->stream_recording = argv[++i];
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
             usage();
@@ -340,6 +359,7 @@ int runPipeline(const std::string& method, const PipelineOptions& opts,
     TagDetector detector;
     TagMap map;
     std::vector<FramePose> frames;
+    RerunStreamer streamer(method, opts, cam);
 
     cv::Mat frame, gray;
     int frameIdx = 0;
@@ -419,6 +439,8 @@ int runPipeline(const std::string& method, const PipelineOptions& opts,
                           << "] mm\n";
             }
         }
+
+        streamer.logFrame(fp, frame, map);
 
         frames.push_back(std::move(fp));
         frameIdx++;

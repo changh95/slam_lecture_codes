@@ -54,11 +54,22 @@ else()
     message(STATUS "OpenGV not found - pnp_opengv will not be built")
 endif()
 
+# rerun C++ SDK (optional - demos stream live to a rerun viewer when found)
+find_package(rerun_sdk QUIET)
+if(rerun_sdk_FOUND)
+    message(STATUS "rerun C++ SDK found - demos will stream live to a rerun viewer")
+else()
+    message(STATUS "rerun C++ SDK not found - no live streaming (viz_pnp.py still works)")
+endif()
+
 # ============================================================
 # COMMON LIBRARY - shared AprilTag + PnP pipeline
 # ============================================================
 
-add_library(apriltag_pnp_common STATIC src/apriltag_pnp.cpp)
+add_library(apriltag_pnp_common STATIC
+    src/apriltag_pnp.cpp
+    src/rerun_stream.cpp
+)
 target_include_directories(apriltag_pnp_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
@@ -67,6 +78,10 @@ target_link_libraries(apriltag_pnp_common PUBLIC
     ${OpenCV_LIBS}
     ${APRILTAG_TARGET}
 )
+if(rerun_sdk_FOUND)
+    target_link_libraries(apriltag_pnp_common PUBLIC rerun_sdk)
+    target_compile_definitions(apriltag_pnp_common PRIVATE ATPNP_HAVE_RERUN)
+endif()
 
 # ============================================================
 # EXAMPLES - one executable per PnP backend

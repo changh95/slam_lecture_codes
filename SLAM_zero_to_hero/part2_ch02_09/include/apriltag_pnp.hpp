@@ -15,6 +15,9 @@
  *      IPPE_SQUARE pose are transformed into the world frame.
  *   5. Write a JSON file consumed by viz_pnp.py (rerun visualization).
  *
+ * When built with the rerun C++ SDK, every processed frame is additionally
+ * streamed live to a rerun viewer (see rerun_stream.hpp).
+ *
  * Camera intrinsics come from the recording's calibration
  * (monumental_assessment cam.json). Units are millimetres throughout.
  */
@@ -181,6 +184,20 @@ struct PipelineOptions {
     std::string output;      ///< default: pnp_<method>.json
     int max_frames = 0;      ///< 0 = whole video
     bool verbose = false;
+
+    /// Live rerun streaming (only when built with the rerun C++ SDK).
+    /// On by default: each processed frame is sent to a rerun viewer
+    /// (typically running on the host) while the pipeline runs.
+    bool stream = true;
+    std::string stream_url = "rerun+http://127.0.0.1:9876/proxy";
+    /// All demos share one recording id so their trajectories land in the
+    /// same viewer recording and can be compared in one 3D scene.
+    std::string stream_recording = "plantage_shed";
+    /// Stream the video frames + detection overlays (the heaviest part of
+    /// the stream). They are identical for every method and logged to a
+    /// shared entity, so when running several demos into one recording only
+    /// the first one needs them.
+    bool stream_images = true;
 };
 
 /// Parse the common command line. Returns false (after printing usage) on
