@@ -212,9 +212,11 @@ cv::Mat computeHomographyDLT(const std::vector<cv::Point2f>& src,
         A.at<double>(2 * i + 1, 8) = yp;
     }
 
-    // Solve using SVD: h is the null space of A
+    // Solve using SVD: h is the null space of A.
+    // FULL_UV is required: A is 8x9, and without it vt is reduced to 8x9,
+    // which has no row 8 (the null-space vector).
     cv::Mat w, u, vt;
-    cv::SVD::compute(A, w, u, vt);
+    cv::SVD::compute(A, w, u, vt, cv::SVD::FULL_UV);
 
     // Last row of Vt (or last column of V) is the solution
     cv::Mat h = vt.row(8).t();
