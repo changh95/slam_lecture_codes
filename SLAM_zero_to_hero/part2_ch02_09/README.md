@@ -1,6 +1,8 @@
-# PnP and Fiducial Marker Tracking
+# AprilTag Detection + PnP Camera Localization
 
-Code exercise for estimating camera pose from 2D-3D point correspondences (PnP) and detecting/tracking ArUco/ChArUco fiducial markers with OpenCV — plus P3P minimal solvers from PoseLib and OpenGV.
+Code exercise for localizing a camera against fiducial markers on real data: detect **AprilTag** markers (`tagStandard52h13`, 42 mm) in a video of a mock construction site, and estimate the 6-DoF camera pose from the 2D-3D corner correspondences with three different PnP backends — **OpenCV**, **PoseLib**, and **OpenGV**. Results are visualized with **rerun**.
+
+Reference project: [changh95/monumental_assessment](https://github.com/changh95/monumental_assessment)
 
 ---
 
@@ -11,26 +13,40 @@ part2_ch02_09/
 ├── README.md
 ├── CMakeLists.txt
 ├── Dockerfile
+├── viz_pnp.py                  # Rerun viewer for the JSON output
 ├── data/
-│   └── markers/                    # Generated marker images
+│   └── plantage_shed.mp4       # 1920x1080 video with tagStandard52h13 markers
+├── include/
+│   └── apriltag_pnp.hpp        # Shared pipeline interface
+├── src/
+│   └── apriltag_pnp.cpp        # AprilTag detection, tag map, JSON writer
 └── examples/
-    ├── pnp_demo.cpp                # Compare PnP algorithms (P3P, EPnP, DLS, SQPnP)
-    ├── pnp_ransac_demo.cpp         # Robust PnP with RANSAC outlier rejection
-    ├── pnp_poselib.cpp             # P3P using PoseLib minimal solver (optional)
-    ├── pnp_opengv.cpp              # P3P using OpenGV (Kneip, Gao, EPnP) (optional)
-    ├── marker_detection.cpp        # ArUco marker detection and generation
-    ├── marker_pose_estimation.cpp  # 6-DoF pose from ArUco markers
-    ├── charuco_calibration.cpp     # Camera calibration with ChArUco board
-    └── ground_truth_collection.cpp # Collect ground-truth poses for SLAM evaluation
+    ├── pnp_opencv.cpp          # solvePnPRansac (EPnP) + solvePnPRefineLM
+    ├── pnp_poselib.cpp         # PoseLib estimate_absolute_pose (P3P LO-RANSAC)
+    └── pnp_opengv.cpp          # OpenGV Kneip P3P RANSAC + optimize_nonlinear
 ```
+
+All three demos run the **same pipeline** and differ only in the PnP solver:
+
+1. Detect AprilTags in each frame (AprilTag C library).
+2. Bootstrap the world frame from **tag 10** (visible throughout the video): world origin = tag 10 center.
+3. Estimate the camera pose from all corners of already-mapped tags — the method-specific PnP step.
+4. Extend the tag map: unmapped tags with an unambiguous `IPPE_SQUARE` pose are transformed into the world frame.
+5. Write `pnp_<method>.json` (camera trajectory, tag map, detections) for `viz_pnp.py`.
+
+Camera intrinsics of the recording (fx = fy = 1153.25, cx = 952.66, cy = 526.55, 14-coefficient rational distortion) are compiled in (`include/apriltag_pnp.hpp`). Units are millimetres.
+
+The dataset arranges tags 2, 3, 39 in an L-shape (center distances: 2-3 = 1090 mm, 3-39 = 1940 mm); each demo prints the mapped distances as a sanity check.
 
 ---
 
 ## Build
 
 Dependencies:
-- **OpenCV 4.x** (`core`, `imgproc`, `imgcodecs`, `videoio`, `highgui`, `calib3d`, `objdetect`) and **Eigen3** — required. ArUco is part of `objdetect` in OpenCV 4.7+; older installations need `libopencv-contrib-dev`.
+- **OpenCV 4.x** (`core`, `imgproc`, `imgcodecs`, `videoio`, `calib3d`) and **Eigen3** — required.
+- **AprilTag** ([AprilRobotics/apriltag](https://github.com/AprilRobotics/apriltag)) — required (built in the Dockerfile; not part of `slam:base`).
 - **PoseLib** and **OpenGV** — optional. `pnp_poselib` / `pnp_opengv` are built only when the respective library is found (both ship in `slam:base`).
+- **rerun-sdk** + **opencv-python-headless** (Python) — for `viz_pnp.py` only.
 
 ```bash
 # Local
@@ -46,58 +62,78 @@ docker build . -t slam_zero_to_hero:part2_ch02_09
 
 ## Run
 
-### Local
+Each demo reads `../data/plantage_shed.mp4` by default and writes `pnp_<method>.json`:
 
 ```bash
-# Compare PnP methods (OpenCV)
-./build/pnp_demo
+cd build
 
-# Robust PnP with RANSAC
-./build/pnp_ransac_demo
+# OpenCV PnP (solvePnPRansac + LM refinement)
+./pnp_opencv
 
-# PoseLib P3P minimal solver (built only if PoseLib found)
-./build/pnp_poselib
+# PoseLib PnP (P3P LO-RANSAC + non-linear refinement)
+./pnp_poselib
 
-# OpenGV P3P solvers (built only if OpenGV found)
-./build/pnp_opengv
+# OpenGV PnP (Kneip P3P RANSAC + non-linear refinement)
+./pnp_opengv
 
-# Generate an ArUco marker image
-./build/marker_detection --generate --id 42 --size 200 --output marker_42.png
-
-# Detect markers from a live camera
-./build/marker_detection --camera 0
-
-# 6-DoF pose estimation from markers
-./build/marker_pose_estimation --camera 0 --calib camera_calib.yaml --size 0.05
-
-# Camera calibration with ChArUco board
-./build/charuco_calibration --camera 0 --output calib.yaml
-
-# Generate ChArUco board image
-./build/charuco_calibration --generate --cols 5 --rows 7 --board-output charuco_board.png
+# Options (same for all three)
+./pnp_opencv --video <path> --output <json> --max-frames 300 --verbose
 ```
 
-Sample data generated during Docker build:
-- `data/marker_0.png`, `data/marker_1.png`, `data/marker_42.png` — ArUco markers
-- `data/charuco_board.png` — ChArUco calibration board
-- `data/sample_calib.yaml` — sample camera calibration (640×480, f=600px)
-- `data/marker_map.txt` — known marker world positions for ground-truth collection
+### Visualization (rerun)
+
+```bash
+# Spawn a viewer directly (local build)
+python3 ../viz_pnp.py pnp_opencv.json pnp_poselib.json pnp_opengv.json
+
+# Stream into an already-running viewer (start it on the host with: rerun &)
+python3 ../viz_pnp.py --connect pnp_opencv.json pnp_poselib.json pnp_opengv.json
+#   --connect uses rerun+http://127.0.0.1:9876/proxy by default
+#   override with: --connect-url rerun+http://HOST:PORT/proxy
+
+# Headless: save an .rrd file and open it later with `rerun out.rrd`
+python3 ../viz_pnp.py --save out.rrd pnp_opencv.json pnp_poselib.json pnp_opengv.json
+```
+
+The viewer shows the video with detected tag outlines (2D), the camera frustum and trajectory of each method (3D, one color per method), the mapped tag squares in the world frame, and per-frame reprojection-error / solve-time plots.
 
 ### Docker
 
+**Recommended — stream into a Rerun viewer running on the host:**
+
 ```bash
-docker run -it --rm \
-    --device /dev/video0 \
-    -e DISPLAY=$DISPLAY \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
-    slam_zero_to_hero:part2_ch02_09
+# 1. On the host, open the viewer once:
+rerun &
+
+# 2. Run the demos and stream the visualization:
+docker run -it --rm --network=host slam_zero_to_hero:part2_ch02_09 bash -c '
+    ./pnp_opencv && ./pnp_poselib && ./pnp_opengv &&
+    python3 ../viz_pnp.py --connect pnp_opencv.json pnp_poselib.json pnp_opengv.json'
+```
+
+`--network=host` lets the container reach the viewer at `127.0.0.1:9876`. Live gRPC streaming is version-sensitive: the container's `rerun-sdk` **must match** your host viewer's version (the Dockerfile pins `0.33.0` — set it to whatever `rerun --version` prints on the host).
+
+**Headless alternative — write an .rrd to the host and open it there:**
+
+```bash
+docker run -it --rm -v $PWD/results:/results:z slam_zero_to_hero:part2_ch02_09 bash -c '
+    ./pnp_opencv --output /results/pnp_opencv.json &&
+    ./pnp_poselib --output /results/pnp_poselib.json &&
+    ./pnp_opengv --output /results/pnp_opengv.json &&
+    python3 ../viz_pnp.py --save /results/pnp.rrd \
+        /results/pnp_opencv.json /results/pnp_poselib.json /results/pnp_opengv.json \
+        --video ../data/plantage_shed.mp4'
+
+rerun results/pnp.rrd
 ```
 
 ---
 
 ## References
 
-- [OpenCV `calib3d` module](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html) (`solvePnP`, `solvePnPRansac`)
-- [OpenCV ArUco/objdetect module](https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html) (`ArucoDetector`, `estimatePoseSingleMarkers`, `CharucoBoard`)
-- [PoseLib](https://github.com/PoseLib/PoseLib)
-- [OpenGV](https://laurentkneip.github.io/opengv/)
+- [OpenCV `calib3d` module](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html) (`solvePnPRansac`, `solvePnPRefineLM`, `SOLVEPNP_IPPE_SQUARE`)
+- [AprilTag](https://github.com/AprilRobotics/apriltag) (`tagStandard52h13`)
+- [PoseLib](https://github.com/PoseLib/PoseLib) (`estimate_absolute_pose`)
+- [OpenGV](https://laurentkneip.github.io/opengv/) (`AbsolutePoseSacProblem`, `optimize_nonlinear`)
+- [Rerun](https://rerun.io/)
+- [changh95/monumental_assessment](https://github.com/changh95/monumental_assessment) — original dataset and assignment

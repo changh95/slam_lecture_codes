@@ -1,43 +1,44 @@
 cmake_minimum_required(VERSION 3.10)
-project(PNP_AND_MARKER_TRACKING LANGUAGES CXX)
+project(APRILTAG_PNP_LOCALIZATION LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Build type configuration
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "Build type: Release (default)")
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif()
 
 message(STATUS "")
-message(STATUS "=== PnP and Fiducial Marker Tracking ===")
+message(STATUS "=== AprilTag Detection + PnP Camera Localization ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 
 # ============================================================
 # DEPENDENCIES
 # ============================================================
 
-# OpenCV (aruco is part of objdetect in OpenCV 4.7+)
 find_package(OpenCV 4.0 REQUIRED COMPONENTS
     core
     imgproc
     imgcodecs
     videoio
-    highgui
     calib3d
-    objdetect
 )
-
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
-message(STATUS "OpenCV libraries: ${OpenCV_LIBS}")
 
-# Eigen3 (for pose transformations)
 find_package(Eigen3 REQUIRED)
 message(STATUS "Eigen3 version: ${Eigen3_VERSION}")
 
-# PoseLib (minimal pose estimation solvers)
+# AprilTag (https://github.com/AprilRobotics/apriltag)
+find_package(apriltag REQUIRED)
+if(TARGET apriltag::apriltag)
+    set(APRILTAG_TARGET apriltag::apriltag)
+else()
+    set(APRILTAG_TARGET apriltag)
+endif()
+message(STATUS "AprilTag found (target: ${APRILTAG_TARGET})")
+
+# PoseLib (optional - pnp_poselib is built only when found)
 find_package(PoseLib QUIET)
 if(PoseLib_FOUND)
     message(STATUS "PoseLib found")
@@ -45,7 +46,7 @@ else()
     message(STATUS "PoseLib not found - pnp_poselib will not be built")
 endif()
 
-# OpenGV (geometric vision algorithms)
+# OpenGV (optional - pnp_opengv is built only when found)
 find_package(opengv QUIET)
 if(opengv_FOUND)
     message(STATUS "OpenGV found")
@@ -54,113 +55,49 @@ else()
 endif()
 
 # ============================================================
-# EXAMPLES - Main tutorial examples
+# COMMON LIBRARY - shared AprilTag + PnP pipeline
 # ============================================================
 
-# 1. PnP Demo - Compare different PnP algorithms (P3P, EPnP, DLS, etc.)
-add_executable(pnp_demo examples/pnp_demo.cpp)
-target_link_libraries(pnp_demo PRIVATE
-    ${OpenCV_LIBS}
-    Eigen3::Eigen
-)
-target_include_directories(pnp_demo PRIVATE
+add_library(apriltag_pnp_common STATIC src/apriltag_pnp.cpp)
+target_include_directories(apriltag_pnp_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
-    ${EIGEN3_INCLUDE_DIR}
+)
+target_link_libraries(apriltag_pnp_common PUBLIC
+    ${OpenCV_LIBS}
+    ${APRILTAG_TARGET}
 )
 
-# 2. PnP RANSAC Demo - Robust PnP with outliers
-add_executable(pnp_ransac_demo examples/pnp_ransac_demo.cpp)
-target_link_libraries(pnp_ransac_demo PRIVATE
-    ${OpenCV_LIBS}
-    Eigen3::Eigen
-)
-target_include_directories(pnp_ransac_demo PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
-    ${EIGEN3_INCLUDE_DIR}
-)
+# ============================================================
+# EXAMPLES - one executable per PnP backend
+# ============================================================
 
-# 3. PnP PoseLib - P3P using PoseLib minimal solver
+# 1. OpenCV: solvePnPRansac (EPnP) + solvePnPRefineLM
+add_executable(pnp_opencv examples/pnp_opencv.cpp)
+target_link_libraries(pnp_opencv PRIVATE apriltag_pnp_common)
+
+# 2. PoseLib: estimate_absolute_pose (P3P LO-RANSAC + refinement)
 if(PoseLib_FOUND)
     add_executable(pnp_poselib examples/pnp_poselib.cpp)
     target_link_libraries(pnp_poselib PRIVATE
-        ${OpenCV_LIBS}
-        Eigen3::Eigen
+        apriltag_pnp_common
         PoseLib::PoseLib
-    )
-    target_include_directories(pnp_poselib PRIVATE
-        ${OpenCV_INCLUDE_DIRS}
-        ${EIGEN3_INCLUDE_DIR}
+        Eigen3::Eigen
     )
 endif()
 
-# 4. PnP OpenGV - P3P using OpenGV solvers
+# 3. OpenGV: Kneip P3P RANSAC + optimize_nonlinear
 if(opengv_FOUND)
     add_executable(pnp_opengv examples/pnp_opengv.cpp)
     target_link_libraries(pnp_opengv PRIVATE
-        ${OpenCV_LIBS}
-        Eigen3::Eigen
+        apriltag_pnp_common
         opengv
-    )
-    target_include_directories(pnp_opengv PRIVATE
-        ${OpenCV_INCLUDE_DIRS}
-        ${EIGEN3_INCLUDE_DIR}
-    )
-endif()
-
-# 5. Marker Detection - ArUco marker detection and generation
-add_executable(marker_detection examples/marker_detection.cpp)
-target_link_libraries(marker_detection PRIVATE ${OpenCV_LIBS})
-target_include_directories(marker_detection PRIVATE ${OpenCV_INCLUDE_DIRS})
-
-# 4. Marker Pose Estimation - 6-DoF pose from ArUco markers
-add_executable(marker_pose_estimation examples/marker_pose_estimation.cpp)
-target_link_libraries(marker_pose_estimation PRIVATE
-    ${OpenCV_LIBS}
-    Eigen3::Eigen
-)
-target_include_directories(marker_pose_estimation PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
-    ${EIGEN3_INCLUDE_DIR}
-)
-
-# 5. ChArUco Calibration - Camera calibration using ChArUco boards
-add_executable(charuco_calibration examples/charuco_calibration.cpp)
-target_link_libraries(charuco_calibration PRIVATE ${OpenCV_LIBS})
-target_include_directories(charuco_calibration PRIVATE ${OpenCV_INCLUDE_DIRS})
-
-# ============================================================
-# SRC - Additional utilities (from original implementation)
-# ============================================================
-
-# Check if src files exist
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/marker_generator.cpp")
-    add_executable(marker_generator src/marker_generator.cpp)
-    target_link_libraries(marker_generator PRIVATE ${OpenCV_LIBS})
-    target_include_directories(marker_generator PRIVATE ${OpenCV_INCLUDE_DIRS})
-endif()
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/marker_detector.cpp")
-    add_executable(marker_detector src/marker_detector.cpp)
-    target_link_libraries(marker_detector PRIVATE ${OpenCV_LIBS})
-    target_include_directories(marker_detector PRIVATE ${OpenCV_INCLUDE_DIRS})
-endif()
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/pose_estimator.cpp")
-    add_executable(pose_estimator src/pose_estimator.cpp)
-    target_link_libraries(pose_estimator PRIVATE
-        ${OpenCV_LIBS}
         Eigen3::Eigen
     )
-    target_include_directories(pose_estimator PRIVATE
-        ${OpenCV_INCLUDE_DIRS}
-        ${EIGEN3_INCLUDE_DIR}
-    )
-endif()
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/charuco_calibration.cpp")
-    add_executable(charuco_calibration_src src/charuco_calibration.cpp)
-    target_link_libraries(charuco_calibration_src PRIVATE ${OpenCV_LIBS})
-    target_include_directories(charuco_calibration_src PRIVATE ${OpenCV_INCLUDE_DIRS})
+    # OpenGV compiles itself with -march=native; build this translation unit
+    # with the same flags so Eigen object alignment matches across the
+    # library boundary (mismatch crashes inside p3p_kneip).
+    target_compile_options(pnp_opengv PRIVATE -O3 -march=native)
 endif()
 
 # ============================================================
@@ -169,19 +106,11 @@ endif()
 
 message(STATUS "")
 message(STATUS "=== Executables ===")
-message(STATUS "")
-message(STATUS "PnP Examples:")
-message(STATUS "  pnp_demo              - Compare PnP algorithms (P3P, EPnP, DLS, SQPnP)")
-message(STATUS "  pnp_ransac_demo       - Robust PnP estimation with RANSAC")
+message(STATUS "  pnp_opencv   - AprilTag + OpenCV solvePnPRansac/RefineLM")
 if(PoseLib_FOUND)
-    message(STATUS "  pnp_poselib           - P3P using PoseLib minimal solver")
+    message(STATUS "  pnp_poselib  - AprilTag + PoseLib estimate_absolute_pose")
 endif()
 if(opengv_FOUND)
-    message(STATUS "  pnp_opengv            - P3P using OpenGV solvers (Kneip, Gao, EPnP)")
+    message(STATUS "  pnp_opengv   - AprilTag + OpenGV Kneip P3P RANSAC")
 endif()
-message(STATUS "")
-message(STATUS "Marker Examples:")
-message(STATUS "  marker_detection      - ArUco marker detection and generation")
-message(STATUS "  marker_pose_estimation- 6-DoF pose estimation from markers")
-message(STATUS "  charuco_calibration   - Camera calibration with ChArUco board")
 message(STATUS "")
