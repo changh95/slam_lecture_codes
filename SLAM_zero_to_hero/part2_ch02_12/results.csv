@@ -15,3 +15,8 @@ fundamental,USAC_FM_8PTS,0.506889,824,0.448885
 fundamental,USAC_MAGSAC,0.517053,824,0.828031
 fundamental,Custom USAC,0.439918,825,7.510859
 fundamental,USAC_ACCURATE,0.472939,827,2.884518
+custom,Line RANSAC,,70,
+custom,Custom RANSAC (homography),0.458189,44,16.408
+custom,OpenCV RANSAC (homography),0.428786,60,0.470474
+ransaclib,RansacLib (LO-MSAC),3996.927652,134,306.38
+ransaclib,OpenCV (USAC_MAGSAC),,133,1.46
