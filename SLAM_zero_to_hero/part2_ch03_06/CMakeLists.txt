@@ -87,9 +87,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(lidar_odometry PRIVATE ${WARNING_FLAGS})
 endif()
 
-# Optimization flags for Release build
+# Optimization flags for Release build.
+# Note: -march=native must NOT be used here — it changes Eigen's alignment
+# (AVX-512 -> 64-byte) and breaks ABI with the system libpcl_registration,
+# which segfaults inside IterativeClosestPoint::computeTransformation.
 if(CMAKE_BUILD_TYPE MATCHES "Release")
-    set(OPTIMIZATION_FLAGS -O3 -march=native)
+    set(OPTIMIZATION_FLAGS -O3)
     target_compile_options(icp_basic PRIVATE ${OPTIMIZATION_FLAGS})
     target_compile_options(icp_point_to_plane PRIVATE ${OPTIMIZATION_FLAGS})
     target_compile_options(icp_visualization PRIVATE ${OPTIMIZATION_FLAGS})
