@@ -13,7 +13,9 @@ part2_ch03_06/
 ├── CMakeLists.txt
 ├── Dockerfile
 ├── data/
-│   └── sample_clouds/
+│   ├── 000000.bin             # KITTI velodyne scan
+│   ├── bun_zipper_res3.ply    # Stanford bunny
+│   └── scene.pcd
 └── examples/
     ├── icp_basic.cpp              # Point-to-point ICP registration
     ├── icp_point_to_plane.cpp     # Point-to-plane ICP with normals
@@ -58,8 +60,21 @@ docker build . -t slam_zero_to_hero:part2_ch03_06
 # Visualize alignment
 ./build/icp_visualization source.pcd target.pcd
 
-# LiDAR odometry on a velodyne scan sequence
+# Step-by-step visualization: press 'n' to run one ICP iteration at a time
+# and watch the source cloud converge onto the target ('q' to quit)
+./build/icp_visualization source.pcd target.pcd --step
+
+# LiDAR odometry on a velodyne scan sequence (.pcd or KITTI .bin files)
 ./build/lidar_odometry /path/to/velodyne/
+```
+
+All demos also accept `--generate` to create synthetic input clouds instead of
+loading files, so they can be run without any data:
+
+```bash
+./build/icp_basic --generate
+./build/icp_visualization --generate --step
+./build/lidar_odometry --generate
 ```
 
 ### Docker
