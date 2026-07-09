@@ -1,6 +1,8 @@
 # RANSAC and USAC: Robust Estimation
 
-Code exercise for homography and fundamental matrix estimation using OpenCV's RANSAC and USAC framework, plus a custom RANSAC implementation — with optional RansacLib and MAGSAC++ examples.
+Code exercise for robust model estimation — homography and fundamental matrix with OpenCV's RANSAC/USAC framework, a custom RANSAC written from scratch, RansacLib's template-based design, and MAGSAC++.
+
+Every demo runs on the **same real data** (ORB correspondences from a KITTI consecutive frame pair, `data/000024.png` → `data/000025.png`) and is scored by the **same metrics**, so the numbers in `results.csv` are directly comparable across estimators. Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
 
 ---
 
@@ -10,14 +12,24 @@ Code exercise for homography and fundamental matrix estimation using OpenCV's RA
 part2_ch02_12/
 ├── README.md
 ├── CMakeLists.txt
-├── Dockerfile
+├── Dockerfile                 # also builds MAGSAC++ from source
+├── data/                      # KITTI frame pair 000024/000025
+├── results.csv                # benchmark results from the docker image
 └── examples/
-    ├── ransac_homography.cpp  # Homography estimation with various RANSAC/USAC methods
-    ├── ransac_fundamental.cpp # Fundamental matrix estimation with full USAC configuration
-    ├── ransac_custom.cpp      # Custom RANSAC implementation from scratch
-    ├── ransac_ransaclib.cpp   # Template-based RANSAC via RansacLib (optional)
-    └── ransac_magsac.cpp      # Threshold-free estimation via MAGSAC++ (optional)
+    ├── ransac_data.h          # shared ORB pipeline, metrics, synthetic line data, viz
+    ├── ransac_homography.cpp  # H: 7 OpenCV RANSAC/USAC variants
+    ├── ransac_fundamental.cpp # F: 9 OpenCV methods with full USAC configuration
+    ├── ransac_custom.cpp      # Line/H/F RANSAC from scratch vs OpenCV RANSAC
+    ├── ransac_ransaclib.cpp   # Line/H/F solvers plugged into RansacLib LO-MSAC
+    └── ransac_magsac.cpp      # H/F via MAGSAC++ vs OpenCV RANSAC
 ```
+
+## Fair comparison rules
+
+- **Same data**: one shared ORB + BF-Hamming + ratio-test pipeline (`ransac_data.h`) feeds every H/F estimator.
+- **Same inlier rules**: forward reprojection error for H, Sampson distance for F, 3 px threshold, 0.99 confidence. MAGSAC++ is threshold-free, so its inlier count is derived post-hoc with the same 3 px rule.
+- **Same metrics**: mean inlier reprojection error (H, px) and mean squared Sampson distance (F) computed by shared code for every method.
+- **Same build**: all demos compile at Release; libraries are used with realistic settings (no artificial iteration floors).
 
 ---
 
@@ -27,7 +39,7 @@ Dependencies:
 - **OpenCV 4.5+** — required. USAC support requires OpenCV >= 4.5 (detected at configure time).
 - **Eigen3** — required for `ransac_ransaclib` and `ransac_magsac`.
 - **RansacLib** (header-only) — optional. `ransac_ransaclib` is built only when found.
-- **MAGSAC** — optional. `ransac_magsac` is built only when found (links `graph_cut_ransac`/`gcransac` if present).
+- **MAGSAC** — optional locally; the Dockerfile builds and installs it automatically, so `ransac_magsac` is always available in the image.
 
 ```bash
 # Local
@@ -52,17 +64,17 @@ docker build . -t slam_zero_to_hero:part2_ch02_12
 # Fundamental matrix estimation with USAC configuration
 ./build/ransac_fundamental
 
-# Custom RANSAC implementation (line fitting and homography)
+# Custom RANSAC implementation (line / homography / fundamental)
 ./build/ransac_custom
 
-# RansacLib template-based RANSAC (if built)
+# RansacLib template-based RANSAC (line / homography / fundamental)
 ./build/ransac_ransaclib
 
-# MAGSAC++ threshold-free estimation (if built)
+# MAGSAC++ threshold-free estimation (homography / fundamental)
 ./build/ransac_magsac
 ```
 
-All executables run without arguments.
+All executables run without arguments (H/F demos also accept two image paths).
 
 ### Docker
 
@@ -83,7 +95,9 @@ saved as JPEGs next to the executable:
 |------|-----------------|
 | `ransac_homography` | RANSAC vs USAC_MAGSAC match masks (`homography_ransac_matches.jpg`, `homography_usac_magsac_matches.jpg`) |
 | `ransac_fundamental` | USAC_MAGSAC match mask + epipolar lines (`fundamental_usac_magsac_matches.jpg`, `fundamental_epipolar_lines.jpg`) |
-| `ransac_custom` | Line fit + homography reprojection (`custom_ransac_line.jpg`, `custom_ransac_homography.jpg`) |
+| `ransac_custom` | Line fit + custom H/F match masks (`custom_ransac_line.jpg`, `custom_ransac_homography.jpg`, `custom_ransac_fundamental.jpg`) |
+| `ransac_ransaclib` | RansacLib H match mask (`ransaclib_h_matches.jpg`) |
+| `ransac_magsac` | MAGSAC++ H match mask (`magsac_h_matches.jpg`) |
 
 Match visualizations draw inliers in green and outliers in red. Without a display
 (headless run), the windows are skipped and only the JPEGs are written.

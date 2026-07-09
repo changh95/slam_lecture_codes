@@ -6,7 +6,7 @@
  * and distant facades fit a homography reasonably while the rest of the
  * scene has parallax outliers -- exactly the regime that exercises RANSAC.
  *
- * Pipeline:
+ * Pipeline (shared with the other demos via ransac_data.h):
  *   1. Load left/right images (data/000024.png, data/000025.png by default).
  *   2. ORB detect + BF-Hamming + Lowe ratio test (0.75) gives raw matches.
  *   3. Run RANSAC, LMEDS, four USAC flags, and a Custom UsacParams config.
@@ -19,84 +19,15 @@
  */
 
 #include <opencv2/calib3d.hpp>
-#include <opencv2/features2d.hpp>
 #include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
 
-#include <algorithm>
-#include <chrono>
 #include <cstdlib>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
 
-class Timer {
-public:
-    void start() { start_ = std::chrono::high_resolution_clock::now(); }
-    double elapsedMs() {
-        auto end = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration<double, std::milli>(end - start_).count();
-    }
-
-private:
-    std::chrono::time_point<std::chrono::high_resolution_clock> start_;
-};
-
-static std::string resolveDataPath(const std::string& name) {
-    for (const std::string& base : {"../data/", "data/", "./data/"}) {
-        if (std::filesystem::exists(base + name)) return base + name;
-    }
-    return "../data/" + name;
-}
-
-static void detectAndMatch(const cv::Mat& img1, const cv::Mat& img2,
-                           std::vector<cv::Point2f>& pts1,
-                           std::vector<cv::Point2f>& pts2) {
-    auto orb = cv::ORB::create(3000);
-    std::vector<cv::KeyPoint> kp1, kp2;
-    cv::Mat des1, des2;
-    orb->detectAndCompute(img1, cv::noArray(), kp1, des1);
-    orb->detectAndCompute(img2, cv::noArray(), kp2, des2);
-    std::cout << "ORB keypoints: " << kp1.size() << " in img1, " << kp2.size() << " in img2\n";
-
-    cv::BFMatcher matcher(cv::NORM_HAMMING);
-    std::vector<std::vector<cv::DMatch>> knn;
-    matcher.knnMatch(des1, des2, knn, 2);
-
-    pts1.clear(); pts2.clear();
-    for (const auto& m : knn) {
-        if (m.size() == 2 && m[0].distance < 0.75f * m[1].distance) {
-            pts1.push_back(kp1[m[0].queryIdx].pt);
-            pts2.push_back(kp2[m[0].trainIdx].pt);
-        }
-    }
-    std::cout << "Ratio-test matches: " << pts1.size() << "\n";
-}
-
-// Mean reprojection error |H * x1 - x2| over inliers selected by mask.
-static double meanInlierReproj(const std::vector<cv::Point2f>& pts1,
-                               const std::vector<cv::Point2f>& pts2,
-                               const cv::Mat& H, const cv::Mat& mask) {
-    if (H.empty() || pts1.empty()) return -1.0;
-    double total = 0.0;
-    int n = 0;
-    for (size_t i = 0; i < pts1.size(); ++i) {
-        if (!mask.empty() && !mask.at<uchar>(i)) continue;
-        cv::Mat x1 = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
-        cv::Mat x2p = H * x1;
-        double w = x2p.at<double>(2);
-        if (std::abs(w) < 1e-12) continue;
-        double u = x2p.at<double>(0) / w;
-        double v = x2p.at<double>(1) / w;
-        double dx = u - pts2[i].x;
-        double dy = v - pts2[i].y;
-        total += std::sqrt(dx * dx + dy * dy);
-        ++n;
-    }
-    return n ? total / n : -1.0;
-}
+#include "ransac_data.h"
 
 struct MethodResult {
     std::string name;
@@ -107,51 +38,13 @@ struct MethodResult {
     double time_ms;
 };
 
-// Stack the two frames vertically and draw match segments colored by the
-// inlier mask (green = inlier, red = outlier). KITTI frames are wide, so
-// vertical stacking keeps the window on screen.
-static cv::Mat drawMatchesVis(const cv::Mat& img1, const cv::Mat& img2,
-                              const std::vector<cv::Point2f>& pts1,
-                              const std::vector<cv::Point2f>& pts2,
-                              const cv::Mat& mask) {
-    cv::Mat top, bottom, vis;
-    cv::cvtColor(img1, top, cv::COLOR_GRAY2BGR);
-    cv::cvtColor(img2, bottom, cv::COLOR_GRAY2BGR);
-    cv::vconcat(top, bottom, vis);
-    const cv::Point2f yoff(0.0f, static_cast<float>(img1.rows));
-    for (size_t i = 0; i < pts1.size(); ++i) {
-        bool inlier = !mask.empty() && mask.at<uchar>(i);
-        cv::Scalar color = inlier ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
-        cv::circle(vis, pts1[i], 3, color, -1);
-        cv::circle(vis, pts2[i] + yoff, 3, color, -1);
-        cv::line(vis, pts1[i], pts2[i] + yoff, color, 1);
-    }
-    return vis;
-}
-
 int main(int argc, char* argv[]) {
     std::cout << "=== RANSAC Homography Estimation (KITTI consecutive frames) ===\n";
     std::cout << std::fixed << std::setprecision(4);
 
-    std::string left_path  = (argc >= 3) ? argv[1] : resolveDataPath("000024.png");
-    std::string right_path = (argc >= 3) ? argv[2] : resolveDataPath("000025.png");
-
-    cv::Mat img1 = cv::imread(left_path, cv::IMREAD_GRAYSCALE);
-    cv::Mat img2 = cv::imread(right_path, cv::IMREAD_GRAYSCALE);
-    if (img1.empty() || img2.empty()) {
-        std::cerr << "Error: failed to load images:\n  " << left_path << "\n  " << right_path
-                  << "\nRun from build/ so ../data resolves, or pass two image paths.\n";
-        return 1;
-    }
-    std::cout << "Image 1: " << left_path  << "  (" << img1.cols << "x" << img1.rows << ")\n";
-    std::cout << "Image 2: " << right_path << "  (" << img2.cols << "x" << img2.rows << ")\n\n";
-
+    cv::Mat img1, img2;
     std::vector<cv::Point2f> pts1, pts2;
-    detectAndMatch(img1, img2, pts1, pts2);
-    if (pts1.size() < 4) {
-        std::cerr << "Not enough matches for homography.\n";
-        return 1;
-    }
+    if (!loadRealPair(argc, argv, img1, img2, pts1, pts2, 4)) return 1;
 
     const double threshold = 3.0;
     Timer timer;

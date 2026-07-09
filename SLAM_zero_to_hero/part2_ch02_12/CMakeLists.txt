@@ -64,19 +64,31 @@ else()
     message(STATUS "RansacLib not found, skipping ransac_ransaclib")
 endif()
 
-# MAGSAC (state-of-the-art threshold-free robust estimation)
+# MAGSAC (state-of-the-art threshold-free robust estimation).
+# The Dockerfile builds it from source and installs headers to
+# /usr/local/include/pymagsac/include and /usr/local/include/gcransac,
+# libs (libMAGSAC.a, libGraphCutRANSAC.a) to /usr/local/lib.
 find_path(MAGSAC_INCLUDE_DIR magsac.h
     HINTS /usr/local/include ${CMAKE_INSTALL_PREFIX}/include
     PATH_SUFFIXES pymagsac/include)
-find_library(GCRANSAC_LIBRARY NAMES graph_cut_ransac gcransac
+find_path(GCRANSAC_INCLUDE_DIR GCRANSAC.h
+    HINTS /usr/local/include ${CMAKE_INSTALL_PREFIX}/include
+    PATH_SUFFIXES gcransac)
+find_library(MAGSAC_LIBRARY NAMES MAGSAC
     HINTS /usr/local/lib ${CMAKE_INSTALL_PREFIX}/lib)
-if(MAGSAC_INCLUDE_DIR AND Eigen3_FOUND)
-    message(STATUS "Found MAGSAC: ${MAGSAC_INCLUDE_DIR}")
+find_library(GCRANSAC_LIBRARY NAMES GraphCutRANSAC graph_cut_ransac gcransac
+    HINTS /usr/local/lib ${CMAKE_INSTALL_PREFIX}/lib)
+find_package(OpenMP QUIET)
+if(MAGSAC_INCLUDE_DIR AND GCRANSAC_INCLUDE_DIR AND MAGSAC_LIBRARY
+   AND GCRANSAC_LIBRARY AND Eigen3_FOUND)
+    message(STATUS "Found MAGSAC: ${MAGSAC_INCLUDE_DIR} (${MAGSAC_LIBRARY})")
     add_executable(ransac_magsac examples/ransac_magsac.cpp)
-    target_include_directories(ransac_magsac PRIVATE ${MAGSAC_INCLUDE_DIR})
-    target_link_libraries(ransac_magsac ${OpenCV_LIBS} Eigen3::Eigen)
-    if(GCRANSAC_LIBRARY)
-        target_link_libraries(ransac_magsac ${GCRANSAC_LIBRARY})
+    target_include_directories(ransac_magsac PRIVATE
+        ${MAGSAC_INCLUDE_DIR} ${GCRANSAC_INCLUDE_DIR})
+    target_link_libraries(ransac_magsac ${OpenCV_LIBS} Eigen3::Eigen
+        ${MAGSAC_LIBRARY} ${GCRANSAC_LIBRARY})
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(ransac_magsac OpenMP::OpenMP_CXX)
     endif()
 else()
     message(STATUS "MAGSAC not found, skipping ransac_magsac")

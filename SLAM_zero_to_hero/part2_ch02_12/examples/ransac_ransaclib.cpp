@@ -1,5 +1,5 @@
 /**
- * Fundamental Matrix Estimation using RansacLib
+ * Line / Homography / Fundamental Matrix Estimation using RansacLib
  *
  * This example demonstrates the template-based RANSAC design pattern using
  * RansacLib. RansacLib provides a clean separation between:
@@ -8,7 +8,15 @@
  * 2. Sampler: Generates random samples (uniform, PROSAC, etc.)
  * 3. Estimator: RANSAC variants (MSAC, LO-MSAC, etc.)
  *
- * This design allows easy customization of each component independently.
+ * To prove the point, THREE solvers plug into the same LO-MSAC estimator:
+ *  - Line2DSolver           (2-point minimal, PCA refinement)
+ *  - HomographySolver       (4-point DLT, squared reprojection residual)
+ *  - FundamentalMatrixSolver (normalized 8-point, Sampson residual)
+ *
+ * H and F run on the real KITTI ORB correspondences shared by every demo in
+ * this chapter, and each is benchmarked against OpenCV RANSAC on the same
+ * data with the same threshold and confidence. Line fitting uses the shared
+ * fixed-seed synthetic points (OpenCV has no line RANSAC).
  *
  * Reference: https://github.com/tsattler/RansacLib
  */
@@ -21,445 +29,466 @@
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
 
-#include <chrono>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
-#include <random>
 #include <vector>
 
+#include "ransac_data.h"
+
 // ============================================================================
-// Fundamental Matrix Model
+// Line Solver (implements RansacLib Solver interface)
 // ============================================================================
 
-// The model type: a 3x3 fundamental matrix
-using FundamentalMatrix = Eigen::Matrix3d;
+// Model: (a, b, c) with a^2 + b^2 = 1 for the line ax + by + c = 0.
+using Line2DModel = Eigen::Vector3d;
+using Line2DModelVector = std::vector<Line2DModel, Eigen::aligned_allocator<Line2DModel>>;
 
-// Container for multiple models (RansacLib requirement)
-using FundamentalMatrixVector = std::vector<FundamentalMatrix,
-    Eigen::aligned_allocator<FundamentalMatrix>>;
+class Line2DSolver {
+public:
+    explicit Line2DSolver(const Eigen::Matrix<double, Eigen::Dynamic, 2>& data)
+        : data_(data) {}
+
+    inline int min_sample_size() const { return 2; }
+    inline int non_minimal_sample_size() const { return 6; }
+    inline int num_data() const { return static_cast<int>(data_.rows()); }
+
+    int MinimalSolver(const std::vector<int>& sample, Line2DModelVector* models) const {
+        if (sample.size() < 2) return 0;
+        Eigen::Vector2d p1 = data_.row(sample[0]);
+        Eigen::Vector2d p2 = data_.row(sample[1]);
+        Eigen::Vector2d dir = p2 - p1;
+        double norm = dir.norm();
+        if (norm < 1e-12) return 0;
+        Line2DModel line(-dir.y() / norm, dir.x() / norm, 0.0);
+        line(2) = -(line(0) * p1.x() + line(1) * p1.y());
+        models->push_back(line);
+        return 1;
+    }
+
+    // PCA fit: line through the centroid along the dominant direction.
+    int NonMinimalSolver(const std::vector<int>& sample, Line2DModel* model) const {
+        if (sample.size() < 2) return 0;
+        Eigen::Vector2d mean = Eigen::Vector2d::Zero();
+        for (int idx : sample) mean += data_.row(idx).transpose();
+        mean /= static_cast<double>(sample.size());
+
+        Eigen::Matrix2d cov = Eigen::Matrix2d::Zero();
+        for (int idx : sample) {
+            Eigen::Vector2d d = data_.row(idx).transpose() - mean;
+            cov += d * d.transpose();
+        }
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eig(cov);
+        Eigen::Vector2d normal = eig.eigenvectors().col(0);  // smallest eigenvalue
+        (*model)(0) = normal.x();
+        (*model)(1) = normal.y();
+        (*model)(2) = -normal.dot(mean);
+        return 1;
+    }
+
+    // Squared point-line distance.
+    double EvaluateModelOnPoint(const Line2DModel& line, int i) const {
+        double d = line(0) * data_(i, 0) + line(1) * data_(i, 1) + line(2);
+        return d * d;
+    }
+
+    void LeastSquares(const std::vector<int>& sample, Line2DModel* model) const {
+        NonMinimalSolver(sample, model);
+    }
+
+private:
+    Eigen::Matrix<double, Eigen::Dynamic, 2> data_;
+};
+
+// ============================================================================
+// Homography Solver (implements RansacLib Solver interface)
+// ============================================================================
+
+using Homography = Eigen::Matrix3d;
+using HomographyVector = std::vector<Homography, Eigen::aligned_allocator<Homography>>;
+
+class HomographySolver {
+public:
+    explicit HomographySolver(const Eigen::Matrix<double, Eigen::Dynamic, 4>& data)
+        : data_(data) {}
+
+    inline int min_sample_size() const { return 4; }
+    inline int non_minimal_sample_size() const { return 12; }
+    inline int num_data() const { return static_cast<int>(data_.rows()); }
+
+    int MinimalSolver(const std::vector<int>& sample, HomographyVector* models) const {
+        Homography H;
+        if (!dlt(sample, &H)) return 0;
+        models->push_back(H);
+        return 1;
+    }
+
+    int NonMinimalSolver(const std::vector<int>& sample, Homography* model) const {
+        return dlt(sample, model) ? 1 : 0;
+    }
+
+    // Squared forward reprojection error |H*x1 - x2|^2 -- the same inlier
+    // rule cv::findHomography(RANSAC) uses.
+    double EvaluateModelOnPoint(const Homography& H, int i) const {
+        Eigen::Vector3d p(data_(i, 0), data_(i, 1), 1.0);
+        Eigen::Vector3d q = H * p;
+        if (std::abs(q.z()) < 1e-12) return std::numeric_limits<double>::max();
+        double dx = q.x() / q.z() - data_(i, 2);
+        double dy = q.y() / q.z() - data_(i, 3);
+        return dx * dx + dy * dy;
+    }
+
+    void LeastSquares(const std::vector<int>& sample, Homography* model) const {
+        NonMinimalSolver(sample, model);
+    }
+
+private:
+    // Normalized DLT for n >= 4 correspondences. Solves the 2n x 9 system
+    // via 9x9 normal equations (fast inside local optimization).
+    bool dlt(const std::vector<int>& sample, Homography* H) const {
+        const int n = static_cast<int>(sample.size());
+        if (n < 4) return false;
+
+        Eigen::Vector2d mean1 = Eigen::Vector2d::Zero(), mean2 = Eigen::Vector2d::Zero();
+        for (int idx : sample) {
+            mean1 += data_.block<1, 2>(idx, 0).transpose();
+            mean2 += data_.block<1, 2>(idx, 2).transpose();
+        }
+        mean1 /= n; mean2 /= n;
+        double scale1 = 0.0, scale2 = 0.0;
+        for (int idx : sample) {
+            scale1 += (data_.block<1, 2>(idx, 0).transpose() - mean1).norm();
+            scale2 += (data_.block<1, 2>(idx, 2).transpose() - mean2).norm();
+        }
+        if (scale1 < 1e-12 || scale2 < 1e-12) return false;
+        scale1 = n * std::sqrt(2.0) / scale1;
+        scale2 = n * std::sqrt(2.0) / scale2;
+
+        Eigen::Matrix<double, 9, 9> AtA = Eigen::Matrix<double, 9, 9>::Zero();
+        Eigen::Matrix<double, 9, 1> row1, row2;
+        for (int idx : sample) {
+            double x = scale1 * (data_(idx, 0) - mean1.x());
+            double y = scale1 * (data_(idx, 1) - mean1.y());
+            double xp = scale2 * (data_(idx, 2) - mean2.x());
+            double yp = scale2 * (data_(idx, 3) - mean2.y());
+            row1 << -x, -y, -1, 0, 0, 0, x * xp, y * xp, xp;
+            row2 << 0, 0, 0, -x, -y, -1, x * yp, y * yp, yp;
+            AtA += row1 * row1.transpose() + row2 * row2.transpose();
+        }
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 9, 9>> eig(AtA);
+        Eigen::Matrix<double, 9, 1> h = eig.eigenvectors().col(0);
+
+        Homography Hn;
+        Hn << h(0), h(1), h(2),
+              h(3), h(4), h(5),
+              h(6), h(7), h(8);
+
+        Eigen::Matrix3d T1 = Eigen::Matrix3d::Identity(), T2 = Eigen::Matrix3d::Identity();
+        T1(0, 0) = scale1; T1(1, 1) = scale1;
+        T1(0, 2) = -scale1 * mean1.x(); T1(1, 2) = -scale1 * mean1.y();
+        T2(0, 0) = scale2; T2(1, 1) = scale2;
+        T2(0, 2) = -scale2 * mean2.x(); T2(1, 2) = -scale2 * mean2.y();
+
+        *H = T2.inverse() * Hn * T1;
+        if (std::abs((*H)(2, 2)) > 1e-12) *H /= (*H)(2, 2);
+        return true;
+    }
+
+    Eigen::Matrix<double, Eigen::Dynamic, 4> data_;
+};
 
 // ============================================================================
 // Fundamental Matrix Solver (implements RansacLib Solver interface)
 // ============================================================================
 
-/**
- * FundamentalMatrixSolver implements the Solver interface required by RansacLib.
- *
- * Required methods:
- * - min_sample_size(): Minimum points for minimal solver (8 for 8-point algorithm)
- * - non_minimal_sample_size(): Points for non-minimal refinement
- * - num_data(): Total number of correspondences
- * - MinimalSolver(): Compute model from minimal sample
- * - NonMinimalSolver(): Refine model using more points (optional)
- * - EvaluateModelOnPoint(): Compute squared residual for a point
- * - LeastSquares(): Refine model using least squares (optional)
- */
+using FundamentalMatrix = Eigen::Matrix3d;
+using FundamentalMatrixVector = std::vector<FundamentalMatrix,
+    Eigen::aligned_allocator<FundamentalMatrix>>;
+
 class FundamentalMatrixSolver {
 public:
-    FundamentalMatrixSolver(const Eigen::Matrix<double, Eigen::Dynamic, 4>& data,
-                            double squared_threshold)
-        : data_(data), squared_threshold_(squared_threshold) {}
+    explicit FundamentalMatrixSolver(const Eigen::Matrix<double, Eigen::Dynamic, 4>& data)
+        : data_(data) {}
 
-    // Minimum sample size (8 for normalized 8-point algorithm)
     inline int min_sample_size() const { return 8; }
-
-    // Non-minimal sample size for refinement
     inline int non_minimal_sample_size() const { return 12; }
-
-    // Total number of point correspondences
     inline int num_data() const { return static_cast<int>(data_.rows()); }
 
-    // Minimal solver: 8-point algorithm
     int MinimalSolver(const std::vector<int>& sample,
                       FundamentalMatrixVector* models) const {
-        if (sample.size() < 8) return 0;
-
-        // Extract points for this sample
-        Eigen::Matrix<double, 8, 4> pts;
-        for (int i = 0; i < 8; ++i) {
-            pts.row(i) = data_.row(sample[i]);
-        }
-
-        // Normalize points (Hartley normalization)
-        Eigen::Vector2d mean1 = pts.leftCols<2>().colwise().mean();
-        Eigen::Vector2d mean2 = pts.rightCols<2>().colwise().mean();
-
-        double scale1 = 0.0, scale2 = 0.0;
-        for (int i = 0; i < 8; ++i) {
-            scale1 += (pts.block<1, 2>(i, 0).transpose() - mean1).norm();
-            scale2 += (pts.block<1, 2>(i, 2).transpose() - mean2).norm();
-        }
-        scale1 = 8.0 * std::sqrt(2.0) / scale1;
-        scale2 = 8.0 * std::sqrt(2.0) / scale2;
-
-        // Normalization matrices
-        Eigen::Matrix3d T1 = Eigen::Matrix3d::Identity();
-        T1(0, 0) = scale1; T1(1, 1) = scale1;
-        T1(0, 2) = -scale1 * mean1(0);
-        T1(1, 2) = -scale1 * mean1(1);
-
-        Eigen::Matrix3d T2 = Eigen::Matrix3d::Identity();
-        T2(0, 0) = scale2; T2(1, 1) = scale2;
-        T2(0, 2) = -scale2 * mean2(0);
-        T2(1, 2) = -scale2 * mean2(1);
-
-        // Build the design matrix A
-        Eigen::Matrix<double, 8, 9> A;
-        for (int i = 0; i < 8; ++i) {
-            double x1 = scale1 * (pts(i, 0) - mean1(0));
-            double y1 = scale1 * (pts(i, 1) - mean1(1));
-            double x2 = scale2 * (pts(i, 2) - mean2(0));
-            double y2 = scale2 * (pts(i, 3) - mean2(1));
-
-            A(i, 0) = x2 * x1;
-            A(i, 1) = x2 * y1;
-            A(i, 2) = x2;
-            A(i, 3) = y2 * x1;
-            A(i, 4) = y2 * y1;
-            A(i, 5) = y2;
-            A(i, 6) = x1;
-            A(i, 7) = y1;
-            A(i, 8) = 1.0;
-        }
-
-        // Solve using SVD
-        Eigen::JacobiSVD<Eigen::Matrix<double, 8, 9>> svd(A, Eigen::ComputeFullV);
-        Eigen::Matrix<double, 9, 1> f = svd.matrixV().col(8);
-
-        // Reshape to 3x3
-        Eigen::Matrix3d F_normalized;
-        F_normalized << f(0), f(1), f(2),
-                        f(3), f(4), f(5),
-                        f(6), f(7), f(8);
-
-        // Enforce rank-2 constraint
-        Eigen::JacobiSVD<Eigen::Matrix3d> svd_F(F_normalized, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        Eigen::Vector3d singularValues = svd_F.singularValues();
-        singularValues(2) = 0.0;  // Set smallest singular value to 0
-        F_normalized = svd_F.matrixU() * singularValues.asDiagonal() * svd_F.matrixV().transpose();
-
-        // Denormalize: F = T2^T * F_normalized * T1
-        FundamentalMatrix F = T2.transpose() * F_normalized * T1;
-
-        // Normalize so ||F|| = 1
-        F /= F.norm();
-
+        FundamentalMatrix F;
+        if (!eightPoint(sample, &F)) return 0;
         models->push_back(F);
         return 1;
     }
 
-    // Non-minimal solver: least squares with more points
-    int NonMinimalSolver(const std::vector<int>& sample,
-                         FundamentalMatrix* model) const {
-        if (sample.size() < 8) return 0;
-
-        const int n = static_cast<int>(sample.size());
-
-        // Extract points
-        Eigen::MatrixXd pts(n, 4);
-        for (int i = 0; i < n; ++i) {
-            pts.row(i) = data_.row(sample[i]);
-        }
-
-        // Normalize
-        Eigen::Vector2d mean1 = pts.leftCols<2>().colwise().mean();
-        Eigen::Vector2d mean2 = pts.rightCols<2>().colwise().mean();
-
-        double scale1 = 0.0, scale2 = 0.0;
-        for (int i = 0; i < n; ++i) {
-            scale1 += (pts.block<1, 2>(i, 0).transpose() - mean1).norm();
-            scale2 += (pts.block<1, 2>(i, 2).transpose() - mean2).norm();
-        }
-        scale1 = n * std::sqrt(2.0) / scale1;
-        scale2 = n * std::sqrt(2.0) / scale2;
-
-        Eigen::Matrix3d T1 = Eigen::Matrix3d::Identity();
-        T1(0, 0) = scale1; T1(1, 1) = scale1;
-        T1(0, 2) = -scale1 * mean1(0);
-        T1(1, 2) = -scale1 * mean1(1);
-
-        Eigen::Matrix3d T2 = Eigen::Matrix3d::Identity();
-        T2(0, 0) = scale2; T2(1, 1) = scale2;
-        T2(0, 2) = -scale2 * mean2(0);
-        T2(1, 2) = -scale2 * mean2(1);
-
-        // Build design matrix
-        Eigen::MatrixXd A(n, 9);
-        for (int i = 0; i < n; ++i) {
-            double x1 = scale1 * (pts(i, 0) - mean1(0));
-            double y1 = scale1 * (pts(i, 1) - mean1(1));
-            double x2 = scale2 * (pts(i, 2) - mean2(0));
-            double y2 = scale2 * (pts(i, 3) - mean2(1));
-
-            A(i, 0) = x2 * x1;
-            A(i, 1) = x2 * y1;
-            A(i, 2) = x2;
-            A(i, 3) = y2 * x1;
-            A(i, 4) = y2 * y1;
-            A(i, 5) = y2;
-            A(i, 6) = x1;
-            A(i, 7) = y1;
-            A(i, 8) = 1.0;
-        }
-
-        // Solve min ||A f|| via normal equations: the solution is the
-        // eigenvector of A^T A (9x9) with the smallest eigenvalue. This runs
-        // inside every local-optimization step, so a fixed-size eigensolve
-        // beats a tall-matrix SVD by a wide margin.
-        Eigen::Matrix<double, 9, 9> AtA = A.transpose() * A;
-        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 9, 9>> eig(AtA);
-        Eigen::Matrix<double, 9, 1> f = eig.eigenvectors().col(0);
-
-        Eigen::Matrix3d F_normalized;
-        F_normalized << f(0), f(1), f(2),
-                        f(3), f(4), f(5),
-                        f(6), f(7), f(8);
-
-        // Enforce rank-2
-        Eigen::JacobiSVD<Eigen::Matrix3d> svd_F(F_normalized, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        Eigen::Vector3d singularValues = svd_F.singularValues();
-        singularValues(2) = 0.0;
-        F_normalized = svd_F.matrixU() * singularValues.asDiagonal() * svd_F.matrixV().transpose();
-
-        // Denormalize
-        *model = T2.transpose() * F_normalized * T1;
-        model->array() /= model->norm();
-
-        return 1;
+    int NonMinimalSolver(const std::vector<int>& sample, FundamentalMatrix* model) const {
+        return eightPoint(sample, model) ? 1 : 0;
     }
 
-    // Evaluate model on a single point (returns squared Sampson error)
+    // Squared Sampson distance.
     double EvaluateModelOnPoint(const FundamentalMatrix& F, int i) const {
         Eigen::Vector3d p1(data_(i, 0), data_(i, 1), 1.0);
         Eigen::Vector3d p2(data_(i, 2), data_(i, 3), 1.0);
-
-        // Sampson distance
         Eigen::Vector3d Fp1 = F * p1;
         Eigen::Vector3d Ftp2 = F.transpose() * p2;
-
-        double numerator = p2.dot(Fp1);
-        double denominator = Fp1(0) * Fp1(0) + Fp1(1) * Fp1(1) +
-                             Ftp2(0) * Ftp2(0) + Ftp2(1) * Ftp2(1);
-
-        if (denominator < 1e-10) return squared_threshold_ * 2.0;
-
-        return (numerator * numerator) / denominator;
+        double num = p2.dot(Fp1);
+        double denom = Fp1(0) * Fp1(0) + Fp1(1) * Fp1(1)
+                     + Ftp2(0) * Ftp2(0) + Ftp2(1) * Ftp2(1);
+        if (denom < 1e-10) return std::numeric_limits<double>::max();
+        return (num * num) / denom;
     }
 
-    // Least squares refinement
     void LeastSquares(const std::vector<int>& sample, FundamentalMatrix* model) const {
         NonMinimalSolver(sample, model);
     }
 
 private:
-    Eigen::Matrix<double, Eigen::Dynamic, 4> data_;  // [x1, y1, x2, y2] per row
-    double squared_threshold_;
+    // Normalized 8-point algorithm for n >= 8 correspondences. Solves the
+    // n x 9 system via 9x9 normal equations, then enforces rank-2.
+    bool eightPoint(const std::vector<int>& sample, FundamentalMatrix* F) const {
+        const int n = static_cast<int>(sample.size());
+        if (n < 8) return false;
+
+        Eigen::Vector2d mean1 = Eigen::Vector2d::Zero(), mean2 = Eigen::Vector2d::Zero();
+        for (int idx : sample) {
+            mean1 += data_.block<1, 2>(idx, 0).transpose();
+            mean2 += data_.block<1, 2>(idx, 2).transpose();
+        }
+        mean1 /= n; mean2 /= n;
+        double scale1 = 0.0, scale2 = 0.0;
+        for (int idx : sample) {
+            scale1 += (data_.block<1, 2>(idx, 0).transpose() - mean1).norm();
+            scale2 += (data_.block<1, 2>(idx, 2).transpose() - mean2).norm();
+        }
+        if (scale1 < 1e-12 || scale2 < 1e-12) return false;
+        scale1 = n * std::sqrt(2.0) / scale1;
+        scale2 = n * std::sqrt(2.0) / scale2;
+
+        Eigen::Matrix<double, 9, 9> AtA = Eigen::Matrix<double, 9, 9>::Zero();
+        Eigen::Matrix<double, 9, 1> row;
+        for (int idx : sample) {
+            double x1 = scale1 * (data_(idx, 0) - mean1.x());
+            double y1 = scale1 * (data_(idx, 1) - mean1.y());
+            double x2 = scale2 * (data_(idx, 2) - mean2.x());
+            double y2 = scale2 * (data_(idx, 3) - mean2.y());
+            row << x2 * x1, x2 * y1, x2, y2 * x1, y2 * y1, y2, x1, y1, 1.0;
+            AtA += row * row.transpose();
+        }
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 9, 9>> eig(AtA);
+        Eigen::Matrix<double, 9, 1> f = eig.eigenvectors().col(0);
+
+        Eigen::Matrix3d Fn;
+        Fn << f(0), f(1), f(2),
+              f(3), f(4), f(5),
+              f(6), f(7), f(8);
+
+        // Enforce rank-2 constraint
+        Eigen::JacobiSVD<Eigen::Matrix3d> svd(Fn, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        Eigen::Vector3d s = svd.singularValues();
+        s(2) = 0.0;
+        Fn = svd.matrixU() * s.asDiagonal() * svd.matrixV().transpose();
+
+        Eigen::Matrix3d T1 = Eigen::Matrix3d::Identity(), T2 = Eigen::Matrix3d::Identity();
+        T1(0, 0) = scale1; T1(1, 1) = scale1;
+        T1(0, 2) = -scale1 * mean1.x(); T1(1, 2) = -scale1 * mean1.y();
+        T2(0, 0) = scale2; T2(1, 1) = scale2;
+        T2(0, 2) = -scale2 * mean2.x(); T2(1, 2) = -scale2 * mean2.y();
+
+        *F = T2.transpose() * Fn * T1;
+        double norm = F->norm();
+        if (norm > 1e-12) *F /= norm;
+        return true;
+    }
+
+    Eigen::Matrix<double, Eigen::Dynamic, 4> data_;
 };
 
 // ============================================================================
-// Generate Synthetic Stereo Data
+// Helpers
 // ============================================================================
 
-void generateStereoData(Eigen::Matrix<double, Eigen::Dynamic, 4>& data,
-                        FundamentalMatrix& gtF,
-                        int numPoints = 150,
-                        double outlierRatio = 0.35) {
-    // Camera intrinsics
-    Eigen::Matrix3d K;
-    K << 500.0, 0.0, 320.0,
-         0.0, 500.0, 240.0,
-         0.0, 0.0, 1.0;
-
-    // Relative pose
-    Eigen::Matrix3d R;
-    R << 0.9998, -0.01, 0.015,
-         0.01, 0.9999, -0.005,
-         -0.015, 0.0052, 0.9999;
-
-    Eigen::Vector3d t(0.1, 0.01, 0.02);
-
-    // Essential matrix: E = [t]_x * R
-    Eigen::Matrix3d tx;
-    tx << 0, -t(2), t(1),
-          t(2), 0, -t(0),
-          -t(1), t(0), 0;
-    Eigen::Matrix3d E = tx * R;
-
-    // Fundamental matrix: F = K^(-T) * E * K^(-1)
-    gtF = K.inverse().transpose() * E * K.inverse();
-    gtF /= gtF.norm();
-
-    int numInliers = static_cast<int>(numPoints * (1.0 - outlierRatio));
-    int numOutliers = numPoints - numInliers;
-
-    data.resize(numPoints, 4);
-
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<double> distX(50.0, 590.0);
-    std::uniform_real_distribution<double> distY(50.0, 430.0);
-    std::uniform_real_distribution<double> distDepth(2.0, 20.0);
-    std::normal_distribution<double> noise(0.0, 0.5);
-
-    int idx = 0;
-
-    // Generate inliers
-    for (int i = 0; i < numInliers; ++i) {
-        double u1 = distX(gen);
-        double v1 = distY(gen);
-        double depth = distDepth(gen);
-
-        // Back-project to 3D
-        double x = (u1 - K(0, 2)) * depth / K(0, 0);
-        double y = (v1 - K(1, 2)) * depth / K(1, 1);
-        double z = depth;
-
-        Eigen::Vector3d P(x, y, z);
-        Eigen::Vector3d P2 = R * P + t;
-
-        // Project to image 2
-        double u2 = K(0, 0) * P2(0) / P2(2) + K(0, 2);
-        double v2 = K(1, 1) * P2(1) / P2(2) + K(1, 2);
-
-        data(idx, 0) = u1 + noise(gen);
-        data(idx, 1) = v1 + noise(gen);
-        data(idx, 2) = u2 + noise(gen);
-        data(idx, 3) = v2 + noise(gen);
-        ++idx;
-    }
-
-    // Generate outliers
-    for (int i = 0; i < numOutliers; ++i) {
-        data(idx, 0) = distX(gen);
-        data(idx, 1) = distY(gen);
-        data(idx, 2) = distX(gen);
-        data(idx, 3) = distY(gen);
-        ++idx;
-    }
-
-    // Shuffle
-    std::vector<int> indices(numPoints);
-    std::iota(indices.begin(), indices.end(), 0);
-    std::shuffle(indices.begin(), indices.end(), gen);
-
-    Eigen::Matrix<double, Eigen::Dynamic, 4> shuffled(numPoints, 4);
-    for (int i = 0; i < numPoints; ++i) {
-        shuffled.row(i) = data.row(indices[i]);
-    }
-    data = shuffled;
+// Realistic LO-MSAC options matched to the OpenCV baselines: same squared
+// threshold, same 0.99 confidence, adaptive stopping, light local optim.
+static ransac_lib::LORansacOptions makeOptions(double squaredThreshold) {
+    ransac_lib::LORansacOptions options;
+    options.min_num_iterations_ = 10;
+    options.max_num_iterations_ = 10000;
+    options.squared_inlier_threshold_ = squaredThreshold;
+    options.success_probability_ = 0.99;
+    options.min_sample_multiplicator_ = 7;
+    options.num_lsq_iterations_ = 2;
+    options.num_lo_steps_ = 2;
+    options.random_seed_ = 42;
+    return options;
 }
+
+static cv::Mat indicesToMask(const std::vector<int>& indices, int n) {
+    cv::Mat mask = cv::Mat::zeros(n, 1, CV_8U);
+    for (int idx : indices) mask.at<uchar>(idx) = 1;
+    return mask;
+}
+
+static cv::Mat toCvMat3x3(const Eigen::Matrix3d& m) {
+    cv::Mat out(3, 3, CV_64F);
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) out.at<double>(r, c) = m(r, c);
+    return out;
+}
+
+struct RowResult {
+    std::string name;
+    double err;
+    int inliers;
+    double time_ms;
+};
 
 // ============================================================================
 // Main
 // ============================================================================
 
-int main() {
-    std::cout << "=== Fundamental Matrix Estimation using RansacLib ===" << std::endl;
-    std::cout << "Demonstrating template-based RANSAC design pattern\n" << std::endl;
+int main(int argc, char* argv[]) {
+    std::cout << "=== Line / H / F Estimation using RansacLib ===" << std::endl;
+    std::cout << "Demonstrating the template-based RANSAC design pattern\n" << std::endl;
+    std::cout << std::fixed << std::setprecision(4);
 
-    // Generate synthetic data
-    Eigen::Matrix<double, Eigen::Dynamic, 4> data;
-    FundamentalMatrix gtF;
-    const int numPoints = 200;
-    const double outlierRatio = 0.35;
     const double threshold = 3.0;
     const double squaredThreshold = threshold * threshold;
+    Timer timer;
+    std::vector<RowResult> rows;
 
-    generateStereoData(data, gtF, numPoints, outlierRatio);
-
-    std::cout << "Data: " << numPoints << " correspondences, "
-              << static_cast<int>(outlierRatio * 100) << "% outliers\n";
-    std::cout << "Inlier threshold: " << threshold << " px\n\n";
-
-    // ========== RansacLib: LocallyOptimizedMSAC ==========
-    std::cout << "--- RansacLib: LocallyOptimizedMSAC ---" << std::endl;
-
-    // Configure RANSAC options. Realistic settings: let the adaptive stopping
-    // criterion decide when to quit (no artificial iteration floor) and keep
-    // local optimization to a couple of rounds -- LO cost is
-    // num_lo_steps_ x num_lsq_iterations_ refits per new best model.
-    ransac_lib::LORansacOptions options;
-    options.min_num_iterations_ = 10;
-    options.max_num_iterations_ = 10000;
-    options.squared_inlier_threshold_ = squaredThreshold;
-    options.min_sample_multiplicator_ = 7;
-    options.num_lsq_iterations_ = 2;
-    options.num_lo_steps_ = 2;
-    options.random_seed_ = 42;
-
-    // Create solver
-    FundamentalMatrixSolver solver(data, squaredThreshold);
-
-    // Create LO-MSAC estimator and run
-    ransac_lib::LocallyOptimizedMSAC<FundamentalMatrix, FundamentalMatrixVector,
-                                      FundamentalMatrixSolver> lomsac;
-
-    ransac_lib::RansacStatistics stats;
-    FundamentalMatrix bestModel;
-
-    auto start = std::chrono::high_resolution_clock::now();
-    int numInliers = lomsac.EstimateModel(options, solver, &bestModel, &stats);
-    auto end = std::chrono::high_resolution_clock::now();
-    double ransaclibTime = std::chrono::duration<double, std::milli>(end - start).count();
-
-    std::cout << "  Inliers: " << numInliers << "/" << numPoints << std::endl;
-    std::cout << "  Iterations: " << stats.num_iterations << std::endl;
-    std::cout << "  Time: " << std::fixed << std::setprecision(2) << ransaclibTime << " ms\n";
-
-    // Sampson error over the model's inliers (an all-points average would be
-    // dominated by the 35% outliers).
-    double avgError = 0.0;
-    int errCount = 0;
-    for (int i = 0; i < data.rows(); ++i) {
-        double e = solver.EvaluateModelOnPoint(bestModel, i);
-        if (e < squaredThreshold) {
-            avgError += e;
-            ++errCount;
-        }
+    // ---------- 1. Line fitting (shared fixed-seed synthetic points) ----------
+    std::cout << "--- Line2DSolver: LO-MSAC (synthetic, 70/100 inliers) ---" << std::endl;
+    std::vector<cv::Point2f> linePts = generateLinePoints();
+    Eigen::Matrix<double, Eigen::Dynamic, 2> lineData(linePts.size(), 2);
+    for (size_t i = 0; i < linePts.size(); ++i) {
+        lineData(i, 0) = linePts[i].x;
+        lineData(i, 1) = linePts[i].y;
     }
-    if (errCount > 0) avgError /= errCount;
-    std::cout << "  Avg Sampson error (inliers): " << std::setprecision(6) << avgError << "\n\n";
-
-    // ========== OpenCV: USAC_MAGSAC for comparison ==========
-    std::cout << "--- OpenCV: USAC_MAGSAC (for comparison) ---" << std::endl;
-
-    // Convert to OpenCV format
-    std::vector<cv::Point2f> pts1(numPoints), pts2(numPoints);
-    for (int i = 0; i < numPoints; ++i) {
-        pts1[i] = cv::Point2f(static_cast<float>(data(i, 0)),
-                              static_cast<float>(data(i, 1)));
-        pts2[i] = cv::Point2f(static_cast<float>(data(i, 2)),
-                              static_cast<float>(data(i, 3)));
+    {
+        const double lineThreshold = 5.0;  // matches ransac_custom's line test
+        Line2DSolver solver(lineData);
+        ransac_lib::LocallyOptimizedMSAC<Line2DModel, Line2DModelVector, Line2DSolver> lomsac;
+        ransac_lib::RansacStatistics stats;
+        Line2DModel line;
+        timer.start();
+        int inliers = lomsac.EstimateModel(makeOptions(lineThreshold * lineThreshold),
+                                           solver, &line, &stats);
+        double ms = timer.elapsedMs();
+        std::cout << "  Line: " << line(0) << "x + " << line(1) << "y + " << line(2)
+                  << " = 0  (GT 0.4472x - 0.8944y + 89.44 = 0)\n";
+        std::cout << "  Inliers: " << inliers << "/" << linePts.size()
+                  << ", Iterations: " << stats.num_iterations
+                  << ", Time: " << ms << " ms\n";
+        std::cout << "  (OpenCV has no line RANSAC; cv::fitLine is a robust M-estimator,"
+                     " not hypothesize-and-verify)\n\n";
+        rows.push_back({"Line RansacLib (LO-MSAC)", -1.0, inliers, ms});
     }
 
-    cv::Mat mask;
-    start = std::chrono::high_resolution_clock::now();
-    cv::Mat cvF = cv::findFundamentalMat(pts1, pts2, cv::USAC_MAGSAC, threshold, 0.99, mask);
-    end = std::chrono::high_resolution_clock::now();
-    double opencvTime = std::chrono::duration<double, std::milli>(end - start).count();
+    // ---------- Real correspondences shared with every other demo ----------
+    cv::Mat img1, img2;
+    std::vector<cv::Point2f> pts1, pts2;
+    if (!loadRealPair(argc, argv, img1, img2, pts1, pts2, 8)) return 1;
+    const int n = static_cast<int>(pts1.size());
 
-    int cvInliers = cv::countNonZero(mask);
-    std::cout << "  Inliers: " << cvInliers << "/" << numPoints << std::endl;
-    std::cout << "  Time: " << std::fixed << std::setprecision(2) << opencvTime << " ms\n\n";
+    Eigen::Matrix<double, Eigen::Dynamic, 4> corr(n, 4);
+    for (int i = 0; i < n; ++i) {
+        corr(i, 0) = pts1[i].x; corr(i, 1) = pts1[i].y;
+        corr(i, 2) = pts2[i].x; corr(i, 3) = pts2[i].y;
+    }
 
-    // ========== Summary ==========
-    std::cout << "=== Summary ===" << std::endl;
-    std::cout << std::left << std::setw(25) << "Method"
+    // ---------- 2. Homography: RansacLib vs OpenCV RANSAC ----------
+    std::cout << "\n--- HomographySolver: LO-MSAC vs cv::findHomography(RANSAC) ---" << std::endl;
+    cv::Mat ransaclibHMask;
+    {
+        HomographySolver solver(corr);
+        ransac_lib::LocallyOptimizedMSAC<Homography, HomographyVector, HomographySolver> lomsac;
+        ransac_lib::RansacStatistics stats;
+        Homography H;
+        timer.start();
+        int inliers = lomsac.EstimateModel(makeOptions(squaredThreshold), solver, &H, &stats);
+        double ms = timer.elapsedMs();
+        ransaclibHMask = indicesToMask(stats.inlier_indices, n);
+        double err = meanInlierReproj(pts1, pts2, toCvMat3x3(H), ransaclibHMask);
+        std::cout << "  RansacLib : reproj " << err << " px, inliers " << inliers << "/" << n
+                  << ", iterations " << stats.num_iterations << ", time " << ms << " ms\n";
+        rows.push_back({"H RansacLib (LO-MSAC)", err, inliers, ms});
+    }
+    {
+        cv::Mat mask;
+        timer.start();
+        cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, threshold, mask, 2000, 0.99);
+        double ms = timer.elapsedMs();
+        double err = meanInlierReproj(pts1, pts2, H, mask);
+        std::cout << "  OpenCV    : reproj " << err << " px, inliers "
+                  << cv::countNonZero(mask) << "/" << n << ", time " << ms << " ms\n";
+        rows.push_back({"H OpenCV RANSAC", err, cv::countNonZero(mask), ms});
+    }
+
+    // ---------- 3. Fundamental matrix: RansacLib vs OpenCV RANSAC ----------
+    std::cout << "\n--- FundamentalMatrixSolver: LO-MSAC vs cv::findFundamentalMat(FM_RANSAC) ---"
+              << std::endl;
+    std::cout << std::setprecision(6);
+    {
+        FundamentalMatrixSolver solver(corr);
+        ransac_lib::LocallyOptimizedMSAC<FundamentalMatrix, FundamentalMatrixVector,
+                                         FundamentalMatrixSolver> lomsac;
+        ransac_lib::RansacStatistics stats;
+        FundamentalMatrix F;
+        timer.start();
+        int inliers = lomsac.EstimateModel(makeOptions(squaredThreshold), solver, &F, &stats);
+        double ms = timer.elapsedMs();
+        cv::Mat mask = indicesToMask(stats.inlier_indices, n);
+        double err = meanSampson(toCvMat3x3(F), pts1, pts2, mask);
+        std::cout << "  RansacLib : Sampson " << err << ", inliers " << inliers << "/" << n
+                  << ", iterations " << stats.num_iterations << ", time " << ms << " ms\n";
+        rows.push_back({"F RansacLib (LO-MSAC)", err, inliers, ms});
+    }
+    {
+        cv::Mat mask;
+        timer.start();
+        cv::Mat F = cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, 0.99, mask);
+        double ms = timer.elapsedMs();
+        double err = meanSampson(F, pts1, pts2, mask);
+        std::cout << "  OpenCV    : Sampson " << err << ", inliers "
+                  << cv::countNonZero(mask) << "/" << n << ", time " << ms << " ms\n";
+        rows.push_back({"F OpenCV FM_RANSAC", err, cv::countNonZero(mask), ms});
+    }
+
+    // ---------- Summary ----------
+    std::cout << "\n=== Summary (same data, same threshold/confidence) ===" << std::endl;
+    std::cout << std::setprecision(4);
+    std::cout << std::left << std::setw(28) << "Method"
+              << std::right << std::setw(12) << "Error"
               << std::setw(12) << "Inliers"
-              << std::setw(12) << "Time (ms)" << std::endl;
-    std::cout << std::string(49, '-') << std::endl;
-    std::cout << std::left << std::setw(25) << "RansacLib (LO-MSAC)"
-              << std::setw(12) << numInliers
-              << std::setw(12) << std::fixed << std::setprecision(2) << ransaclibTime << std::endl;
-    std::cout << std::left << std::setw(25) << "OpenCV (USAC_MAGSAC)"
-              << std::setw(12) << cvInliers
-              << std::setw(12) << std::fixed << std::setprecision(2) << opencvTime << std::endl;
+              << std::setw(12) << "Time(ms)" << "\n";
+    std::cout << std::string(64, '-') << "\n";
+    for (const auto& r : rows) {
+        std::cout << std::left << std::setw(28) << r.name << std::right;
+        if (r.err < 0) std::cout << std::setw(12) << "-";
+        else std::cout << std::setw(12) << r.err;
+        std::cout << std::setw(12) << r.inliers
+                  << std::setw(12) << r.time_ms << "\n";
+    }
 
     std::cout << "\n=== Key Takeaways ===" << std::endl;
-    std::cout << "1. RansacLib uses a template-based design for flexibility" << std::endl;
-    std::cout << "2. Custom Solver class encapsulates problem-specific logic" << std::endl;
-    std::cout << "3. LO-MSAC adds local optimization for better accuracy" << std::endl;
+    std::cout << "1. One LO-MSAC estimator, three problem-specific Solver classes" << std::endl;
+    std::cout << "2. The Solver encapsulates minimal solve, refinement, and residual" << std::endl;
+    std::cout << "3. LO-MSAC's local optimization refines each new best model" << std::endl;
     std::cout << "4. Header-only library, easy to integrate" << std::endl;
 
+    // Visualization: RansacLib homography inliers on the real pair.
+    if (!ransaclibHMask.empty()) {
+        cv::Mat vis = drawMatchesVis(img1, img2, pts1, pts2, ransaclibHMask);
+        cv::imwrite("ransaclib_h_matches.jpg", vis);
+        std::cout << "\nSaved: ransaclib_h_matches.jpg" << std::endl;
+        if (std::getenv("DISPLAY") != nullptr) {
+            cv::imshow("RansacLib H matches (green=inlier, red=outlier)", vis);
+            std::cout << "Press any key to exit..." << std::endl;
+            cv::waitKey(0);
+        }
+    }
     return 0;
 }
