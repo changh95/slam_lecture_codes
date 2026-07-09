@@ -6,12 +6,16 @@
  *   1. Match ORB features between two views of a planar scene
  *   2. Estimate H with plain DLT (all matches) and with RANSAC
  *   3. Compare both against the dataset's ground-truth homography
- *   4. Warp image 1 into image 3 and blend to verify alignment
+ *   4. Warp image 1 into image 3 with both H's and blend: the DLT blend
+ *      ghosts (outliers pulled it off), the RANSAC blend stays sharp
+ *   5. Draw where DLT / RANSAC / ground truth send an image grid — the
+ *      per-point transfer error made visible
  *
  * Part 2 — Decomposition (KITTI odometry seq 00, turning vehicle):
  *   1. Estimate H between two frames of a ~21 degree turn
- *   2. Decompose H into {R, t/d, n} with the real KITTI intrinsics
- *   3. Compare the recovered rotation against the KITTI ground-truth poses
+ *   2. Visualize the inlier/outlier matches and the warp blend
+ *   3. Decompose H into {R, t/d, n} with the real KITTI intrinsics
+ *   4. Compare the recovered rotation against the KITTI ground-truth poses
  *
  * A homography H relates points on a plane (or any points under pure
  * rotation) between two views:
@@ -120,6 +124,69 @@ static double gridErrorVsGroundTruth(
 }
 
 /**
+ * @brief Draw where DLT / RANSAC / ground truth send an image grid
+ *
+ * Visual counterpart of gridErrorVsGroundTruth(): on the target image,
+ * each grid point is drawn where H_gt sends it (green), where H_ransac
+ * sends it (cyan, should sit on the green), and where H_dlt sends it
+ * (red, dragged away by the outliers), with a line showing each DLT
+ * error vector.
+ */
+static cv::Mat drawGridTransfer(
+    const cv::Mat& target_img,
+    const cv::Mat& H_dlt,
+    const cv::Mat& H_ransac,
+    const cv::Mat& H_gt) {
+
+    std::vector<cv::Point2f> grid;
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 20; ++x)
+            grid.emplace_back(x * (target_img.cols - 1) / 19.0f,
+                              y * (target_img.rows - 1) / 11.0f);
+
+    std::vector<cv::Point2f> proj_dlt, proj_ransac, proj_gt;
+    cv::perspectiveTransform(grid, proj_dlt, H_dlt);
+    cv::perspectiveTransform(grid, proj_ransac, H_ransac);
+    cv::perspectiveTransform(grid, proj_gt, H_gt);
+
+    cv::Mat vis = target_img.clone();
+    for (size_t i = 0; i < grid.size(); ++i) {
+        cv::line(vis, proj_gt[i], proj_dlt[i], cv::Scalar(0, 0, 255), 1);
+        cv::circle(vis, proj_dlt[i], 3, cv::Scalar(0, 0, 255), -1);
+        cv::circle(vis, proj_ransac[i], 3, cv::Scalar(255, 255, 0), -1);
+        cv::circle(vis, proj_gt[i], 2, cv::Scalar(0, 255, 0), -1);
+    }
+    cv::putText(vis, "green = GT, cyan = RANSAC, red = DLT (line = error)",
+                cv::Point(10, 25), cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                cv::Scalar(255, 255, 255), 2);
+    return vis;
+}
+
+/**
+ * @brief Side-by-side match visualization (green = inlier, red = outlier)
+ */
+static cv::Mat drawMatchesVis(
+    const cv::Mat& img1,
+    const cv::Mat& img2,
+    const std::vector<cv::Point2f>& pts1,
+    const std::vector<cv::Point2f>& pts2,
+    const cv::Mat& inlier_mask) {
+
+    cv::Mat vis;
+    cv::hconcat(img1, img2, vis);
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        cv::Point2f p2 = pts2[i] + cv::Point2f(static_cast<float>(img1.cols), 0);
+        cv::Scalar color = (!inlier_mask.empty() && inlier_mask.at<uchar>(i))
+                               ? cv::Scalar(0, 255, 0)
+                               : cv::Scalar(0, 0, 255);
+        cv::circle(vis, pts1[i], 4, color, -1);
+        cv::circle(vis, p2, 4, color, -1);
+        cv::line(vis, pts1[i], p2, color, 1);
+    }
+    return vis;
+}
+
+/**
  * @brief Rotation angle (degrees) of a rotation matrix
  */
 static double rotationAngleDeg(const cv::Mat& R) {
@@ -184,19 +251,31 @@ int main(int argc, char* argv[]) {
     std::cout << "  RANSAC:                           " << err_ransac << " px"
               << std::endl;
 
-    // Warp wall1 into wall3's frame and blend to verify alignment
-    cv::Mat warped, blend;
+    // Warp wall1 into wall3's frame with both H's and blend: this is the
+    // numeric comparison above made visible. The DLT blend ghosts (double
+    // bricks) where the outliers pulled H off; the RANSAC blend stays sharp.
+    cv::Mat warped, blend, warped_dlt, blend_dlt;
     cv::warpPerspective(wall1, warped, H_ransac, wall3.size());
     cv::addWeighted(wall3, 0.5, warped, 0.5, 0, blend);
+    cv::warpPerspective(wall1, warped_dlt, H_dlt, wall3.size());
+    cv::addWeighted(wall3, 0.5, warped_dlt, 0.5, 0, blend_dlt);
+
+    cv::Mat grid_vis = drawGridTransfer(wall3, H_dlt, H_ransac, H_gt);
+
     cv::imwrite("wall_warped.png", warped);
     cv::imwrite("wall_blend.png", blend);
-    std::cout << "\nSaved: wall_warped.png, wall_blend.png "
-                 "(blend should show a sharp, aligned wall)" << std::endl;
+    cv::imwrite("wall_blend_dlt.png", blend_dlt);
+    cv::imwrite("wall_grid_error.png", grid_vis);
+    std::cout << "\nSaved: wall_warped.png, wall_blend.png (sharp), "
+                 "wall_blend_dlt.png (ghosted by outliers), "
+                 "wall_grid_error.png (DLT error vectors vs GT)" << std::endl;
 
     if (std::getenv("DISPLAY") != nullptr) {
         cv::imshow("wall img3", wall3);
-        cv::imshow("wall img1 warped into img3 (RANSAC H)", warped);
-        cv::imshow("50/50 blend (sharp bricks = sub-pixel H)", blend);
+        cv::imshow("blend with DLT H (ghosted bricks = outlier damage)",
+                   blend_dlt);
+        cv::imshow("blend with RANSAC H (sharp bricks = sub-pixel H)", blend);
+        cv::imshow("grid transfer: green=GT cyan=RANSAC red=DLT", grid_vis);
         std::cout << "Press any key to continue..." << std::endl;
         cv::waitKey(0);
         cv::destroyAllWindows();
@@ -230,6 +309,42 @@ int main(int argc, char* argv[]) {
         cv::findHomography(kpts1, kpts2, cv::RANSAC, 3.0, kitti_mask, 2000, 0.995);
     std::cout << "RANSAC inliers: " << cv::countNonZero(kitti_mask) << "/"
               << kpts1.size() << std::endl;
+
+    // Input frames stacked with labels: ~21 degrees of turn and 2.4 m of
+    // travel between them, mostly visible as a large horizontal shift of
+    // the distant buildings.
+    cv::Mat kitti_inputs, kitti1_lab = kitti1.clone(), kitti2_lab = kitti2.clone();
+    cv::putText(kitti1_lab, "frame 003677", cv::Point(10, 30),
+                cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 255, 0), 2);
+    cv::putText(kitti2_lab, "frame 003682 (~21 deg turn, 2.4 m later)",
+                cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.9,
+                cv::Scalar(0, 255, 0), 2);
+    cv::vconcat(kitti1_lab, kitti2_lab, kitti_inputs);
+
+    // Visualize the matches and the warp. The scene is not planar, so the
+    // blend aligns the distant buildings (small parallax) but ghosts on the
+    // near ground — exactly why H here is only good for the rotation.
+    cv::Mat kitti_matches = drawMatchesVis(kitti1, kitti2, kpts1, kpts2,
+                                           kitti_mask);
+    cv::Mat kitti_warped, kitti_blend;
+    cv::warpPerspective(kitti1, kitti_warped, H_kitti, kitti2.size());
+    cv::addWeighted(kitti2, 0.5, kitti_warped, 0.5, 0, kitti_blend);
+    cv::imwrite("kitti_inputs.png", kitti_inputs);
+    cv::imwrite("kitti_matches.png", kitti_matches);
+    cv::imwrite("kitti_blend.png", kitti_blend);
+    std::cout << "Saved: kitti_inputs.png (the two turn frames), "
+                 "kitti_matches.png, kitti_blend.png "
+                 "(distant buildings align, near ground ghosts)" << std::endl;
+
+    if (std::getenv("DISPLAY") != nullptr) {
+        cv::imshow("KITTI turn input frames (3677 / 3682)", kitti_inputs);
+        cv::imshow("KITTI turn matches (green=inlier, red=outlier)",
+                   kitti_matches);
+        cv::imshow("KITTI blend (buildings align, ground ghosts)", kitti_blend);
+        std::cout << "Press any key to continue..." << std::endl;
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+    }
 
     // Ground truth relative motion from the KITTI poses (frames 3677, 3682)
     auto poses = loadKittiPoses(data_dir + "/kitti00_turn_poses.txt");

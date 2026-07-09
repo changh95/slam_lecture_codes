@@ -39,8 +39,8 @@ part2_ch02_04/
 ## What each demo shows
 
 ### `homography_demo` — estimation and decomposition
-- **Part 1 (wall, planar):** ORB matches with a deliberately loose ratio test (~10% natural outliers), then H by plain DLT vs RANSAC, both compared against the dataset's ground-truth homography. Expect DLT to be pulled tens of pixels off by the outliers while RANSAC stays sub-pixel. Saves `wall_warped.png` / `wall_blend.png`.
-- **Part 2 (KITTI turn):** H estimated between two frames of a ~21° turn, then `cv::decomposeHomographyMat` with the real KITTI intrinsics. The recovered rotation is compared against the KITTI ground-truth poses (expect ~19–23° for the plausible solutions vs 21.3° GT).
+- **Part 1 (wall, planar):** ORB matches with a deliberately loose ratio test (~10% natural outliers), then H by plain DLT vs RANSAC, both compared against the dataset's ground-truth homography. Expect DLT to be pulled tens of pixels off by the outliers while RANSAC stays sub-pixel. The comparison is visualized two ways: warp blends (`wall_blend_dlt.png` ghosts, `wall_blend.png` is sharp) and a grid-transfer drawing (`wall_grid_error.png`: green = GT, cyan = RANSAC on top of it, red = DLT with its error vectors). Also saves `wall_warped.png`.
+- **Part 2 (KITTI turn):** H estimated between two frames of a ~21° turn, then `cv::decomposeHomographyMat` with the real KITTI intrinsics. The recovered rotation is compared against the KITTI ground-truth poses (expect ~19–23° for the plausible solutions vs 21.3° GT). Visualized as the two labeled input frames (`kitti_inputs.png`), inlier/outlier matches (`kitti_matches.png`), and a warp blend (`kitti_blend.png`) — the distant buildings align but the near ground ghosts, showing why H on this non-planar scene is only good for the rotation.
 
 ### `hf_model_selection` — ORB-SLAM initialization logic
 Fits H and F to the same matches and computes the ORB-SLAM score ratio `R_H = S_H / (S_H + S_F)` with truncated chi-square scores (Mur-Artal et al., TRO 2015, Sec. IV.A):
@@ -102,7 +102,7 @@ Run from the chapter root so the default `data/` paths resolve:
 ./build/hf_model_selection my_img1.png my_img2.png
 ```
 
-`homography_demo` and the stitching demos open visualization windows only when `$DISPLAY` is set (press any key in the window to continue); results are always saved as image files regardless (`panorama_result.jpg`, `matches_visualization.jpg`, `panorama_poselib.jpg`, `wall_*.png`).
+`homography_demo` and the stitching demos open visualization windows only when `$DISPLAY` is set (press any key in the window to continue); results are always saved as image files regardless (`panorama_result.jpg`, `matches_visualization.jpg`, `panorama_poselib.jpg`, `wall_*.png`, `kitti_*.png`).
 
 ### Docker
 
