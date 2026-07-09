@@ -6,8 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Default to an optimized build: Eigen-heavy code is orders of magnitude
 # slower at -O0, which skews the timing comparisons these demos print.
+# Set in the cache so CMakeCache.txt reflects the effective build type.
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
