@@ -388,7 +388,7 @@ int main(int argc, char* argv[]) {
                                            solver, &line, &stats);
         double ms = timer.elapsedMs();
         std::cout << "  Line: " << line(0) << "x + " << line(1) << "y + " << line(2)
-                  << " = 0  (GT 0.4472x - 0.8944y + 89.44 = 0)\n";
+                  << " = 0  (GT 0.4472x - 0.8944y + 107.33 = 0)\n";
         std::cout << "  Inliers: " << inliers << "/" << linePts.size()
                   << ", Iterations: " << stats.num_iterations
                   << ", Time: " << ms << " ms\n";
