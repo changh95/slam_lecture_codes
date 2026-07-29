@@ -197,6 +197,10 @@ That yields 4h46m of usable static data for 1.3 GB instead of 29.6 GB. Grab the
 whole bag if you want to match TUM's numbers more tightly -- see the accuracy
 note below.
 
+Budget 2x the disk: `rosbag reindex` writes the repaired bag in place and keeps
+the original as `static.orig.bag`, so the 1.3 GB download occupies ~2.6 GB until
+you delete the backup.
+
 ### Running it
 
 ```bash
