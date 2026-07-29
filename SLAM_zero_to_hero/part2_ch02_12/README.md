@@ -51,6 +51,7 @@ part2_ch02_12/
 - **Same metrics**: mean inlier reprojection error (H, px) and mean squared Sampson distance (F) computed by shared code for every method, whichever library produced the model.
 - **Same threshold**: 3 px, 0.99 confidence, everywhere. MAGSAC++ is threshold-free, so its inlier count is derived post-hoc with the same 3 px rule.
 - **Same build**: all demos compile at Release; libraries are used with realistic settings. The one deliberate exception is `ransac_custom`, which puts a 50-iteration floor under its adaptive stopping rule — see [Inlier rules are not shared](#inlier-rules-are-not-shared-for-f) and the file's own comments.
+- **Reproducible, except two rows**: every estimator here is seeded, so re-running reproduces `results.csv` exactly — *apart from* the two `magsac,*,MAGSAC++` rows. MAGSAC++'s Progressive NAPSAC sampler seeds itself from `std::random_device` inside gcransac (`utils::UniformRandomGenerator`), and the sampler holds that generator as a protected member with no seed parameter on its constructor, so there is no way to pin it without subclassing the sampler or patching gcransac. Observed spread across runs: H 588–652 inliers / 1.22–1.40 px, F 827–828 inliers, and F timing anywhere from 8 ms to 900 ms because sigma-consensus cost depends on which model the sampler lands on. Treat those two rows as one sample, not a benchmark.
 
 ### Inlier rules are not shared for F
 
