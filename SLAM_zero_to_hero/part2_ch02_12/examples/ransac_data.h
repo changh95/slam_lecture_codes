@@ -53,8 +53,24 @@ inline std::string resolveDataPath(const std::string& name) {
     return "../data/" + name;
 }
 
-// ORB + BF-Hamming + Lowe ratio test. The single source of correspondences
-// for every H/F estimator in this chapter.
+// ORB + BF-Hamming + Lowe ratio test, emitted best-match-first. The single
+// source of correspondences for every H/F estimator in this chapter.
+//
+// The ordering is load-bearing, not cosmetic. PROSAC samples the front of the
+// list first and only widens toward uniform sampling as it fails, so it requires
+// the correspondences sorted by DESCENDING quality:
+//   - opencv2/calib3d.hpp: "USAC_PROSAC = 37, //!< USAC, sorted points, runs
+//     PROSAC"
+//   - usac/sampler.cpp, ProsacSamplerImpl: "The data points in U_N are sorted in
+//     descending order w.r.t. the quality function q", which is what its growth
+//     function is derived from.
+// knnMatch returns matches in queryIdx order, which carries no quality
+// information, so feeding that straight in leaves PROSAC drawing from an
+// arbitrary prefix and unable to show what it does. The Lowe ratio is the
+// quality score here: a lower ratio means the best match beat the runner-up by
+// more, i.e. a more distinctive correspondence, so ascending ratio is descending
+// quality. Every estimator receives this same order, so the comparison across
+// methods is unaffected.
 inline void detectAndMatch(const cv::Mat& img1, const cv::Mat& img2,
                            std::vector<cv::Point2f>& pts1,
                            std::vector<cv::Point2f>& pts2) {
@@ -69,14 +85,37 @@ inline void detectAndMatch(const cv::Mat& img1, const cv::Mat& img2,
     std::vector<std::vector<cv::DMatch>> knn;
     matcher.knnMatch(des1, des2, knn, 2);
 
-    pts1.clear(); pts2.clear();
+    struct ScoredMatch {
+        float ratio;        // Lowe ratio: lower is a stronger match
+        cv::Point2f p1, p2;
+    };
+    std::vector<ScoredMatch> scored;
+    scored.reserve(knn.size());
     for (const auto& m : knn) {
         if (m.size() == 2 && m[0].distance < 0.75f * m[1].distance) {
-            pts1.push_back(kp1[m[0].queryIdx].pt);
-            pts2.push_back(kp2[m[0].trainIdx].pt);
+            const float denom = std::max(m[1].distance, 1e-6f);
+            scored.push_back({m[0].distance / denom,
+                              kp1[m[0].queryIdx].pt,
+                              kp2[m[0].trainIdx].pt});
         }
     }
-    std::cout << "Ratio-test matches: " << pts1.size() << "\n";
+
+    // stable_sort so equal ratios keep a deterministic order run to run, which
+    // results.csv depends on.
+    std::stable_sort(scored.begin(), scored.end(),
+                     [](const ScoredMatch& a, const ScoredMatch& b) {
+                         return a.ratio < b.ratio;
+                     });
+
+    pts1.clear(); pts2.clear();
+    pts1.reserve(scored.size());
+    pts2.reserve(scored.size());
+    for (const auto& s : scored) {
+        pts1.push_back(s.p1);
+        pts2.push_back(s.p2);
+    }
+    std::cout << "Ratio-test matches: " << pts1.size()
+              << " (sorted best-first by Lowe ratio, as PROSAC requires)\n";
 }
 
 // Load the real image pair (or the two paths given on the command line) and

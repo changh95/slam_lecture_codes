@@ -37,8 +37,8 @@ part2_ch02_12/
 ├── results.csv                # benchmark results from the docker image
 └── examples/
     ├── ransac_data.h          # shared ORB pipeline, metrics, synthetic line data, viz
-    ├── ransac_homography.cpp  # H: 7 OpenCV RANSAC/USAC variants
-    ├── ransac_fundamental.cpp # F: 9 OpenCV methods with full USAC configuration
+    ├── ransac_homography.cpp  # H: 8 OpenCV RANSAC/USAC variants
+    ├── ransac_fundamental.cpp # F: 10 OpenCV methods with full USAC configuration
     ├── ransac_custom.cpp      # Line/H/F RANSAC from scratch (Eigen) vs OpenCV RANSAC
     ├── ransac_ransaclib.cpp   # Line/H/F solvers plugged into RansacLib LO-MSAC
     └── ransac_magsac.cpp      # H/F via MAGSAC++ vs OpenCV RANSAC

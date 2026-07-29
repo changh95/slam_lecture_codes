@@ -1,7 +1,7 @@
 /**
  * RANSAC Homography Estimation
  *
- * Run all seven RANSAC / USAC variants on real ORB correspondences from a
+ * Run all eight RANSAC / USAC variants on real ORB correspondences from a
  * EuRoC MAV frame pair (MH_01_easy cam0, 5 s apart). The machine-hall scene
  * is fully 3D with no dominant plane, so a homography is a mis-specified
  * model here: it can only explain the subset of matches consistent with a
@@ -12,8 +12,11 @@
  * Pipeline (shared with the other demos via ransac_data.h):
  *   1. Load left/right images (data/1403636579763555584.png and
  *      data/1403636584763555584.png by default).
- *   2. ORB detect + BF-Hamming + Lowe ratio test (0.75) gives raw matches.
- *   3. Run RANSAC, LMEDS, four USAC flags, and a Custom UsacParams config.
+ *   2. ORB detect + BF-Hamming + Lowe ratio test (0.75), sorted best-first so
+ *      USAC_PROSAC's sampler gets the quality ordering it assumes.
+ *   3. Run RANSAC, LMEDS, five USAC flags, and a Custom UsacParams config.
+ *      USAC_FAST is USAC_DEFAULT with the LO budget capped (5 LO iterations,
+ *      3 iterative), so the pair isolates what local optimization buys.
  *   4. Per method, report mean inlier reprojection error, inlier count, time.
  *
  * No synthetic ground-truth H here: real images don't admit a single GT
@@ -83,6 +86,9 @@ int main(int argc, char* argv[]) {
     }));
     results.push_back(run("USAC_DEFAULT", [&](cv::Mat& m) {
         return cv::findHomography(pts1, pts2, cv::USAC_DEFAULT, threshold, m);
+    }));
+    results.push_back(run("USAC_FAST", [&](cv::Mat& m) {
+        return cv::findHomography(pts1, pts2, cv::USAC_FAST, threshold, m);
     }));
     results.push_back(run("USAC_MAGSAC", [&](cv::Mat& m) {
         return cv::findHomography(pts1, pts2, cv::USAC_MAGSAC, threshold, m);

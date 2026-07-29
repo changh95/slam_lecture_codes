@@ -1,7 +1,7 @@
 /**
  * RANSAC Fundamental Matrix Estimation with USAC
  *
- * Run nine F-estimation methods on real ORB correspondences from a EuRoC MAV
+ * Run ten F-estimation methods on real ORB correspondences from a EuRoC MAV
  * frame pair (data/1403636579763555584.png and data/1403636584763555584.png by
  * default -- MH_01_easy cam0, 5 s apart).
  * No synthetic data: there is no closed-form GT F for arbitrary scenes, so
@@ -31,9 +31,14 @@
  *   4. FM_LMEDS      (Least Median of Squares over the 7-point solver)
  *   5. USAC_DEFAULT  (Uniform + MSAC + Inner&Iter-LO)
  *   6. USAC_FM_8PTS  (Uniform + MSAC + Inner-LO, 8-point estimator)
- *   7. USAC_MAGSAC   (Uniform + MAGSAC scoring + sigma-consensus LO)
- *   8. Custom USAC   (PROSAC + MAGSAC + Inner&Iter-LO + MAGSAC polisher)
- *   9. USAC_ACCURATE (Uniform + MSAC + Graph-Cut LO)
+ *   7. USAC_FAST     (Uniform + MSAC + Inner&Iter-LO, LO capped at 5/3)
+ *   8. USAC_MAGSAC   (Uniform + MAGSAC scoring + sigma-consensus LO)
+ *   9. Custom USAC   (PROSAC + MAGSAC + Inner&Iter-LO + MAGSAC polisher)
+ *  10. USAC_ACCURATE (Uniform + MSAC + Graph-Cut LO)
+ *
+ * USAC_FAST differs from USAC_DEFAULT only in the LO budget, so that pair is the
+ * one controlled comparison here: same sampler, same scoring, less local
+ * optimization. Every other pair of rows moves more than one variable.
  *
  * Note that only USAC_MAGSAC scores with MAGSAC; every other USAC flag here
  * uses MSAC. What actually differs between them is the sampler and the local
@@ -180,6 +185,9 @@ int main(int argc, char* argv[]) {
     }));
     results.push_back(run_masked("USAC_FM_8PTS", [&](cv::Mat& m) {
         return cv::findFundamentalMat(pts1, pts2, cv::USAC_FM_8PTS, threshold, 0.99, m);
+    }));
+    results.push_back(run_masked("USAC_FAST", [&](cv::Mat& m) {
+        return cv::findFundamentalMat(pts1, pts2, cv::USAC_FAST, threshold, 0.99, m);
     }));
     results.push_back(run_masked("USAC_MAGSAC", [&](cv::Mat& m) {
         return cv::findFundamentalMat(pts1, pts2, cv::USAC_MAGSAC, threshold, 0.99, m);
