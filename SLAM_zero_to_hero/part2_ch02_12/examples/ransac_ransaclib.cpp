@@ -13,7 +13,7 @@
  *  - HomographySolver       (4-point DLT, squared reprojection residual)
  *  - FundamentalMatrixSolver (normalized 8-point, Sampson residual)
  *
- * H and F run on the real KITTI ORB correspondences shared by every demo in
+ * H and F run on the real EuRoC ORB correspondences shared by every demo in
  * this chapter, and each is benchmarked against OpenCV RANSAC on the same
  * data with the same threshold and confidence. Line fitting uses the shared
  * fixed-seed synthetic points (OpenCV has no line RANSAC).

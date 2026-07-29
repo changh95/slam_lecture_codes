@@ -8,7 +8,7 @@
  * 2. Sigma-scoring: Uses probabilistic scoring instead of binary inlier/outlier
  * 3. Progressive NAPSAC sampling: Spatially-aware sampling for faster convergence
  *
- * Both models run on the real KITTI ORB correspondences shared by every demo
+ * Both models run on the real EuRoC ORB correspondences shared by every demo
  * in this chapter, benchmarked against OpenCV RANSAC on the same data. Since
  * MAGSAC++ has no fixed inlier threshold, its inlier count is derived
  * post-hoc with the same 3 px rule used everywhere else, and every method's
@@ -188,9 +188,9 @@ int main(int argc, char* argv[]) {
             MAGSAC<cv::Mat, magsac::utils::DefaultFundamentalMatrixEstimator>::MAGSAC_PLUS_PLUS);
         magsac.setMaximumThreshold(maximumThreshold);
         magsac.setReferenceThreshold(threshold);  // interrupt sigma-consensus early
-        // The KITTI scene is dominated by a plane, so the F confidence
-        // criterion converges erratically; cap iterations to keep the demo
-        // bounded (MAGSAC++'s own degensac handles the degeneracy).
+        // Bound the demo's runtime: MAGSAC++'s confidence criterion has no
+        // hard iteration ceiling of its own. On this pair F settles in ~270
+        // iterations, so the cap is defensive rather than load-bearing.
         magsac.setIterationLimit(2000);
         magsac.setMinimumIterationNumber(50);
 

@@ -1,8 +1,9 @@
 /**
  * RANSAC Fundamental Matrix Estimation with USAC
  *
- * Run nine F-estimation methods on real ORB correspondences from a KITTI
- * consecutive frame pair (data/000024.png, data/000025.png by default).
+ * Run nine F-estimation methods on real ORB correspondences from a EuRoC MAV
+ * frame pair (data/000024.png, data/000025.png by default -- MH_01_easy cam0,
+ * 5 s apart).
  * No synthetic data: there is no closed-form GT F for arbitrary scenes, so
  * each method is judged on (a) Sampson error against the matches, and
  * (b) inlier count -- the same criteria the estimators themselves optimize.
@@ -88,19 +89,23 @@ static cv::Mat drawEpipolarVis(const cv::Mat& img1, const cv::Mat& img2,
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== RANSAC Fundamental Matrix Estimation (KITTI consecutive frames) ===\n";
+    std::cout << "=== RANSAC Fundamental Matrix Estimation (EuRoC MH_01_easy, 5 s apart) ===\n";
     std::cout << std::fixed << std::setprecision(6);
 
     cv::Mat img1, img2;
     std::vector<cv::Point2f> pts1, pts2;
     if (!loadRealPair(argc, argv, img1, img2, pts1, pts2, 8)) return 1;
 
-    // KITTI seq 00-02 rectified intrinsics (for reference; F is uncalibrated).
+    // EuRoC cam0 intrinsics from mav0/cam0/sensor.yaml (for reference only;
+    // F is uncalibrated, so nothing below consumes K). Note these images are
+    // the raw, still-distorted cam0 frames (radial-tangential model, k1 =
+    // -0.2834), which is why the estimators are compared on pixel residuals
+    // rather than on a calibrated E.
     const cv::Mat K = (cv::Mat_<double>(3, 3) <<
-        718.856, 0.0, 607.1928,
-        0.0, 718.856, 185.2157,
+        458.654, 0.0, 367.215,
+        0.0, 457.296, 248.375,
         0.0, 0.0, 1.0);
-    std::cout << "\nReference K (KITTI seq 00-02):\n" << K << "\n\n";
+    std::cout << "\nReference K (EuRoC cam0, raw/unrectified):\n" << K << "\n\n";
 
     const double threshold = 3.0;
     Timer timer;

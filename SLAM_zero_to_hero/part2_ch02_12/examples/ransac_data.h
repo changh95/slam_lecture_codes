@@ -4,9 +4,11 @@
  * Every demo in this chapter estimates on the SAME inputs so that the
  * numbers in results.csv are comparable across estimators:
  *
- *  - H / F: ORB correspondences from the real KITTI consecutive pair
- *    data/000024.png -> data/000025.png. Detector settings, matcher, and
- *    ratio test are fixed here, in one place.
+ *  - H / F: ORB correspondences from the real EuRoC MAV pair
+ *    data/000024.png -> data/000025.png (MH_01_easy cam0, frames 0 and 100
+ *    of a 20 Hz stream, i.e. 5 s apart -- a wide baseline, not consecutive
+ *    frames). Detector settings, matcher, and ratio test are fixed here, in
+ *    one place.
  *  - Line fitting: a fixed-seed synthetic point set (a 2D line has no
  *    real-image equivalent in this dataset).
  *

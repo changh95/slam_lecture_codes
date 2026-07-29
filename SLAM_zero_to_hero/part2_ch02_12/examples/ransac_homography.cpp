@@ -2,9 +2,12 @@
  * RANSAC Homography Estimation
  *
  * Run all seven RANSAC / USAC variants on real ORB correspondences from a
- * KITTI consecutive frame pair (forward motion). The dominant ground plane
- * and distant facades fit a homography reasonably while the rest of the
- * scene has parallax outliers -- exactly the regime that exercises RANSAC.
+ * EuRoC MAV frame pair (MH_01_easy cam0, 5 s apart). The machine-hall scene
+ * is fully 3D with no dominant plane, so a homography is a mis-specified
+ * model here: it can only explain the subset of matches consistent with a
+ * single plane (~560-650 of 844) while parallax pushes the rest out -- a
+ * high outlier ratio, which is exactly the regime that exercises RANSAC.
+ * Contrast with ransac_fundamental, where the correct model keeps ~825.
  *
  * Pipeline (shared with the other demos via ransac_data.h):
  *   1. Load left/right images (data/000024.png, data/000025.png by default).
@@ -39,7 +42,7 @@ struct MethodResult {
 };
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== RANSAC Homography Estimation (KITTI consecutive frames) ===\n";
+    std::cout << "=== RANSAC Homography Estimation (EuRoC MH_01_easy, 5 s apart) ===\n";
     std::cout << std::fixed << std::setprecision(4);
 
     cv::Mat img1, img2;

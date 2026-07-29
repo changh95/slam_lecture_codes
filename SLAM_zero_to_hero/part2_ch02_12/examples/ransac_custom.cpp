@@ -7,7 +7,7 @@
  *
  * 1. Line fitting RANSAC (fixed-seed synthetic points; OpenCV has no line
  *    RANSAC, so cv::fitLine serves as a robust non-RANSAC reference)
- * 2. Homography RANSAC (4-point DLT) on real KITTI ORB correspondences,
+ * 2. Homography RANSAC (4-point DLT) on real EuRoC ORB correspondences,
  *    vs cv::findHomography(RANSAC) -- both use forward reprojection error
  * 3. Fundamental matrix RANSAC (normalized 8-point) on the same real
  *    correspondences, vs cv::findFundamentalMat(FM_RANSAC) -- both use
@@ -617,7 +617,7 @@ int main(int argc, char* argv[]) {
     cv::Mat lineVis = testLineFitting();
 
     // Real correspondences shared with every other demo in this chapter
-    std::cout << "\n========== Real data (KITTI ORB correspondences) ==========" << std::endl;
+    std::cout << "\n========== Real data (EuRoC ORB correspondences) ==========" << std::endl;
     cv::Mat img1, img2;
     std::vector<cv::Point2f> pts1, pts2;
     if (!loadRealPair(argc, argv, img1, img2, pts1, pts2, 8)) return 1;
