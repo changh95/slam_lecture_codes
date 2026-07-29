@@ -147,6 +147,12 @@ int main(int argc, char* argv[]) {
         gcransac::Homography model;
         ModelScore score;
         int iterations = 0;
+        // Single shot, unlike every other timing in the chapter. MAGSAC++'s
+        // Progressive NAPSAC sampler is unseeded AND stateful, so repeating the
+        // call would both measure different work each time and let the sampler's
+        // per-point hit counts drift. This number is therefore one draw from a
+        // wide distribution (F has been observed from 7.8 ms to 911 ms), not a
+        // median like the deterministic rows.
         timer.start();
         bool ok = magsac.run(points, confidence, estimator, sampler,
                              model, iterations, score);
@@ -166,9 +172,11 @@ int main(int argc, char* argv[]) {
     }
     {
         cv::Mat mask;
-        timer.start();
         cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, threshold, mask, 2000, confidence);
-        double ms = timer.elapsedMs();
+        double ms = medianMs([&] {
+            cv::Mat m;
+            cv::findHomography(pts1, pts2, cv::RANSAC, threshold, m, 2000, confidence);
+        });
         double err = meanInlierReproj(pts1, pts2, H, mask);
         std::cout << "  OpenCV   : reproj " << err << " px, inliers "
                   << cv::countNonZero(mask) << "/" << n << ", time " << ms << " ms\n";
@@ -197,6 +205,12 @@ int main(int argc, char* argv[]) {
         gcransac::FundamentalMatrix model;
         ModelScore score;
         int iterations = 0;
+        // Single shot, unlike every other timing in the chapter. MAGSAC++'s
+        // Progressive NAPSAC sampler is unseeded AND stateful, so repeating the
+        // call would both measure different work each time and let the sampler's
+        // per-point hit counts drift. This number is therefore one draw from a
+        // wide distribution (F has been observed from 7.8 ms to 911 ms), not a
+        // median like the deterministic rows.
         timer.start();
         bool ok = magsac.run(points, confidence, estimator, sampler,
                              model, iterations, score);
@@ -216,9 +230,11 @@ int main(int argc, char* argv[]) {
     }
     {
         cv::Mat mask;
-        timer.start();
         cv::Mat F = cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, confidence, mask);
-        double ms = timer.elapsedMs();
+        double ms = medianMs([&] {
+            cv::Mat m;
+            cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, confidence, m);
+        });
         double err = meanSampson(F, pts1, pts2, mask);
         std::cout << "  OpenCV   : Sampson " << err << ", inliers "
                   << cv::countNonZero(mask) << "/" << n << ", time " << ms << " ms\n";

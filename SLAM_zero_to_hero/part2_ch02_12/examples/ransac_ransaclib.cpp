@@ -383,10 +383,12 @@ int main(int argc, char* argv[]) {
         ransac_lib::LocallyOptimizedMSAC<Line2DModel, Line2DModelVector, Line2DSolver> lomsac;
         ransac_lib::RansacStatistics stats;
         Line2DModel line;
-        timer.start();
-        int inliers = lomsac.EstimateModel(makeOptions(lineThreshold * lineThreshold),
+        // Median over repeats -- see medianMs in ransac_data.h.
+        int inliers = 0;
+        double ms = medianMs([&] {
+            inliers = lomsac.EstimateModel(makeOptions(lineThreshold * lineThreshold),
                                            solver, &line, &stats);
-        double ms = timer.elapsedMs();
+        });
         // (a,b,c) and -(a,b,c) are the same line; the minimal solver's sign falls
         // out of the sample order. Pin it so the fit is directly comparable to the
         // ground truth printed beside it. Scoring already happened and is
@@ -423,9 +425,10 @@ int main(int argc, char* argv[]) {
         ransac_lib::LocallyOptimizedMSAC<Homography, HomographyVector, HomographySolver> lomsac;
         ransac_lib::RansacStatistics stats;
         Homography H;
-        timer.start();
-        int inliers = lomsac.EstimateModel(makeOptions(squaredThreshold), solver, &H, &stats);
-        double ms = timer.elapsedMs();
+        int inliers = 0;
+        double ms = medianMs([&] {
+            inliers = lomsac.EstimateModel(makeOptions(squaredThreshold), solver, &H, &stats);
+        });
         ransaclibHMask = indicesToMask(stats.inlier_indices, n);
         double err = meanInlierReproj(pts1, pts2, toCvMat3x3(H), ransaclibHMask);
         std::cout << "  RansacLib : reproj " << err << " px, inliers " << inliers << "/" << n
@@ -434,9 +437,11 @@ int main(int argc, char* argv[]) {
     }
     {
         cv::Mat mask;
-        timer.start();
         cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, threshold, mask, 2000, 0.99);
-        double ms = timer.elapsedMs();
+        double ms = medianMs([&] {
+            cv::Mat m;
+            cv::findHomography(pts1, pts2, cv::RANSAC, threshold, m, 2000, 0.99);
+        });
         double err = meanInlierReproj(pts1, pts2, H, mask);
         std::cout << "  OpenCV    : reproj " << err << " px, inliers "
                   << cv::countNonZero(mask) << "/" << n << ", time " << ms << " ms\n";
@@ -453,9 +458,10 @@ int main(int argc, char* argv[]) {
                                          FundamentalMatrixSolver> lomsac;
         ransac_lib::RansacStatistics stats;
         FundamentalMatrix F;
-        timer.start();
-        int inliers = lomsac.EstimateModel(makeOptions(squaredThreshold), solver, &F, &stats);
-        double ms = timer.elapsedMs();
+        int inliers = 0;
+        double ms = medianMs([&] {
+            inliers = lomsac.EstimateModel(makeOptions(squaredThreshold), solver, &F, &stats);
+        });
         cv::Mat mask = indicesToMask(stats.inlier_indices, n);
         double err = meanSampson(toCvMat3x3(F), pts1, pts2, mask);
         std::cout << "  RansacLib : Sampson " << err << ", inliers " << inliers << "/" << n
@@ -464,9 +470,11 @@ int main(int argc, char* argv[]) {
     }
     {
         cv::Mat mask;
-        timer.start();
         cv::Mat F = cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, 0.99, mask);
-        double ms = timer.elapsedMs();
+        double ms = medianMs([&] {
+            cv::Mat m;
+            cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, 0.99, m);
+        });
         double err = meanSampson(F, pts1, pts2, mask);
         std::cout << "  OpenCV    : Sampson " << err << ", inliers "
                   << cv::countNonZero(mask) << "/" << n << ", time " << ms << " ms\n";

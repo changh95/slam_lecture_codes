@@ -1,37 +1,37 @@
 Demo,Model,Method,Error,Inlier,Time
-homography,H,RANSAC,1.2370,551,0.6435
-homography,H,LMEDS,1.2232,648,0.9784
-homography,H,USAC_DEFAULT,1.2158,651,3.7682
-homography,H,USAC_FAST,1.2113,650,0.5821
-homography,H,USAC_MAGSAC,1.2353,651,0.8086
-homography,H,USAC_PROSAC,1.1828,594,0.5793
-homography,H,USAC_ACCURATE,1.2096,649,11.3745
-homography,H,Custom UsacParams,1.2319,650,3.3933
-fundamental,F,FM_7POINT,0.443023,776,8.753993
-fundamental,F,FM_8POINT,5.227949,844,0.039456
-fundamental,F,FM_RANSAC,0.881815,682,0.320259
-fundamental,F,FM_LMEDS,0.443023,776,8.041006
-fundamental,F,USAC_DEFAULT,0.521059,826,2.314886
-fundamental,F,USAC_FM_8PTS,0.554685,825,0.465766
-fundamental,F,USAC_FAST,0.521059,826,0.496265
-fundamental,F,USAC_MAGSAC,0.521059,826,0.581517
-fundamental,F,Custom USAC,0.510809,826,2.726500
-fundamental,F,USAC_ACCURATE,0.521059,826,4.326425
+homography,H,RANSAC,1.2370,551,0.5282
+homography,H,LMEDS,1.2232,648,0.9166
+homography,H,USAC_DEFAULT,1.2158,651,3.6704
+homography,H,USAC_FAST,1.2113,650,0.4855
+homography,H,USAC_MAGSAC,1.2353,651,0.7382
+homography,H,USAC_PROSAC,1.1828,594,0.4217
+homography,H,USAC_ACCURATE,1.2096,649,11.4294
+homography,H,Custom UsacParams,1.2319,650,3.3127
+fundamental,F,FM_7POINT,0.443023,776,7.894087
+fundamental,F,FM_8POINT,5.227949,844,0.029817
+fundamental,F,FM_RANSAC,0.881815,682,0.309864
+fundamental,F,FM_LMEDS,0.443023,776,8.001911
+fundamental,F,USAC_DEFAULT,0.521059,826,2.102340
+fundamental,F,USAC_FM_8PTS,0.554685,825,0.332717
+fundamental,F,USAC_FAST,0.521059,826,0.358755
+fundamental,F,USAC_MAGSAC,0.521059,826,0.479403
+fundamental,F,Custom USAC,0.510809,826,2.554090
+fundamental,F,USAC_ACCURATE,0.521059,826,3.844961
 custom,Line,Custom RANSAC,,45,
-custom,H,Custom RANSAC,1.1708,591,0.7944
-custom,H,OpenCV RANSAC,1.2370,551,0.6719
-custom,F,Custom RANSAC (8pt),0.5642,825,0.8929
-custom,F,OpenCV FM_RANSAC,0.8818,682,0.3889
+custom,H,Custom RANSAC,1.1708,591,0.4104
+custom,H,OpenCV RANSAC,1.2370,551,0.5143
+custom,F,Custom RANSAC (8pt),0.5642,825,0.6744
+custom,F,OpenCV FM_RANSAC,0.8818,682,0.3082
 custom_f_rule,F,Custom RANSAC (Sampson rule),0.5642,825,
 custom_f_rule,F,Custom RANSAC (max-form rule),0.9297,811,
 custom_f_rule,F,OpenCV FM_RANSAC (Sampson rule),1.3131,742,
 custom_f_rule,F,OpenCV FM_RANSAC (max-form rule),1.8075,682,
-ransaclib,Line,RansacLib (LO-MSAC),,45,0.0183
-ransaclib,H,RansacLib (LO-MSAC),1.1777,594,0.3402
-ransaclib,H,OpenCV RANSAC,1.2370,551,0.6371
-ransaclib,F,RansacLib (LO-MSAC),0.6354,826,0.1975
-ransaclib,F,OpenCV FM_RANSAC,0.8818,682,0.3408
-magsac,H,MAGSAC++,1.2433,609,3.1039
-magsac,H,OpenCV RANSAC,1.2370,551,0.5993
-magsac,F,MAGSAC++,0.4331,828,50.0141
-magsac,F,OpenCV FM_RANSAC,0.8818,682,0.3560
+ransaclib,Line,RansacLib (LO-MSAC),,45,0.0071
+ransaclib,H,RansacLib (LO-MSAC),1.1777,594,0.2061
+ransaclib,H,OpenCV RANSAC,1.2370,551,0.5141
+ransaclib,F,RansacLib (LO-MSAC),0.6354,826,0.1648
+ransaclib,F,OpenCV FM_RANSAC,0.8818,682,0.3078
+magsac,H,MAGSAC++,1.2565,590,4.5457
+magsac,H,OpenCV RANSAC,1.2370,551,0.5175
+magsac,F,MAGSAC++,0.4277,827,3.3939
+magsac,F,OpenCV FM_RANSAC,0.8818,682,0.3057

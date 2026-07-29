@@ -58,9 +58,9 @@ int main(int argc, char* argv[]) {
 
     auto run = [&](const std::string& name, auto fn) -> MethodResult {
         MethodResult r{name, {}, {}, -1.0, 0, 0.0};
-        timer.start();
-        r.H = fn(r.mask);
-        r.time_ms = timer.elapsedMs();
+        // Median over repeats, not one shot: these run in fractions of a
+        // millisecond, where scheduling noise alone spans 4x.
+        r.time_ms = medianMs([&] { r.H = fn(r.mask); });
         if (!r.H.empty()) {
             r.inliers = cv::countNonZero(r.mask);
             r.err = meanInlierReproj(pts1, pts2, r.H, r.mask);

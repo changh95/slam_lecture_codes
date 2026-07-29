@@ -995,15 +995,20 @@ int main(int argc, char* argv[]) {
     // directly comparable.
     std::cout << "\n========== Homography RANSAC (custom vs OpenCV) ==========" << std::endl;
 
-    timer.start();
+    // One normal call for the result and its printed diagnostics, then a quiet
+    // median for the timing -- see medianMs in ransac_data.h for why one shot is
+    // not comparable at these speeds.
     auto [customH, maskH] = ransacHomography(pts1, pts2, threshold, 0.99, 2000);
-    double customHTime = timer.elapsedMs();
+    double customHTime = medianMsQuiet(
+        [&] { ransacHomography(pts1, pts2, threshold, 0.99, 2000); });
     cv::Mat customHMask = toMask(maskH);
 
-    timer.start();
     cv::Mat cvHMask;
     cv::Mat cvH = cv::findHomography(pts1, pts2, cv::RANSAC, threshold, cvHMask, 2000, 0.99);
-    double cvHTime = timer.elapsedMs();
+    double cvHTime = medianMs([&] {
+        cv::Mat m;
+        cv::findHomography(pts1, pts2, cv::RANSAC, threshold, m, 2000, 0.99);
+    });
 
     double customHErr = meanInlierReproj(pts1, pts2, customH, customHMask);
     double cvHErr = meanInlierReproj(pts1, pts2, cvH, cvHMask);
@@ -1017,15 +1022,17 @@ int main(int argc, char* argv[]) {
     // ---- Fundamental matrix: custom RANSAC vs cv::findFundamentalMat ----
     std::cout << "\n========== Fundamental RANSAC (custom vs OpenCV) ==========" << std::endl;
 
-    timer.start();
     auto [customF, maskF] = ransacFundamental(pts1, pts2, threshold, 0.99, 2000);
-    double customFTime = timer.elapsedMs();
+    double customFTime = medianMsQuiet(
+        [&] { ransacFundamental(pts1, pts2, threshold, 0.99, 2000); });
     cv::Mat customFMask = toMask(maskF);
 
-    timer.start();
     cv::Mat cvFMask;
     cv::Mat cvF = cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, 0.99, cvFMask);
-    double cvFTime = timer.elapsedMs();
+    double cvFTime = medianMs([&] {
+        cv::Mat m;
+        cv::findFundamentalMat(pts1, pts2, cv::FM_RANSAC, threshold, 0.99, m);
+    });
 
     double customFSampson = meanSampson(customF, pts1, pts2, customFMask);
     double cvFSampson = meanSampson(cvF, pts1, pts2, cvFMask);

@@ -145,9 +145,9 @@ int main(int argc, char* argv[]) {
 
     auto run_masked = [&](const std::string& name, auto fn) -> MethodResult {
         MethodResult r{name, {}, {}, -1.0, 0, 0.0};
-        timer.start();
-        r.F = fn(r.mask);
-        r.time_ms = timer.elapsedMs();
+        // Median over repeats, not one shot: these run in fractions of a
+        // millisecond, where scheduling noise alone spans 4x.
+        r.time_ms = medianMs([&] { r.F = fn(r.mask); });
         if (!r.F.empty() && r.F.rows == 3) {
             r.sampson = meanSampson(r.F, pts1, pts2, r.mask);
             r.inliers = r.mask.empty() ? 0 : cv::countNonZero(r.mask);

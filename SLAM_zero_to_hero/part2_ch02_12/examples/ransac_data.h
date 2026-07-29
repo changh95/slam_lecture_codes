@@ -31,7 +31,9 @@
 #include <filesystem>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Timer {
@@ -45,6 +47,50 @@ public:
 private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start_;
 };
+
+// Median wall time of `fn` over repeated identical calls.
+//
+// A single measurement cannot be compared against a neighbouring table row at
+// these speeds: the same USAC_PROSAC call, on the same data, measured anywhere
+// from 0.15 ms to 0.58 ms across draws -- a 4x spread on identical work, purely
+// from scheduling. Every estimator in this chapter is deterministic, so repeating
+// a call recomputes exactly the same thing and the median is a fair estimate of
+// its cost. The result of the last repetition is the one the caller keeps, which
+// is safe for the same reason.
+//
+// Repeats stop once budgetMs of cumulative time is spent (at least 3, at most
+// maxReps), so a 0.3 ms method gets ~200 samples while a 50 ms one gets 3 and the
+// suite still finishes in seconds.
+template <typename Fn>
+inline double medianMs(Fn&& fn, double budgetMs = 60.0, int maxReps = 201) {
+    std::vector<double> samples;
+    samples.reserve(16);
+    Timer timer;
+    double spent = 0.0;
+    for (int i = 0; i < maxReps; ++i) {
+        timer.start();
+        fn();
+        const double dt = timer.elapsedMs();
+        samples.push_back(dt);
+        spent += dt;
+        if (i + 1 >= 3 && spent >= budgetMs) break;
+    }
+    std::sort(samples.begin(), samples.end());
+    return samples[samples.size() / 2];
+}
+
+// medianMs, but swallowing anything fn writes to std::cout. The from-scratch
+// estimators print per-call diagnostics; without this, timing them would repeat
+// those lines once per repetition. Call the estimator once normally for its
+// output and result, then time it through here.
+template <typename Fn>
+inline double medianMsQuiet(Fn&& fn, double budgetMs = 60.0, int maxReps = 201) {
+    std::ostringstream sink;
+    std::streambuf* prev = std::cout.rdbuf(sink.rdbuf());
+    const double ms = medianMs(std::forward<Fn>(fn), budgetMs, maxReps);
+    std::cout.rdbuf(prev);
+    return ms;
+}
 
 inline std::string resolveDataPath(const std::string& name) {
     for (const std::string& base : {"../data/", "data/", "./data/"}) {
