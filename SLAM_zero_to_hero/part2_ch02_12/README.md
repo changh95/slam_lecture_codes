@@ -2,7 +2,7 @@
 
 Code exercise for robust model estimation — homography and fundamental matrix with OpenCV's RANSAC/USAC framework, a custom RANSAC written from scratch, RansacLib's template-based design, and MAGSAC++.
 
-Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/000024.png` → `data/000025.png`) and is scored by the **same metrics** — mean inlier reprojection error for H, mean squared Sampson distance for F, computed by shared code (`ransac_data.h`) whichever library produced the model, at a 3 px threshold and 0.99 confidence throughout. The error columns in `results.csv` are therefore comparable across estimators; the F **inlier counts are not**, because the classic OpenCV path and the USAC family select inliers by different rules — see [Inlier rules are not shared for F](#inlier-rules-are-not-shared-for-f). Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
+Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/000024.png` → `data/000025.png`) and is scored by the **same metrics** — mean inlier reprojection error for H, mean squared Sampson distance for F, computed by shared code (`ransac_data.h`) whichever library produced the model, at a 3 px threshold and 0.99 confidence throughout. Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
 
 ### The image pair
 
@@ -44,29 +44,6 @@ part2_ch02_12/
     ├── ransac_ransaclib.cpp   # Line/H/F solvers plugged into RansacLib LO-MSAC
     └── ransac_magsac.cpp      # H/F via MAGSAC++ vs OpenCV RANSAC
 ```
-
-## Reproducing `results.csv`
-
-Every estimator here is seeded, so re-running reproduces `results.csv` exactly — *apart from* the two `magsac,*,MAGSAC++` rows. MAGSAC++'s Progressive NAPSAC sampler seeds itself from `std::random_device` inside gcransac (`utils::UniformRandomGenerator`), and the sampler holds that generator as a protected member with no seed parameter on its constructor, so there is no way to pin it without subclassing the sampler or patching gcransac. Observed spread across runs: H 588–652 inliers / 1.22–1.40 px, F 827–828 inliers, and F timing anywhere from 8 ms to 900 ms because sigma-consensus cost depends on which model the sampler lands on. Treat those two rows as one sample, not a benchmark.
-
-## Inlier rules are not shared for F
-
-**H is fine.** Every H estimator here, OpenCV's included, selects inliers by forward reprojection error `|H·x₁ − x₂|²`, so H inlier counts are directly comparable. (Verified against OpenCV's `HomographyEstimatorCallback::computeError`.)
-
-**F is not.** Two different residuals are in play at the same nominal 3 px threshold:
-
-| Rule | Formula | Used by |
-|------|---------|---------|
-| Sampson | `d²/(A+B)` | `ransac_custom`, all `USAC_*` variants, RansacLib, MAGSAC++ (post-hoc remask) |
-| max-form symmetric epipolar | `d²/min(A,B)` | `FM_RANSAC`, `FM_LMEDS`, `FM_7POINT` — OpenCV's classic path |
-
-with `d = x₂ᵀFx₁`, `A = |(Fᵀx₂)_xy|²`, `B = |(Fx₁)_xy|²`. Sources: `modules/calib3d/src/fundam.cpp`, `FMEstimatorCallback::computeError` for the classic path; `modules/calib3d/src/usac/estimator.cpp`, `SampsonErrorImpl` for USAC.
-
-Because `min(A,B) ≤ (A+B)/2`, the max-form residual is **always at least twice** Sampson's, so OpenCV's classic F rule is strictly the tighter one at the same threshold. That alone moves the inlier count by tens of points, which is why `FM_RANSAC` reports 739 while every Sampson-scored method lands at 824–828 on this data. **Do not compare an F inlier count across the two groups** — the difference measures the rule, not the estimator.
-
-`ransac_custom` therefore prints every F model under **both** rules, and re-scores OpenCV's own F under the max-form rule as a check that the replication is exact.
-
----
 
 ## Build
 
