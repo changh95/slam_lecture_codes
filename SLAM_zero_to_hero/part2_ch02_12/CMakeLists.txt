@@ -35,6 +35,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Find Eigen. Required, not optional: ransac_custom does all of its linear
+# algebra in Eigen (OpenCV is only its interface), and RansacLib and MAGSAC
+# need it too.
+find_package(Eigen3 REQUIRED)
+message(STATUS "Found Eigen3 ${Eigen3_VERSION}: ${EIGEN3_INCLUDE_DIR}")
+
 # Example 1: Homography estimation with various RANSAC methods
 add_executable(ransac_homography examples/ransac_homography.cpp)
 target_link_libraries(ransac_homography ${OpenCV_LIBS})
@@ -43,15 +49,9 @@ target_link_libraries(ransac_homography ${OpenCV_LIBS})
 add_executable(ransac_fundamental examples/ransac_fundamental.cpp)
 target_link_libraries(ransac_fundamental ${OpenCV_LIBS})
 
-# Example 3: Custom RANSAC implementation
+# Example 3: Custom RANSAC implementation (all computation in Eigen)
 add_executable(ransac_custom examples/ransac_custom.cpp)
-target_link_libraries(ransac_custom ${OpenCV_LIBS})
-
-# Find Eigen (needed for RansacLib and MAGSAC)
-find_package(Eigen3 QUIET)
-if(Eigen3_FOUND)
-    message(STATUS "Found Eigen3: ${EIGEN3_INCLUDE_DIR}")
-endif()
+target_link_libraries(ransac_custom ${OpenCV_LIBS} Eigen3::Eigen)
 
 # RansacLib (header-only RANSAC library)
 find_path(RANSACLIB_INCLUDE_DIR RansacLib/ransac.h
