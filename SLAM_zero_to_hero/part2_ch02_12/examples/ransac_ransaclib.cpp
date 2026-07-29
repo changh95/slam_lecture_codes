@@ -56,6 +56,14 @@ public:
     inline int num_data() const { return static_cast<int>(data_.rows()); }
 
     int MinimalSolver(const std::vector<int>& sample, Line2DModelVector* models) const {
+        // MUST clear: RansacLib declares its ModelVector once outside the sampling
+        // loop (ransac.h, `ModelVector estimated_models;`) and reuses it every
+        // iteration, then reads only the first kNumEstimatedModels entries. A
+        // solver that push_back()s without clearing leaves iteration 0's model at
+        // index 0 forever, so every later sample is silently discarded and RANSAC
+        // degenerates into "score one random minimal sample". The library's own
+        // example does lines->clear() for exactly this reason.
+        models->clear();
         if (sample.size() < 2) return 0;
         Eigen::Vector2d p1 = data_.row(sample[0]);
         Eigen::Vector2d p2 = data_.row(sample[1]);
@@ -119,6 +127,7 @@ public:
     inline int num_data() const { return static_cast<int>(data_.rows()); }
 
     int MinimalSolver(const std::vector<int>& sample, HomographyVector* models) const {
+        models->clear();  // see the note in Line2DSolver::MinimalSolver
         Homography H;
         if (!dlt(sample, &H)) return 0;
         models->push_back(H);
@@ -218,6 +227,7 @@ public:
 
     int MinimalSolver(const std::vector<int>& sample,
                       FundamentalMatrixVector* models) const {
+        models->clear();  // see the note in Line2DSolver::MinimalSolver
         FundamentalMatrix F;
         if (!eightPoint(sample, &F)) return 0;
         models->push_back(F);
@@ -360,7 +370,7 @@ int main(int argc, char* argv[]) {
     std::vector<RowResult> rows;
 
     // ---------- 1. Line fitting (shared fixed-seed synthetic points) ----------
-    std::cout << "--- Line2DSolver: LO-MSAC (synthetic, 70/100 inliers) ---" << std::endl;
+    std::cout << "--- Line2DSolver: LO-MSAC (synthetic, 45 inliers + 30 outliers) ---" << std::endl;
     std::vector<cv::Point2f> linePts = generateLinePoints();
     Eigen::Matrix<double, Eigen::Dynamic, 2> lineData(linePts.size(), 2);
     for (size_t i = 0; i < linePts.size(); ++i) {

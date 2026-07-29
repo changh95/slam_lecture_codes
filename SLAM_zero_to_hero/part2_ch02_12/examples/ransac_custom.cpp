@@ -919,7 +919,7 @@ static void printFRuleComparison(const cv::Mat& customF, const cv::Mat& opencvF,
 cv::Mat testLineFitting() {
     std::cout << "\n========== Line Fitting RANSAC Test ==========" << std::endl;
 
-    // Shared fixed-seed synthetic data: y = 0.5x + 100, 70 inliers + 30 outliers
+    // Shared fixed-seed synthetic data: y = 0.5x + 120, 45 inliers + 30 outliers
     std::vector<cv::Point2f> points = generateLinePoints();
 
     auto [line, mask] = ransacLineFitting(points, 5.0, 0.99, 500);
@@ -927,27 +927,39 @@ cv::Mat testLineFitting() {
     std::cout << "Estimated line: " << line.a << "x + " << line.b << "y + " << line.c << " = 0"
               << std::endl;
 
-    // Ground truth: 0.5x - y + 100 = 0, normalized
-    Line2D gtLine(0.5, -1.0, 100.0);
+    // Ground truth: 0.5x - y + 120 = 0, normalized
+    Line2D gtLine(0.5, -1.0, 120.0);
     std::cout << "Ground truth:   " << gtLine.a << "x + " << gtLine.b << "y + " << gtLine.c << " = 0"
               << std::endl;
 
     int inlierCount = std::count(mask.begin(), mask.end(), true);
-    std::cout << "Inliers found: " << inlierCount << " (expected ~70)" << std::endl;
+    std::cout << "Inliers found: " << inlierCount << " (45 by construction)" << std::endl;
 
     // Visualization: points colored by inlier mask, estimated line in blue.
-    cv::Mat canvas(420, 400, CV_8UC3, cv::Scalar(255, 255, 255));
+    //
+    // Drawn with y flipped. An image's y axis grows downward, so plotting the
+    // points raw renders y = 0.5x + 120 as a line sloping DOWN to the right,
+    // which contradicts the positive slope printed just above. Flipping puts the
+    // picture back in the convention the equation is written in.
+    cv::Mat canvas(580, 580, CV_8UC3, cv::Scalar(255, 255, 255));
+    const double yMax = canvas.rows - 1.0;
+    auto plot = [yMax](double x, double y) { return cv::Point2d(x, yMax - y); };
+
     if (std::abs(line.b) > 1e-6) {
-        cv::Point2d p0(0.0, -line.c / line.b);
-        cv::Point2d p1(canvas.cols, -(line.c + line.a * canvas.cols) / line.b);
-        cv::line(canvas, p0, p1, cv::Scalar(255, 0, 0), 2);
+        const double x0 = 0.0, x1 = canvas.cols;
+        cv::line(canvas, plot(x0, -line.c / line.b),
+                 plot(x1, -(line.c + line.a * x1) / line.b),
+                 cv::Scalar(255, 0, 0), 2);
     }
     for (size_t i = 0; i < points.size(); ++i) {
-        cv::Scalar color = mask[i] ? cv::Scalar(0, 200, 0) : cv::Scalar(0, 0, 255);
-        cv::circle(canvas, points[i], 3, color, -1);
+        cv::Scalar color = mask[i] ? cv::Scalar(0, 170, 0) : cv::Scalar(0, 0, 255);
+        cv::circle(canvas, plot(points[i].x, points[i].y), 4, color, -1);
+        cv::circle(canvas, plot(points[i].x, points[i].y), 4, cv::Scalar(40, 40, 40), 1);
     }
-    cv::putText(canvas, "green=inlier  red=outlier  blue=fit", cv::Point(10, 20),
-                cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(0, 0, 0), 1);
+    cv::putText(canvas, "green=inlier  red=outlier  blue=fit", cv::Point(12, 24),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1);
+    cv::putText(canvas, "y axis flipped for display (math convention)", cv::Point(12, 46),
+                cv::FONT_HERSHEY_SIMPLEX, 0.42, cv::Scalar(90, 90, 90), 1);
     return canvas;
 }
 

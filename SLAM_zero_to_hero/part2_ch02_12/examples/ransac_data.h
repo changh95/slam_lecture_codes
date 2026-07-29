@@ -169,22 +169,50 @@ inline double meanSampson(const cv::Mat& F,
 }
 
 // Fixed-seed synthetic line dataset shared by the line-fitting demos:
-// y = 0.5x + 100 with sigma=2 noise (70 inliers) plus 30 uniform outliers.
+// 45 inliers on y = 0.5x + 120 with sigma=2 noise, plus 30 uniform outliers.
+//
+// Two properties are deliberate, because the point of the picture is to look
+// like a line fitted through *data points*:
+//  - Inliers are spaced ~11.5 px apart. The earlier version stepped x by 5 px,
+//    which at a 3 px dot radius fused all of them into a single green
+//    caterpillar -- you could see a line but not the samples forming it.
+//  - Outliers are rejected within kOutlierClearance of the true line, so no
+//    point sits ambiguously on the boundary and the expected inlier count is
+//    the construction count rather than "about" it.
 inline std::vector<cv::Point2f> generateLinePoints() {
+    constexpr int kInliers = 45;
+    constexpr int kOutliers = 30;
+    constexpr float kSlope = 0.5f;
+    constexpr float kIntercept = 120.0f;
+    constexpr float kStepX = 11.5f;
+    constexpr float kFirstX = 40.0f;
+    constexpr float kOutlierClearance = 30.0f;  // px from the true line
+
     std::vector<cv::Point2f> points;
+    points.reserve(kInliers + kOutliers);
     std::mt19937 rng(123);
     std::normal_distribution<float> noise(0.0f, 2.0f);
 
-    for (int i = 0; i < 70; ++i) {
-        float x = static_cast<float>(i * 5);
-        float y = 0.5f * x + 100.0f + noise(rng);
+    for (int i = 0; i < kInliers; ++i) {
+        const float x = kFirstX + kStepX * static_cast<float>(i);
+        const float y = kSlope * x + kIntercept + noise(rng);
         points.emplace_back(x, y);
     }
-    std::uniform_real_distribution<float> outlierX(0.0f, 350.0f);
-    std::uniform_real_distribution<float> outlierY(0.0f, 400.0f);
-    for (int i = 0; i < 30; ++i) {
-        points.emplace_back(outlierX(rng), outlierY(rng));
+
+    // Perpendicular distance to kSlope*x - y + kIntercept = 0.
+    const float lineNorm = std::hypot(kSlope, 1.0f);
+    std::uniform_real_distribution<float> outlierX(30.0f, 530.0f);
+    std::uniform_real_distribution<float> outlierY(30.0f, 530.0f);
+    for (int placed = 0; placed < kOutliers;) {
+        const float x = outlierX(rng);
+        const float y = outlierY(rng);
+        if (std::abs(kSlope * x - y + kIntercept) / lineNorm < kOutlierClearance) {
+            continue;  // too close to the line to be an unambiguous outlier
+        }
+        points.emplace_back(x, y);
+        ++placed;
     }
+
     std::shuffle(points.begin(), points.end(), rng);
     return points;
 }

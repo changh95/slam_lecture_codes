@@ -15,7 +15,7 @@ fundamental,F,USAC_FM_8PTS,0.506889,824,0.447071
 fundamental,F,USAC_MAGSAC,0.517053,824,0.833998
 fundamental,F,Custom USAC,0.535513,822,2.245897
 fundamental,F,USAC_ACCURATE,0.472939,827,2.940890
-custom,Line,Custom RANSAC,,70,
+custom,Line,Custom RANSAC,,45,
 custom,H,Custom RANSAC,1.2089,649,0.6166
 custom,H,OpenCV RANSAC,1.1273,559,0.8240
 custom,F,Custom RANSAC (8pt),0.5117,824,0.9379
@@ -24,11 +24,11 @@ custom_f_rule,F,Custom RANSAC (Sampson rule),0.5117,824,
 custom_f_rule,F,Custom RANSAC (max-form rule),0.8124,808,
 custom_f_rule,F,OpenCV FM_RANSAC (Sampson rule),1.0530,789,
 custom_f_rule,F,OpenCV FM_RANSAC (max-form rule),1.4478,739,
-ransaclib,Line,RansacLib (LO-MSAC),,70,0.0212
-ransaclib,H,RansacLib (LO-MSAC),1.2697,635,0.5065
-ransaclib,H,OpenCV RANSAC,1.1273,559,0.7187
-ransaclib,F,RansacLib (LO-MSAC),0.5193,827,0.5290
-ransaclib,F,OpenCV FM_RANSAC,0.7061,739,0.2122
+ransaclib,Line,RansacLib (LO-MSAC),,45,0.0186
+ransaclib,H,RansacLib (LO-MSAC),1.2251,630,0.3405
+ransaclib,H,OpenCV RANSAC,1.1273,559,0.7216
+ransaclib,F,RansacLib (LO-MSAC),0.5301,824,0.1935
+ransaclib,F,OpenCV FM_RANSAC,0.7061,739,0.2156
 magsac,H,MAGSAC++,1.2324,615,4.7402
 magsac,H,OpenCV RANSAC,1.1273,559,0.6721
 magsac,F,MAGSAC++,0.4327,828,136.3610
