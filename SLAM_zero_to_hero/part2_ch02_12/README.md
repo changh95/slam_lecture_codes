@@ -4,13 +4,12 @@ Code exercise for robust model estimation — homography and fundamental matrix 
 
 Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/1403636579763555584.png` → `data/1403636584763555584.png`) and is scored by the **same metrics** — mean inlier reprojection error for H, mean squared Sampson distance for F, computed by shared code (`ransac_data.h`) whichever library produced the model, at a 3 px threshold and 0.99 confidence throughout. Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
 
-### The image pair
+## The image pair
 
 | | |
 |---|---|
 | Source | EuRoC MAV `MH_01_easy`, `mav0/cam0/data/` (raw, still distorted) |
-| `data/1403636579763555584.png` | frame 0 |
-| `data/1403636584763555584.png` | frame 100 |
+| Frames | `1403636579763555584.png` (frame 0) → `1403636584763555584.png` (frame 100) |
 | Resolution | 752×480, 8-bit grayscale |
 | Baseline | cam0 runs at 20 Hz, so 100 frames = **5.0 s apart** — a wide baseline, *not* consecutive frames |
 
@@ -44,6 +43,8 @@ part2_ch02_12/
     ├── ransac_ransaclib.cpp   # Line/H/F solvers plugged into RansacLib LO-MSAC
     └── ransac_magsac.cpp      # H/F via MAGSAC++ vs OpenCV RANSAC
 ```
+
+---
 
 ## Build
 
@@ -86,7 +87,9 @@ docker build . -t slam_zero_to_hero:part2_ch02_12
 ./build/ransac_magsac
 ```
 
-All executables run without arguments (H/F demos also accept two image paths).
+All five run without arguments, loading the bundled pair from `data/`. Each also
+accepts a replacement pair as `argv[1] argv[2]` — both paths are required, since a
+single argument is ignored and the defaults are used instead.
 
 ### Docker
 
