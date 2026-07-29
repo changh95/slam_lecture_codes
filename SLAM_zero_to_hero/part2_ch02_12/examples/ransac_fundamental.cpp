@@ -6,18 +6,46 @@
  * 5 s apart).
  * No synthetic data: there is no closed-form GT F for arbitrary scenes, so
  * each method is judged on (a) Sampson error against the matches, and
- * (b) inlier count -- the same criteria the estimators themselves optimize.
+ * (b) inlier count. The Sampson column is scored by shared code (meanSampson)
+ * for every method, so it is comparable throughout. The INLIER column is not:
+ * each method reported its own mask, and the classic and USAC paths do not use
+ * the same inlier rule.
  *
- * Methods:
- *   1. FM_7POINT     (7-point, single shot)
- *   2. FM_8POINT     (8-point, single shot)
- *   3. FM_RANSAC     (8-point + RANSAC)
- *   4. FM_LMEDS      (Least Median of Squares)
- *   5. USAC_DEFAULT  (PROSAC + MSAC + Inner-LO)
- *   6. USAC_FM_8PTS  (Uniform + RANSAC scoring, 8-point)
- *   7. USAC_MAGSAC   (MAGSAC++ marginalized scoring)
+ * Inlier-rule footgun: the classic path (FM_RANSAC, FM_LMEDS, FM_7POINT) scores
+ * with the max-form symmetric epipolar distance, max(d^2/A, d^2/B) =
+ * d^2/min(A,B) (fundam.cpp, FMEstimatorCallback::computeError), while every
+ * USAC_* flag scores with Sampson, d^2/(A+B) (usac/estimator.cpp,
+ * SampsonErrorImpl) -- with d = x2^T F x1, A = |(F^T x2)_xy|^2,
+ * B = |(F x1)_xy|^2. Since min(A,B) <= (A+B)/2, the classic residual is always
+ * at least twice Sampson's, so at one nominal 3 px threshold the classic rule
+ * is strictly the tighter one. That is most of why FM_RANSAC reports ~739
+ * inliers below while every Sampson-scored method lands at ~824-828: the split
+ * tracks the rule, not the estimator's quality. ransac_custom prints the same
+ * models under both rules if you want the like-for-like numbers.
+ *
+ * Methods (USAC flag semantics read off OpenCV 4.12
+ * modules/calib3d/src/usac/ransac_solvers.cpp, setParameters()):
+ *   1. FM_7POINT     (NOT the 7-point algorithm here -- see the footgun below)
+ *   2. FM_8POINT     (8-point, single shot, no outlier rejection)
+ *   3. FM_RANSAC     (RANSAC over the 7-point minimal solver)
+ *   4. FM_LMEDS      (Least Median of Squares over the 7-point solver)
+ *   5. USAC_DEFAULT  (Uniform + MSAC + Inner&Iter-LO)
+ *   6. USAC_FM_8PTS  (Uniform + MSAC + Inner-LO, 8-point estimator)
+ *   7. USAC_MAGSAC   (Uniform + MAGSAC scoring + sigma-consensus LO)
  *   8. Custom USAC   (PROSAC + MAGSAC + Inner&Iter-LO + MAGSAC polisher)
- *   9. USAC_ACCURATE (Graph-Cut local optim)
+ *   9. USAC_ACCURATE (Uniform + MSAC + Graph-Cut LO)
+ *
+ * Note that only USAC_MAGSAC scores with MAGSAC; every other USAC flag here
+ * uses MSAC. What actually differs between them is the sampler and the local
+ * optimization, not the scoring.
+ *
+ * FM_7POINT footgun: cv::findFundamentalMat runs the 7-point algorithm only
+ * when handed exactly 7 correspondences. With more (844 here) fundam.cpp
+ * takes its else branch, and because (FM_7POINT & ~3) != FM_RANSAC it lands
+ * in createLMeDSPointSetRegistrator -- LMedS, not 7-point. That is why
+ * FM_7POINT and FM_LMEDS below report bit-identical models and masks, and why
+ * both are ~40x slower than FM_RANSAC. With exactly 7 points the call instead
+ * returns a 9-row Mat: the 3 roots of the 7-point cubic.
  */
 
 #include <opencv2/calib3d.hpp>
@@ -168,7 +196,12 @@ int main(int argc, char* argv[]) {
     usacParams.threshold = threshold;
     usacParams.confidence = 0.999;
     usacParams.maxIterations = 10000;
-    usacParams.isParallel = true;
+    // Deliberately serial. randomGeneratorState already defaults to 0, but
+    // isParallel = true still makes USAC nondeterministic: thread scheduling
+    // decides which hypotheses get scored first, so the inlier count drifts
+    // run to run. results.csv is committed as a reproducible baseline, so this
+    // row has to be stable. Flip it to true to see the effect.
+    usacParams.isParallel = false;
     results.push_back(run_masked("Custom USAC", [&](cv::Mat& m) {
         return cv::findFundamentalMat(pts1, pts2, m, usacParams);
     }));

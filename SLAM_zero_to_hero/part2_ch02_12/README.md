@@ -40,7 +40,7 @@ part2_ch02_12/
     ├── ransac_data.h          # shared ORB pipeline, metrics, synthetic line data, viz
     ├── ransac_homography.cpp  # H: 7 OpenCV RANSAC/USAC variants
     ├── ransac_fundamental.cpp # F: 9 OpenCV methods with full USAC configuration
-    ├── ransac_custom.cpp      # Line/H/F RANSAC from scratch vs OpenCV RANSAC
+    ├── ransac_custom.cpp      # Line/H/F RANSAC from scratch (Eigen) vs OpenCV RANSAC
     ├── ransac_ransaclib.cpp   # Line/H/F solvers plugged into RansacLib LO-MSAC
     └── ransac_magsac.cpp      # H/F via MAGSAC++ vs OpenCV RANSAC
 ```
@@ -48,9 +48,26 @@ part2_ch02_12/
 ## Fair comparison rules
 
 - **Same data**: one shared ORB + BF-Hamming + ratio-test pipeline (`ransac_data.h`) feeds every H/F estimator.
-- **Same inlier rules**: forward reprojection error for H, Sampson distance for F, 3 px threshold, 0.99 confidence. MAGSAC++ is threshold-free, so its inlier count is derived post-hoc with the same 3 px rule.
-- **Same metrics**: mean inlier reprojection error (H, px) and mean squared Sampson distance (F) computed by shared code for every method.
-- **Same build**: all demos compile at Release; libraries are used with realistic settings (no artificial iteration floors).
+- **Same metrics**: mean inlier reprojection error (H, px) and mean squared Sampson distance (F) computed by shared code for every method, whichever library produced the model.
+- **Same threshold**: 3 px, 0.99 confidence, everywhere. MAGSAC++ is threshold-free, so its inlier count is derived post-hoc with the same 3 px rule.
+- **Same build**: all demos compile at Release; libraries are used with realistic settings. The one deliberate exception is `ransac_custom`, which puts a 50-iteration floor under its adaptive stopping rule — see [Inlier rules are not shared](#inlier-rules-are-not-shared-for-f) and the file's own comments.
+
+### Inlier rules are not shared for F
+
+**H is fine.** Every H estimator here, OpenCV's included, selects inliers by forward reprojection error `|H·x₁ − x₂|²`, so H inlier counts are directly comparable. (Verified against OpenCV's `HomographyEstimatorCallback::computeError`.)
+
+**F is not.** Two different residuals are in play at the same nominal 3 px threshold:
+
+| Rule | Formula | Used by |
+|------|---------|---------|
+| Sampson | `d²/(A+B)` | `ransac_custom`, all `USAC_*` variants, RansacLib, MAGSAC++ (post-hoc remask) |
+| max-form symmetric epipolar | `d²/min(A,B)` | `FM_RANSAC`, `FM_LMEDS`, `FM_7POINT` — OpenCV's classic path |
+
+with `d = x₂ᵀFx₁`, `A = |(Fᵀx₂)_xy|²`, `B = |(Fx₁)_xy|²`. Sources: `modules/calib3d/src/fundam.cpp`, `FMEstimatorCallback::computeError` for the classic path; `modules/calib3d/src/usac/estimator.cpp`, `SampsonErrorImpl` for USAC.
+
+Because `min(A,B) ≤ (A+B)/2`, the max-form residual is **always at least twice** Sampson's, so OpenCV's classic F rule is strictly the tighter one at the same threshold. That alone moves the inlier count by tens of points, which is why `FM_RANSAC` reports 739 while every Sampson-scored method lands at 824–828 on this data. **Do not compare an F inlier count across the two groups** — the difference measures the rule, not the estimator.
+
+`ransac_custom` therefore prints every F model under **both** rules, and re-scores OpenCV's own F under the max-form rule as a check that the replication is exact.
 
 ---
 
@@ -58,7 +75,7 @@ part2_ch02_12/
 
 Dependencies:
 - **OpenCV 4.5+** — required. USAC support requires OpenCV >= 4.5 (detected at configure time).
-- **Eigen3** — required for `ransac_ransaclib` and `ransac_magsac`.
+- **Eigen3** — required. `ransac_custom` does all of its computation in Eigen (OpenCV is only its interface), and `ransac_ransaclib` and `ransac_magsac` need it too.
 - **RansacLib** (header-only) — optional. `ransac_ransaclib` is built only when found.
 - **MAGSAC** — optional locally; the Dockerfile builds and installs it automatically, so `ransac_magsac` is always available in the image.
 

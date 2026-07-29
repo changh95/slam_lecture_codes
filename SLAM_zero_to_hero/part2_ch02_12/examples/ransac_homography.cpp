@@ -103,7 +103,11 @@ int main(int argc, char* argv[]) {
     usacParams.threshold = threshold;
     usacParams.confidence = 0.999;
     usacParams.maxIterations = 5000;
-    usacParams.isParallel = true;
+    // Deliberately serial -- see the note in ransac_fundamental.cpp: with
+    // isParallel = true this row ranged over 644-651 inliers across runs,
+    // which makes the committed results.csv unreproducible. Serial is
+    // bit-identical run to run.
+    usacParams.isParallel = false;
     results.push_back(run("Custom UsacParams", [&](cv::Mat& m) {
         return cv::findHomography(pts1, pts2, m, usacParams);
     }));
