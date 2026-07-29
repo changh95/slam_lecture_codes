@@ -387,7 +387,13 @@ int main(int argc, char* argv[]) {
         int inliers = lomsac.EstimateModel(makeOptions(lineThreshold * lineThreshold),
                                            solver, &line, &stats);
         double ms = timer.elapsedMs();
-        std::cout << "  Line: " << line(0) << "x + " << line(1) << "y + " << line(2)
+        // (a,b,c) and -(a,b,c) are the same line; the minimal solver's sign falls
+        // out of the sample order. Pin it so the fit is directly comparable to the
+        // ground truth printed beside it. Scoring already happened and is
+        // sign-invariant (squared residual), so this only affects the display.
+        Eigen::Vector3d shown = line;
+        if (shown(0) < 0.0 || (shown(0) == 0.0 && shown(1) < 0.0)) shown = -shown;
+        std::cout << "  Line: " << shown(0) << "x + " << shown(1) << "y + " << shown(2)
                   << " = 0  (GT 0.4472x - 0.8944y + 107.33 = 0)\n";
         std::cout << "  Inliers: " << inliers << "/" << linePts.size()
                   << ", Iterations: " << stats.num_iterations

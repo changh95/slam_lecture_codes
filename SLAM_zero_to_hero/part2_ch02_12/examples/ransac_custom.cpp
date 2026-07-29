@@ -231,6 +231,17 @@ struct Line2D {
             b /= norm;
             c /= norm;
         }
+        // (a,b,c) and -(a,b,c) are the same line, and the minimal solver's sign
+        // depends on which of the two sampled points came first. Pin it so a
+        // printed fit is directly comparable to a printed ground truth instead
+        // of looking wrong whenever the normal happens to come out flipped.
+        // Every use of this model is sign-invariant (distance() takes abs), so
+        // this is purely for legibility.
+        if (a < 0.0 || (a == 0.0 && b < 0.0)) {
+            a = -a;
+            b = -b;
+            c = -c;
+        }
     }
 
     // Distance from point to line. With a^2 + b^2 = 1 this is already the
