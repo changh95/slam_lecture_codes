@@ -2,7 +2,7 @@
 
 Code exercise for robust model estimation — homography and fundamental matrix with OpenCV's RANSAC/USAC framework, a custom RANSAC written from scratch, RansacLib's template-based design, and MAGSAC++.
 
-Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/000024.png` → `data/000025.png`) and is scored by the **same metrics**, so the numbers in `results.csv` are directly comparable across estimators. Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
+Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/000024.png` → `data/000025.png`) and is scored by the **same metrics** — mean inlier reprojection error for H, mean squared Sampson distance for F, computed by shared code (`ransac_data.h`) whichever library produced the model, at a 3 px threshold and 0.99 confidence throughout. The error columns in `results.csv` are therefore comparable across estimators; the F **inlier counts are not**, because the classic OpenCV path and the USAC family select inliers by different rules — see [Inlier rules are not shared for F](#inlier-rules-are-not-shared-for-f). Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
 
 ### The image pair
 
@@ -45,15 +45,11 @@ part2_ch02_12/
     └── ransac_magsac.cpp      # H/F via MAGSAC++ vs OpenCV RANSAC
 ```
 
-## Fair comparison rules
+## Reproducing `results.csv`
 
-- **Same data**: one shared ORB + BF-Hamming + ratio-test pipeline (`ransac_data.h`) feeds every H/F estimator.
-- **Same metrics**: mean inlier reprojection error (H, px) and mean squared Sampson distance (F) computed by shared code for every method, whichever library produced the model.
-- **Same threshold**: 3 px, 0.99 confidence, everywhere. MAGSAC++ is threshold-free, so its inlier count is derived post-hoc with the same 3 px rule.
-- **Same build**: all demos compile at Release; libraries are used with realistic settings. The one deliberate exception is `ransac_custom`, which puts a 50-iteration floor under its adaptive stopping rule — see [Inlier rules are not shared](#inlier-rules-are-not-shared-for-f) and the file's own comments.
-- **Reproducible, except two rows**: every estimator here is seeded, so re-running reproduces `results.csv` exactly — *apart from* the two `magsac,*,MAGSAC++` rows. MAGSAC++'s Progressive NAPSAC sampler seeds itself from `std::random_device` inside gcransac (`utils::UniformRandomGenerator`), and the sampler holds that generator as a protected member with no seed parameter on its constructor, so there is no way to pin it without subclassing the sampler or patching gcransac. Observed spread across runs: H 588–652 inliers / 1.22–1.40 px, F 827–828 inliers, and F timing anywhere from 8 ms to 900 ms because sigma-consensus cost depends on which model the sampler lands on. Treat those two rows as one sample, not a benchmark.
+Every estimator here is seeded, so re-running reproduces `results.csv` exactly — *apart from* the two `magsac,*,MAGSAC++` rows. MAGSAC++'s Progressive NAPSAC sampler seeds itself from `std::random_device` inside gcransac (`utils::UniformRandomGenerator`), and the sampler holds that generator as a protected member with no seed parameter on its constructor, so there is no way to pin it without subclassing the sampler or patching gcransac. Observed spread across runs: H 588–652 inliers / 1.22–1.40 px, F 827–828 inliers, and F timing anywhere from 8 ms to 900 ms because sigma-consensus cost depends on which model the sampler lands on. Treat those two rows as one sample, not a benchmark.
 
-### Inlier rules are not shared for F
+## Inlier rules are not shared for F
 
 **H is fine.** Every H estimator here, OpenCV's included, selects inliers by forward reprojection error `|H·x₁ − x₂|²`, so H inlier counts are directly comparable. (Verified against OpenCV's `HomographyEstimatorCallback::computeError`.)
 
