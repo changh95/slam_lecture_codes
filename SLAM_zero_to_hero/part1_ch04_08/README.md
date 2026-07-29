@@ -34,17 +34,36 @@ source ./devel/setup.bash
 - stereo fisheye + 200 Hz IMU, native rosbags. Topics are `/cam0/image_raw`,
 `/cam1/image_raw`, `/imu0`.
 
+| Bag | Size | Used for |
+| --- | --- | --- |
+| [dataset-calib-cam1_512_16.bag](https://vision.in.tum.de/tumvi/calibrated/512_16/dataset-calib-cam1_512_16.bag) | 467 MB | camera intrinsics + stereo extrinsics |
+| [dataset-calib-imu1_512_16.bag](https://vision.in.tum.de/tumvi/calibrated/512_16/dataset-calib-imu1_512_16.bag) | 1.1 GB | camera-IMU extrinsics |
+| [dataset-calib-imu-static2.bag](https://vision.in.tum.de/tumvi/imu_static/dataset-calib-imu-static2.bag) | 29.6 GB | Allan variance (111 h static) |
+
+Alternative sequences `calib-cam1..8` and `calib-imu1..4` are in the
+[512_16 directory](https://vision.in.tum.de/tumvi/calibrated/512_16/), each with
+an `.md5` alongside it.
+
 ```bash
 mkdir -p ~/vio_data && cp -r config ~/vio_data/ && cd ~/vio_data
 
-# Camera calibration (467 MB)
 wget https://vision.in.tum.de/tumvi/calibrated/512_16/dataset-calib-cam1_512_16.bag
-
-# Camera-IMU calibration (1.1 GB)
 wget https://vision.in.tum.de/tumvi/calibrated/512_16/dataset-calib-imu1_512_16.bag
 
-# Static IMU, 111 hours, for Allan variance (29.6 GB)
-wget https://vision.in.tum.de/tumvi/imu_static/dataset-calib-imu-static2.bag
+mkdir -p avr   # allan_variance reads every bag in the folder you point it at
+wget -P avr https://vision.in.tum.de/tumvi/imu_static/dataset-calib-imu-static2.bag
+```
+
+The static bag only needs to be 3 hours long, so a partial download works. Fetch
+1.3 GB and repair it with `rosbag reindex`, which recovers 4h46m:
+
+```bash
+curl -L -r 0-1300000000 \
+  https://vision.in.tum.de/tumvi/imu_static/dataset-calib-imu-static2.bag \
+  -o avr/dataset-calib-imu-static2.bag
+
+# inside the container
+rosbag reindex /data/avr/dataset-calib-imu-static2.bag
 ```
 
 The AR Table (RPNG) links this chapter used before are dead, as is the whole
@@ -52,8 +71,7 @@ Kalibr wiki Downloads set, so the target and IMU configs live in `config/` here.
 
 ## Kalibr
 
-Use `ds-none` (double sphere), **not** `pinhole-equi` - these are 195 degree
-fisheye lenses and equidistant diverges without converging.
+These are 195 degree fisheye lenses, so use the double sphere model `ds-none`.
 
 ```bash
 rosrun kalibr kalibr_calibrate_cameras \
@@ -77,9 +95,10 @@ the physical target.
 
 ```bash
 roscore &
+mkdir -p /data/avr_cooked
 
 rosrun allan_variance_ros cookbag.py \
-  --input /data/avr/static.bag \
+  --input /data/avr/dataset-calib-imu-static2.bag \
   --output /data/avr_cooked/static_cooked.bag
 
 rosrun allan_variance_ros allan_variance \
@@ -101,19 +120,6 @@ Compare the generated `imu.yaml` against what TUM published for this bag:
 
 3 hours of data gets within ~1.5x of these. Note `analysis.py` reports gyro in
 degrees while TUM publishes radians.
-
-## Gotchas
-
-- Kalibr writes results **next to the bag**, not the working directory, and
-  **exits 0 even when it fails**. Check the `-camchain.yaml` was created.
-- `allan_variance` takes a **directory**, not a bag path, and picks up every bag
-  it finds there. Keep the static bag in its own directory.
-- To skip the 29.6 GB download: fetch a 1.3 GB range
-  (`curl -r 0-1300000000`) and run `rosbag reindex static.bag`. That recovers
-  4h46m, past the 3 hour minimum. Reindex keeps a `.orig.bag` backup, so budget
-  2x disk.
-- The Dockerfile's shell-form `ENTRYPOINT` ignores appended commands - use
-  `--entrypoint /bin/bash` to run one directly.
 
 ## Configs
 
