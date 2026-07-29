@@ -2,8 +2,8 @@
  * RANSAC Fundamental Matrix Estimation with USAC
  *
  * Run nine F-estimation methods on real ORB correspondences from a EuRoC MAV
- * frame pair (data/000024.png, data/000025.png by default -- MH_01_easy cam0,
- * 5 s apart).
+ * frame pair (data/1403636579763555584.png and data/1403636584763555584.png by
+ * default -- MH_01_easy cam0, 5 s apart).
  * No synthetic data: there is no closed-form GT F for arbitrary scenes, so
  * each method is judged on (a) Sampson error against the matches, and
  * (b) inlier count. The Sampson column is scored by shared code (meanSampson)

@@ -5,7 +5,8 @@
  * numbers in results.csv are comparable across estimators:
  *
  *  - H / F: ORB correspondences from the real EuRoC MAV pair
- *    data/000024.png -> data/000025.png (MH_01_easy cam0, frames 0 and 100
+ *    data/1403636579763555584.png -> data/1403636584763555584.png (the EuRoC
+ *    nanosecond-timestamp filenames, kept verbatim; MH_01_easy cam0, frames 0 and 100
  *    of a 20 Hz stream, i.e. 5 s apart -- a wide baseline, not consecutive
  *    frames). Detector settings, matcher, and ratio test are fixed here, in
  *    one place.
@@ -85,8 +86,10 @@ inline bool loadRealPair(int argc, char* argv[],
                          std::vector<cv::Point2f>& pts1,
                          std::vector<cv::Point2f>& pts2,
                          size_t minMatches) {
-    std::string left_path  = (argc >= 3) ? argv[1] : resolveDataPath("000024.png");
-    std::string right_path = (argc >= 3) ? argv[2] : resolveDataPath("000025.png");
+    std::string left_path  = (argc >= 3) ? argv[1]
+                                         : resolveDataPath("1403636579763555584.png");
+    std::string right_path = (argc >= 3) ? argv[2]
+                                         : resolveDataPath("1403636584763555584.png");
 
     img1 = cv::imread(left_path, cv::IMREAD_GRAYSCALE);
     img2 = cv::imread(right_path, cv::IMREAD_GRAYSCALE);

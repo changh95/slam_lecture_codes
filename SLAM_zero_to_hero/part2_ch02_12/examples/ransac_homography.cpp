@@ -10,7 +10,8 @@
  * Contrast with ransac_fundamental, where the correct model keeps ~825.
  *
  * Pipeline (shared with the other demos via ransac_data.h):
- *   1. Load left/right images (data/000024.png, data/000025.png by default).
+ *   1. Load left/right images (data/1403636579763555584.png and
+ *      data/1403636584763555584.png by default).
  *   2. ORB detect + BF-Hamming + Lowe ratio test (0.75) gives raw matches.
  *   3. Run RANSAC, LMEDS, four USAC flags, and a Custom UsacParams config.
  *   4. Per method, report mean inlier reprojection error, inlier count, time.

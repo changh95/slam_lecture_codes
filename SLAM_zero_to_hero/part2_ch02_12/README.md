@@ -2,24 +2,24 @@
 
 Code exercise for robust model estimation — homography and fundamental matrix with OpenCV's RANSAC/USAC framework, a custom RANSAC written from scratch, RansacLib's template-based design, and MAGSAC++.
 
-Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/000024.png` → `data/000025.png`) and is scored by the **same metrics** — mean inlier reprojection error for H, mean squared Sampson distance for F, computed by shared code (`ransac_data.h`) whichever library produced the model, at a 3 px threshold and 0.99 confidence throughout. Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
+Every demo runs on the **same real data** (ORB correspondences from a EuRoC MAV frame pair, `data/1403636579763555584.png` → `data/1403636584763555584.png`) and is scored by the **same metrics** — mean inlier reprojection error for H, mean squared Sampson distance for F, computed by shared code (`ransac_data.h`) whichever library produced the model, at a 3 px threshold and 0.99 confidence throughout. Line fitting uses a shared fixed-seed synthetic point set (OpenCV has no line RANSAC to compare against).
 
 ### The image pair
 
 | | |
 |---|---|
 | Source | EuRoC MAV `MH_01_easy`, `mav0/cam0/data/` (raw, still distorted) |
-| `data/000024.png` | `1403636579763555584.png` — frame 0 |
-| `data/000025.png` | `1403636584763555584.png` — frame 100 |
+| `data/1403636579763555584.png` | frame 0 |
+| `data/1403636584763555584.png` | frame 100 |
 | Resolution | 752×480, 8-bit grayscale |
 | Baseline | cam0 runs at 20 Hz, so 100 frames = **5.0 s apart** — a wide baseline, *not* consecutive frames |
 
-The filenames follow the KITTI `%06d.png` convention but the content is EuRoC; the
-machine-hall scene is fully 3D with no dominant plane. That is what makes the pair
-interesting here: a homography is the *wrong* model for it and explains only ~560–650
-of the 844 matches, while the fundamental matrix — the right model — keeps ~825. The
-two demos are a direct illustration of model mis-specification showing up as a high
-outlier ratio.
+The filenames are EuRoC's own nanosecond capture timestamps, kept verbatim so each
+frame is traceable back to the dataset. The machine-hall scene is fully 3D with no
+dominant plane, and that is what makes the pair interesting here: a homography is the
+*wrong* model for it and explains only ~560–650 of the 844 matches, while the
+fundamental matrix — the right model — keeps ~825. The two demos are a direct
+illustration of model mis-specification showing up as a high outlier ratio.
 
 Reference intrinsics from `mav0/cam0/sensor.yaml` (printed by `ransac_fundamental`,
 but not consumed by anything — F is uncalibrated): `fx=458.654, fy=457.296,
@@ -34,7 +34,7 @@ part2_ch02_12/
 ├── README.md
 ├── CMakeLists.txt
 ├── Dockerfile                 # also builds MAGSAC++ from source
-├── data/                      # EuRoC MH_01_easy pair 000024/000025 (5 s apart)
+├── data/                      # EuRoC MH_01_easy cam0 frames 0 and 100 (5 s apart)
 ├── results.csv                # benchmark results from the docker image
 └── examples/
     ├── ransac_data.h          # shared ORB pipeline, metrics, synthetic line data, viz
