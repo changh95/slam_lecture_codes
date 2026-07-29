@@ -1,19 +1,7 @@
-# Kalibr IMU config for the TUM VI sensor head (200 Hz IMU on /imu0).
-#
-# These are the values TUM publishes for this dataset, derived from the Allan
-# plots of dataset-calib-imu-static2.bag (the same 111-hour static recording
-# used in the Allan Variance ROS part of this exercise).
-#
-# Raw values straight off the Allan plots:
-#   accelerometer_noise_density: 0.0014     # m/s^1.5
-#   accelerometer_random_walk:   0.000086   # m/s^2.5
-#   gyroscope_noise_density:     0.000080   # rad/s^0.5
-#   gyroscope_random_walk:       0.0000022  # rad/s^1.5
-#
-# The values used below are inflated to account for unmodelled effects
-# (white noise x2, bias random walk x10). TUM notes these inflated values are
-# the ones that work well for Kalibr cam-imu calibration -- feeding the raw
-# Allan numbers straight in tends to make the optimiser over-trust the IMU.
+# Kalibr IMU config for the TUM VI sensor head.
+# TUM's published values, inflated (white noise x2, bias random walk x10) as they
+# recommend for cam-imu calibration. Raw Allan-plot values are 0.0014 / 0.000086
+# / 0.000080 / 0.0000022 respectively.
 rostopic: /imu0
 update_rate: 200.0                       # Hz
 

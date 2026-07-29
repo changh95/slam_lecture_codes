@@ -1,16 +1,8 @@
-# Kalibr calibration target: 6x6 Aprilgrid printed on A0 (80x80 cm sheet).
-# This is the standard Kalibr A0 grid and matches the target used to record the
-# TUM VI calibration sequences ("Aprilgrid 6x6, 80x80 cm").
-#
-# Kept in-repo on purpose: the copy that the Kalibr wiki Downloads page used to
-# serve from Google Drive is dead (HTTP 404).
-#
-# tagSize/tagSpacing sanity check:
-#   tag area = 6 * 0.088 + 5 * (0.3 * 0.088) = 0.660 m, printed on a 0.8 m sheet.
-# If you print your own target, measure a tag edge-to-edge and update tagSize --
-# a wrong tagSize leaves intrinsics correct but scales all translations.
-target_type: 'aprilgrid'  # gridtype
-tagCols: 6                # number of apriltag columns
-tagRows: 6                # number of apriltag rows
-tagSize: 0.088            # size of one apriltag, edge to edge [m]
-tagSpacing: 0.3           # ratio of space between tags to tagSize
+# Kalibr target: standard 6x6 Aprilgrid on A0 (80x80 cm).
+# Measure a tag edge-to-edge if you print your own -- a wrong tagSize leaves
+# intrinsics correct but scales all translations.
+target_type: 'aprilgrid'
+tagCols: 6
+tagRows: 6
+tagSize: 0.088     # apriltag edge to edge [m]
+tagSpacing: 0.3    # ratio of space between tags to tagSize

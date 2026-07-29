@@ -1,9 +1,5 @@
-# allan_variance_ros config for the TUM VI static IMU sequence
-# (dataset-calib-imu-static2.bag -- IMU only, /imu0, 200 Hz).
-#
-# The full bag is a 111-hour static recording. sequence_time below caps how much
-# is consumed; 3 hours is the documented minimum. Raise it (or drop it) for a
-# tighter fit at the cost of runtime.
+# allan_variance_ros config for the TUM VI static IMU bag.
+# sequence_time caps how much of the recording is used; 3 hours is the minimum.
 imu_topic: "/imu0"
 imu_rate: 200
 measure_rate: 100      # rate to which IMU data is subsampled
