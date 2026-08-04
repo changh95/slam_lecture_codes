@@ -1,0 +1,58 @@
+# KISS-SLAM configuration for indoor handheld LiDAR (Hilti 2022 exp14_basement_2,
+# Hesai PandarXT-32). The shipped defaults are tuned for outdoor driving and
+# produce a slipped trajectory on this sequence -- see ../README.md for the
+# measured comparison.
+#
+# Two changes carry almost all of the improvement:
+#   1. max_range 100 -> 25 m. mapping.voxel_size is `null` by default, which makes
+#      KISS-ICP derive the voxel size from max_range: 100 m yields a 1.0 m voxel,
+#      which throws away the fine geometry a narrow basement corridor needs.
+#      Here it is set explicitly instead of relying on that coupling.
+#   2. deskew true -> false. Measured on this bag, motion compensation makes the
+#      result worse, not better (path 58.75 m with vs 45.87 m without, and 4
+#      non-physical >0.5 m inter-frame jumps vs 0). The per-point timestamps are
+#      NOT the problem -- they are clean (monotonic, 0.099985 s span, azimuth-major).
+#      The likely cause is that KISS-ICP deskews using the previous frame-to-frame
+#      delta as a constant-velocity model, which fits a walking operator's
+#      rotation poorly over a 100 ms sweep.
+out_dir: slam_output
+
+odometry:
+    preprocessing:
+        max_range: 25.0        # basement corridors; default 100.0 is for driving
+        min_range: 1.0         # drop returns off the operator's own body/backpack
+        deskew: false          # see note above
+    registration:
+        max_num_iterations: 500
+        convergence_criterion: 0.0001
+        max_num_threads: 0
+    mapping:
+        voxel_size: 0.3        # explicit; `null` would derive 1.0 m from max_range
+        max_points_per_voxel: 20
+    adaptive_threshold:
+        fixed_threshold: null
+        initial_threshold: 1.0 # default 2.0 admits wrong correspondences indoors
+        min_motion_th: 0.05    # 0.54 m/s walk, not 15 m/s highway
+
+local_mapper:
+    voxel_size: 0.25
+    splitting_distance: 20.0   # default 100.0 would make the whole 38 m run one local map
+
+occupancy_mapper:
+    free_threshold: 0.2
+    occupied_threshold: 0.65
+    resolution: 0.2
+    max_range: null
+    z_min: 0.1
+    z_max: 0.5
+
+loop_closer:
+    detector:
+        density_map_resolution: 0.5
+        density_threshold: 0.05
+        hamming_distance_threshold: 50
+        inliers_threshold: 5
+    overlap_threshold: 0.4
+
+pose_graph_optimizer:
+    max_iterations: 10
