@@ -1,0 +1,47 @@
+common:
+    lid_topic:  "/hesai/pandar"
+    imu_topic:  "/alphasense/imu"
+    time_sync_en: false           # Hilti 2022 is hardware time-synced (one clock for LiDAR + Alphasense)
+    time_offset_lidar_to_imu: 0.0
+
+preprocess:
+    lidar_type: 2                 # 1 Livox, 2 Velodyne, 3 Ouster, 4 MARSIM.
+                                  # Hesai PandarXT-32 goes through the Velodyne branch: the cloud has
+                                  # x/y/z/intensity(float32) + ring(uint16), which is exactly the subset
+                                  # of velodyne_ros::Point that FAST-LIO needs. The 'time' field is
+                                  # MISSING (Hilti publishes an absolute float64 'timestamp' instead),
+                                  # so velodyne_handler() sets given_offset_time=false and rebuilds the
+                                  # intra-scan time from the azimuth using scan_rate.
+    scan_line: 32                 # PandarXT-32 -> ring 0..31 (measured)
+    scan_rate: 10                 # measured 10.001 Hz, median dt 0.099996 s
+    timestamp_unit: 3             # INERT for this bag: there is no float32 'time' field to scale.
+                                  # Kept at 3 (ns) only for documentation.
+    blind: 0.5                    # indoor basement; the stock velodyne.yaml value of 2.0 throws away
+                                  # most of the useful geometry in narrow corridors
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree:    180
+    det_range:     100.0
+    extrinsic_est_en:  false
+    # Official Hilti 2022 calibration (LiDAR pose w.r.t. Alphasense IMU).
+    # Same numbers ship upstream in FAST-LIVO2 config/HILTI22.yaml.
+    # R corresponds to quaternion [x,y,z,w] = [0.7071068, -0.7071068, 0, 0].
+    extrinsic_T: [ -0.001, -0.00855, 0.055 ]
+    extrinsic_R: [  0.0, -1.0,  0.0,
+                   -1.0,  0.0,  0.0,
+                    0.0,  0.0, -1.0 ]
+
+publish:
+    path_en:  true
+    scan_publish_en:  true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: false            # set true (or SAVE_PCD=1 in run_hilti_offline.sh) to dump
+                                  # PCD/scans.pcd on shutdown (~200 MB for the full 74 s)
+    interval: -1

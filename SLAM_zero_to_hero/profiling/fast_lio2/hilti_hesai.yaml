@@ -5,10 +5,15 @@ common:
     time_offset_lidar_to_imu: 0.0
 
 preprocess:
-    lidar_type: 4                # 4 for Hesai PandarXT-32
+    # 1 Livox Avia, 2 Velodyne, 3 Ouster, 4 MARSIM (see src/preprocess.h LID_TYPE).
+    # The Hesai PandarXT-32 goes through the VELODYNE branch: its cloud carries
+    # x/y/z/intensity + ring but no per-point `time`, so velodyne_handler()
+    # rebuilds intra-scan time from the azimuth. 4 would run the MARSIM
+    # simulator handler on a real sensor. See ../../fast_lio2/README.md.
+    lidar_type: 2
     scan_line: 32
     scan_rate: 10
-    timestamp_unit: 3            # 3-nanosecond (Hesai uses nanoseconds)
+    timestamp_unit: 3            # inert here: there is no float32 `time` field to scale
     blind: 2
 
 mapping:

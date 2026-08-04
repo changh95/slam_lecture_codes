@@ -1,0 +1,29 @@
+<launch>
+  <!-- FAST-LIO2 on the Hilti SLAM Challenge 2022 exp14_basement_2 bag
+       (Hesai PandarXT-32 on /hesai/pandar + Alphasense IMU on /alphasense/imu).
+       Headless by default: rviz:=false. -->
+
+    <arg name="rviz" default="false" />
+    <arg name="config" default="hilti_pandarxt32" />
+    <arg name="pcd_save" default="false" />
+
+    <rosparam command="load" file="$(find fast_lio)/config/$(arg config).yaml" />
+
+    <!-- must come AFTER the rosparam load so it overrides the yaml -->
+    <param name="pcd_save/pcd_save_en" type="bool" value="$(arg pcd_save)" />
+
+    <param name="feature_extract_enable" type="bool" value="0"/>
+    <param name="point_filter_num" type="int" value="3"/>
+    <param name="max_iteration" type="int" value="3" />
+    <param name="filter_size_surf" type="double" value="0.2" />
+    <param name="filter_size_map" type="double" value="0.2" />
+    <param name="cube_side_length" type="double" value="1000" />
+    <param name="runtime_pos_log_enable" type="bool" value="1" />
+
+    <node pkg="fast_lio" type="fastlio_mapping" name="laserMapping" output="screen" />
+
+    <group if="$(arg rviz)">
+      <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz"
+            args="-d $(find fast_lio)/rviz_cfg/loam_livox.rviz" />
+    </group>
+</launch>
