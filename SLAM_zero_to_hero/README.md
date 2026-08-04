@@ -98,7 +98,7 @@ echo "xhost +local:docker" >> ~/.profile
     - M-estimator & MAXCON
   - Chapter 3: Point cloud processing
     - What is point cloud?
-    - Introduction to PCL library
+    - [Introduction to PCL library](part2_ch03_02)
     - Point cloud preprocessing
     - [Point cloud preprocessing hands-on](part2_ch03_04)
     - ICP
