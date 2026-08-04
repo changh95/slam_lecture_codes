@@ -1,0 +1,59 @@
+{
+  /*** Sensor configurations ***
+  // SE3 poses are written in the TUM format [x, y, z, qx, qy, qz, qw]
+  // Ouster OS0: [0.006, -0.012, 0.008, 0.0, 0.0, 0.0, 1.0]
+  // Livox Avia: [0, 0, 0, 0, 0, 0, 1]
+  // Realsense L515: [-0.012, 0.016, 0.001, 0, 0, 0, 1]
+  // Azure Kinect: [0.003, 0.004, -0.051, -0.476, 0.474, 0.524, 0.525]
+  // ZED2i: [-0.002, -0.023, 0.000, -0.002, -0.001, -0.002, 1.000]
+  // Newer college: [-0.006, 0.012, 0.029, 0.0, 0.0, 1.0, 0.0]
+  // Newer college multi-cam: [-0.014, 0.012, 0.015, 0.0, 0.0, 0.0, 1.0]
+  // Newer college multi-cam-imu: [0.02300, 0.00400, -0.01100, 1.00000, 0.00000, 0.00000, 0.00000]
+  // rooftop: [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+  //
+  // "T_lidar_imu" transforms points in the "imu" frame into the "lidar" frame
+  // e.g., p_lidar = T_lidar_imu * p_imu, T_world_imu = T_world_lidar * T_lidar_imu
+  */
+  "sensors": {
+    // IMU config
+    "imu_acc_noise": 0.05,
+    "imu_gyro_noise": 0.02,
+    "imu_int_noise": 0.001,
+    "imu_bias_noise": 0.001,
+    // LiDAR config
+    // KITTI .bin is ring-major (not azimuth/time ordered), so glim's pseudo
+    // per-point timestamps are meaningless -> treat each scan as a global shutter
+    "global_shutter_lidar": true,
+    // KITTI velodyne-only: no IMU stream, CT odometry estimates the LiDAR pose
+    "T_lidar_imu": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    // Camera config (required for only extension modules)
+    "global_shutter_camera": true,
+    "image_size": [
+      752,
+      480
+    ],
+    "T_lidar_camera": [
+      -0.00320,
+      -0.05292,
+      0.00108,
+      0.00837,
+      0.72559,
+      -0.00328,
+      0.68807
+    ],
+    "intrinsics": [
+      815.498895336274,
+      817.4904316140473,
+      830.3149255906893,
+      639.4531613962971
+    ],
+    "distortion_model": "plumb_bob",
+    "distortion_coeffs": [
+      -0.02295507941388206,
+      0.0681131726659881,
+      -0.0005798510962983399,
+      0.00128686963241809,
+      -0.03279627881588615
+    ]
+  }
+}

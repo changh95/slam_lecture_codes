@@ -1,0 +1,17 @@
+{
+  "glim_ros": {
+    // Backend modules
+    "enable_local_mapping": true,
+    "enable_global_mapping": true,
+    // IMU config
+    "imu_time_offset": 0.0,
+    "acc_scale": 1.0,
+    // Extension modules
+    // headless: no viewer / rviz extension modules are loaded
+    "extension_modules": [],
+    // Topics
+    "imu_topic": "/os_cloud_node/imu",
+    "points_topic": "/velodyne_points",
+    "image_topic": "/image"
+  }
+}

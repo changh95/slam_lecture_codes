@@ -49,4 +49,23 @@ RUN git clone https://github.com/koide3/glim.git -b v1.0.0 --recursive && \
     cmake .. -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && make install && ldconfig
 
+# A plain (non-ROS) glim build installs NO executables — it has no add_executable
+# and no main() anywhere. Upstream's data-ingesting binaries (glim_rosnode,
+# glim_rosbag, offline_viewer) live in the separate koide3/glim_ros1 package,
+# which needs ROS 1 Noetic and therefore Ubuntu 20.04 — impossible on this
+# 24.04 CUDA base. So without the driver below, this image cannot read a dataset
+# at all. glim_kitti feeds KITTI velodyne .bin scans straight through the real
+# GLIM pipeline (TimeKeeper -> CloudPreprocessor -> Async{Odometry,SubMapping,
+# GlobalMapping}), mirroring GlimROS::insert_frame().
+COPY kitti /opt/glim_kitti/src
+RUN cmake -S /opt/glim_kitti/src -B /opt/glim_kitti/build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /opt/glim_kitti/build -j$(nproc) --target install && \
+    rm -rf /opt/glim_kitti/build
+
+# glim's non-ROS build does not install its config JSONs (the install(DIRECTORY
+# config ...) rule is inside a ROS-only branch), so the only copy is in the
+# source clone at /glim/config. Ship the KITTI-tuned variant on a stable path.
+COPY config_kitti /usr/local/share/glim_kitti/config
+COPY config_kitti_posegraph /usr/local/share/glim_kitti/config_posegraph
+
 WORKDIR /data
