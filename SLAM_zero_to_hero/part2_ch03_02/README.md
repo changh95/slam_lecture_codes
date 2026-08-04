@@ -77,37 +77,6 @@ docker run -it --rm \
 
 If the X server refuses the container, run `xhost +local:` on the host first.
 
-#### Rendering on the GPU
-
-```bash
-# Runtimes with CDI support: podman >= 4.1, or Docker with nvidia-container-toolkit
-docker run -it --rm --device nvidia.com/gpu=all \
-    -e DISPLAY=$DISPLAY -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
-    slam_zero_to_hero:part2_ch03_02
-```
-
-podman 3.4 predates CDI and rejects that flag, so there the driver is mounted by hand:
-
-```bash
-V=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader)
-L=/usr/lib/x86_64-linux-gnu
-NV=(-v $L/libGLX_nvidia.so.$V:$L/libGLX_nvidia.so.0:ro)
-for lib in libnvidia-glcore libnvidia-tls libnvidia-glsi libnvidia-glvkspirv \
-           libnvidia-gpucomp libnvidia-nvvm libnvidia-ptxjitcompiler; do
-    NV+=(-v $L/$lib.so.$V:$L/$lib.so.$V:ro)
-done
-
-podman run -it --rm \
-    --device /dev/nvidiactl --device /dev/nvidia0 --device /dev/nvidia-uvm \
-    --device /dev/dri "${NV[@]}" \
-    -e DISPLAY=$DISPLAY -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
-    slam_zero_to_hero:part2_ch03_02
-```
-
-`glxinfo -B` inside the container should then name the GPU instead of `llvmpipe`.
-
 ---
 
 ## Output
