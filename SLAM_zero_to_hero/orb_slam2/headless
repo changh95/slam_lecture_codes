@@ -1,0 +1,27 @@
+#!/bin/bash
+# Run an X11-dependent binary against a private virtual display.
+#
+# Why not `xvfb-run -a`: it intermittently hangs before ever exec'ing the child
+# (observed repeatedly in this image -- Xvfb comes up, the command never starts).
+# Starting Xvfb explicitly and waiting for it with xdpyinfo is deterministic.
+#
+# usage: headless <command> [args...]
+set -u
+DISPLAY_NUM="${DISPLAY_NUM:-99}"
+Xvfb ":${DISPLAY_NUM}" -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+XVFB_PID=$!
+export DISPLAY=":${DISPLAY_NUM}"
+for _ in $(seq 1 100); do
+    xdpyinfo >/dev/null 2>&1 && break
+    sleep 0.1
+done
+if ! xdpyinfo >/dev/null 2>&1; then
+    echo "headless: Xvfb failed to start on :${DISPLAY_NUM}" >&2
+    cat /tmp/xvfb.log >&2
+    kill "$XVFB_PID" 2>/dev/null
+    exit 1
+fi
+"$@"
+rc=$?
+kill "$XVFB_PID" 2>/dev/null
+exit $rc
