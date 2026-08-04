@@ -144,13 +144,13 @@ echo "xhost +local:docker" >> ~/.profile
     - 3D LiDAR SLAM
     - Sensor fusion SLAM
   - Chapter 2: Hands-on classical SLAM
-    - ORB-SLAM 2
-    - Basalt-VIO
-    - Cartographer
-    - KISS-SLAM
-    - GLIM
-    - FAST-LIO2
-    - FAST-LIVO2
+    - [ORB-SLAM 2](orb_slam2)
+    - [Basalt-VIO](basalt)
+    - [Cartographer](cartographer)
+    - [KISS-SLAM](kiss_slam)
+    - [GLIM](glim)
+    - [FAST-LIO2](fast_lio2)
+    - [FAST-LIVO2](fast_livo2)
 - Chapter 5: Advanced SLAM - AI Integration and Hardware Optimization
   - Chapter 1: AI + SLAM
     - Part 5 introduction
@@ -170,13 +170,13 @@ echo "xhost +local:docker" >> ~/.profile
     - SLAM + Auto-encoder / diffusion
     - SLAM + Graph processor
   - Chapter 2: Hands on AI + SLAM
-    - DSP-SLAM
-    - Kimera
-    - ConceptFusion
-    - Gaussian Splatting SLAM
-    - MASt3r-SLAM
-    - PIN-SLAM
-    - Suma++
+    - [DSP-SLAM](dsp_slam)
+    - [Kimera](kimera)
+    - [ConceptFusion](concept_fusion)
+    - [Gaussian Splatting SLAM](gaussian_splatting_slam)
+    - [MASt3r-SLAM](mast3r_slam)
+    - [PIN-SLAM](pin_slam)
+    - [Suma++](suma_pp)
   - Chapter 3: Hardware/Software optimization for SLAM performance
     - Differences between desktop, server, and embedded boards
     - Characteristics of real-time SLAM
