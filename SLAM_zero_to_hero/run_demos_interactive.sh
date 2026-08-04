@@ -39,7 +39,7 @@ DEMOS=(
   "part2_ch02_07:::cd /workspace/part2_ch02_07/build && ./triangulation_demo:::[CLI] Part2 ch02_07 - Triangulation (synthetic stereo benchmark)"
   "part2_ch02_09:::cd /workspace/part2_ch02_09/build && ./charuco_calibration:::[GUI] Part2 ch02_09 - ChArUco Calibration window"
   "part2_ch02_12:::cd /workspace/part2_ch02_12/build && ./ransac_fundamental ../data/000024.png ../data/000025.png:::[CLI] Part2 ch02_12 - RANSAC Fundamental on EuRoC (5 estimators benchmarked)"
-  "part2_ch03_04:::cd /workspace/part2_ch03_04/build && ./visualization ../data/000000.bin:::[GUI] Part2 ch03_04 - PCL Visualization on KITTI scan"
+  "part2_ch03_04:::cd /workspace/part2_ch03_04 && for b in passthrough downsampling sor kdtree plane_det normal_estimation; do echo '== '\$b' =='; ./build/\$b; done:::[GUI] Part2 ch03_04 - PCL preprocessing on KITTI scan (6 windows: passthrough, voxel, SOR, k-d tree, RANSAC plane, normals; close each to advance)"
   "part2_ch03_06:::cd /workspace/part2_ch03_06/build && ./icp_visualization ../data/scene.pcd ../data/scene.pcd --step:::[GUI] Part2 ch03_06 - ICP Visualization (VTK 3D viewer)"
   "part2_ch03_07:::cd /workspace/part2_ch03_07/build && ./teaser_demo:::[CLI] Part2 ch03_07 - TEASER++ / Advanced ICP benchmark"
   "part2_ch03_08:::cd /workspace/part2_ch03_08/build && ./comparison ../data/000000.bin:::[CLI] Part2 ch03_08 - Octree/Octomap/Bonxai comparison on KITTI scan"

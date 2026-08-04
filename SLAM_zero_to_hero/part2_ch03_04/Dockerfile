@@ -9,4 +9,5 @@ RUN cd /workspace/part2_ch03_04 && \
     cmake .. && \
     make -j4
 
-WORKDIR /workspace/part2_ch03_04/build
+# The exercise root, not build/, so the demos find data/000000.bin
+WORKDIR /workspace/part2_ch03_04
