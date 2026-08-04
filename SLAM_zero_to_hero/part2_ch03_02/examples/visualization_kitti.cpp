@@ -76,7 +76,10 @@ int main(int argc, char **argv) {
     }
 
     sprintf(filename, "%s/%06d.bin", path_to_bin_file.c_str(), i);
-    *cloud = *load_bin(filename);
+    const auto frame = load_bin(filename);
+    if (!frame) // Ran past the last frame of the sequence
+      break;
+    *cloud = *frame;
 
     colorize(*cloud, *cloud_colored, {0, 255, 0});
 

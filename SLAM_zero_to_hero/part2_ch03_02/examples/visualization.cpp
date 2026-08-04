@@ -56,7 +56,10 @@ int main(int argc, char **argv) {
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::PointCloud<pcl::PointXYZ>::Ptr shifted_cloud(
       new pcl::PointCloud<pcl::PointXYZ>);
-  *cloud = *load_bin("./000000.bin");
+  const auto scan = load_bin("./000000.bin");
+  if (!scan)
+    return -1;
+  *cloud = *scan;
 
   Eigen::Matrix4f tf;
   // clang-format off

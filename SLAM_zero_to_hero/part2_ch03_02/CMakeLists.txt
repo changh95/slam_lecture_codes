@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
-project("Introduction to point cloud processing" LANGUAGES CXX)
+project("Introduction to point cloud processing" LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
+
+# Ubuntu's VTK 9.1 declares VTK::mpi -> MPI::MPI_C but never looks MPI up
+# itself, so find_package(PCL) below fails unless the target already exists.
+# Harmless where VTK was built without MPI — nothing here links against it.
+find_package(MPI QUIET)
 
 find_package(PCL REQUIRED)
 if (PCL_FOUND)

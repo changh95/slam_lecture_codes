@@ -27,6 +27,7 @@ Both programs read the KITTI `.bin` format directly: four floats per point, of w
 
 Dependencies:
 - **PCL** (`common`, `io`, `visualization`) — required.
+- **MPI** (`mpi-default-dev`) — not used by the code, but Ubuntu's VTK 9.1 needs `MPI::MPI_C` to exist before `find_package(PCL)` will configure.
 
 ```bash
 # Local
@@ -54,23 +55,58 @@ Run from the exercise root, not from `build/`, since `visualization` reads `./00
 ./build/visualization_kitti /data/sequences/00/velodyne
 ```
 
-`visualization` takes no arguments. `visualization_kitti` requires exactly one — the directory holding the frames — and advances up to 4000 of them, or until you close the viewer window. Frames must be named `%06d.bin` starting at `000000.bin`; the playback loop does not stop early on a missing file.
+`visualization` takes no arguments. `visualization_kitti` requires exactly one — the directory holding the frames — and advances up to 4000 of them, or until you close the viewer window. Frames must be named `%06d.bin` starting at `000000.bin`; playback stops at the first frame it cannot open.
 
 KITTI odometry Velodyne scans can be fetched with `download_kitti.py` at the `SLAM_zero_to_hero/` root.
 
 ### Docker
 
+Both programs open an X11 window, so the container needs the host display:
+
 ```bash
 docker run -it --rm \
     -e DISPLAY=$DISPLAY \
-    -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
-    -v /kitti:/data \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v ~/data/kitti_vo_slam/extracted/dataset/sequences/04/velodyne:/data/kitti:ro \
     slam_zero_to_hero:part2_ch03_02
 
 # Inside the container
 ./build/visualization
-./build/visualization_kitti /data/sequences/00/velodyne
+./build/visualization_kitti /data/kitti
 ```
+
+If the X server refuses the container, run `xhost +local:` on the host first.
+
+#### Rendering on the GPU
+
+```bash
+# Runtimes with CDI support: podman >= 4.1, or Docker with nvidia-container-toolkit
+docker run -it --rm --device nvidia.com/gpu=all \
+    -e DISPLAY=$DISPLAY -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    slam_zero_to_hero:part2_ch03_02
+```
+
+podman 3.4 predates CDI and rejects that flag, so there the driver is mounted by hand:
+
+```bash
+V=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader)
+L=/usr/lib/x86_64-linux-gnu
+NV=(-v $L/libGLX_nvidia.so.$V:$L/libGLX_nvidia.so.0:ro)
+for lib in libnvidia-glcore libnvidia-tls libnvidia-glsi libnvidia-glvkspirv \
+           libnvidia-gpucomp libnvidia-nvvm libnvidia-ptxjitcompiler; do
+    NV+=(-v $L/$lib.so.$V:$L/$lib.so.$V:ro)
+done
+
+podman run -it --rm \
+    --device /dev/nvidiactl --device /dev/nvidia0 --device /dev/nvidia-uvm \
+    --device /dev/dri "${NV[@]}" \
+    -e DISPLAY=$DISPLAY -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    slam_zero_to_hero:part2_ch03_02
+```
+
+`glxinfo -B` inside the container should then name the GPU instead of `llvmpipe`.
 
 ---
 
