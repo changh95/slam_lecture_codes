@@ -195,7 +195,7 @@ echo "xhost +local:docker" >> ~/.profile
   - Project 3: [SLAM for mobile scanner systems](uamc)
   - Project 4: [SLAM for quadruped robots](cerberus_2)
   - Project 5: [SLAM for humanoid robots](nvblox)
-  - Project 6: SLAM for VR/AR headsets
+  - Project 6: [SLAM for VR/AR headsets](basalt)
 
 ## Acknowledgements
 
