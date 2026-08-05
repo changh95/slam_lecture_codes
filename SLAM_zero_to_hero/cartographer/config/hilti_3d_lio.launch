@@ -1,0 +1,43 @@
+<!--
+  Cartographer 3D (LiDAR + IMU) on Hilti 2022 exp14_basement_2.bag.
+
+  roslaunch only finds this if it is mounted into the directory rospack actually
+  resolves for cartographer_ros, which in this image is the NESTED package dir:
+      /catkin_ws/src/cartographer/cartographer_ros/cartographer_ros/launch/
+  The stock Dockerfile COPYs launch files one level above that, which is why
+  `roslaunch cartographer_ros hilti_3d.launch` fails with a file-not-found.
+
+  roslaunch cartographer_ros hilti_3d_lio.launch bag:=/data/lidar_imu_full_t.bag
+-->
+<launch>
+  <arg name="bag" default="/data/lidar_imu_full_t.bag"/>
+  <arg name="cfg_dir" default="/cfg"/>
+  <arg name="rate" default="1.0"/>
+
+  <param name="/use_sim_time" value="true"/>
+
+  <!-- LiDAR <- IMU extrinsic (FAST-LIVO2's Hilti-2022 calibration).
+       parent = imu_sensor_frame (the tracking frame), child = PandarXT-32, i.e.
+       the published transform is T_imu_lidar, which is what
+       TfBridge::LookupToTracking(tracking_frame, frame_id) asks for.
+       Arg order for tf2_ros: x y z qx qy qz qw parent child. -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="imu_to_pandar"
+        args="-0.001 -0.00855 0.055 0.7071068 -0.7071068 0 0 imu_sensor_frame PandarXT-32"/>
+
+  <node name="cartographer_node" pkg="cartographer_ros" type="cartographer_node"
+        args="-configuration_directory $(arg cfg_dir)
+              -configuration_basename hilti_3d_lio.lua"
+        output="screen">
+    <remap from="points2" to="/hesai/pandar"/>
+    <remap from="imu"     to="/alphasense/imu"/>
+  </node>
+
+  <!-- Optional: a live 2D projection for rviz. It is only a projection of the 3D
+       submaps and carries almost no free-space information; use
+       cartographer_assets_writer + write_ros_map for a real occupancy grid. -->
+  <node name="cartographer_occupancy_grid_node" pkg="cartographer_ros"
+        type="cartographer_occupancy_grid_node" args="-resolution 0.05"/>
+
+  <node pkg="rosbag" type="play" name="rosbag_player" required="true"
+        args="--clock --quiet -r $(arg rate) $(arg bag)"/>
+</launch>

@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+  Static frame tree for Hilti SLAM Challenge 2022 (exp14_basement_2.bag).
+
+  The bag publishes NO /tf and NO /tf_static, so cartographer_offline_node has no
+  way to relate the LiDAR frame ("PandarXT-32", the frame_id on /hesai/pandar) to
+  the tracking frame ("imu_sensor_frame", the frame_id on /alphasense/imu).
+  cartographer_offline_node loads static transforms from URDF via
+  -urdf_filenames, which is the offline equivalent of a static_transform_publisher
+  (the offline node does NOT subscribe to a live /tf, it only reads /tf and
+  /tf_static out of the bag plus whatever the URDF supplies).
+
+  DIRECTION: parent = imu_sensor_frame, child = PandarXT-32, i.e. the joint origin
+  is T_imu_lidar (it maps a point expressed in the LiDAR frame into the IMU frame).
+  That is exactly what Cartographer asks TF for:
+    TfBridge::LookupToTracking() calls lookupTransform(tracking_frame, frame_id)
+  which returns T_tracking_sensor = T_imu_lidar. Same direction FAST-LIO2 /
+  FAST-LIVO2 use for extrinsic_R / extrinsic_T, and the same direction the repo's
+  own arbiter applies (Rw = R_world_imu * R_imu_lidar).
+
+  Values are FAST-LIVO2's Hilti-2022 calibration (config/HILTI22.yaml), not a guess:
+    extrinsic_T = [-0.001, -0.00855, 0.055]
+    extrinsic_R = [ 0 -1  0
+                   -1  0  0
+                    0  0 -1 ]   == quat (x,y,z,w) = (0.7071068, -0.7071068, 0, 0)
+  URDF wants fixed-axis roll-pitch-yaw; rpy = (pi, 0, -pi/2) reproduces that matrix
+  exactly (verified numerically, max element error 1.2e-16).
+-->
+<robot name="hilti_handheld">
+  <link name="imu_sensor_frame"/>
+  <link name="PandarXT-32"/>
+
+  <joint name="imu_sensor_frame_to_PandarXT-32" type="fixed">
+    <parent link="imu_sensor_frame"/>
+    <child link="PandarXT-32"/>
+    <origin xyz="-0.001 -0.00855 0.055"
+            rpy="3.14159265358979 0 -1.57079632679490"/>
+  </joint>
+</robot>
