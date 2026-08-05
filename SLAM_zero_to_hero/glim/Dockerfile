@@ -1,5 +1,19 @@
 # Based on koide3/glim/docker/ubuntu/Dockerfile.gcc
-FROM docker.io/nvidia/cuda:13.1.0-devel-ubuntu24.04
+#
+# CUDA 12.9.1, deliberately NOT 13.x. sm_120 (RTX 5090) needs CUDA >= 12.8, and
+# 12.9.1 is the newest 12.x -- the last CUDA that gtsam_points v1.0.0 can be
+# made to compile against. CUDA 13 breaks it three separate ways:
+#   1. CCCL 3.x deleted <cub/iterator/transform_input_iterator.cuh> and
+#      <thrust/system/cuda/future.h>; v1.0.0 includes both. Fixing that means
+#      rewriting the CUB reduction iterators, not adding an include path.
+#   2. cudaGraphAddDependencies() gained a cudaGraphEdgeData* parameter.
+#   3. The 13.1 image's forward-compat libcuda (590.44.01) is NEWER than this
+#      host driver (580.126.18), so nvidia-container-runtime prepends
+#      /usr/local/cuda/compat to the loader path. Forward compat is supported
+#      only on data-center GPUs, so on a GeForce card every CUDA call fails with
+#      cudaErrorCompatNotSupportedOnDevice. 12.9.1 ships compat 575.57.08 < 580,
+#      so the runtime leaves the host driver in place and this cannot happen.
+FROM docker.io/nvidia/cuda:12.9.1-devel-ubuntu24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -34,20 +48,51 @@ RUN git clone https://github.com/koide3/iridescence.git --recursive && \
     make -j$(nproc) && make install && ldconfig && \
     cd / && rm -rf iridescence
 
-# Build gtsam_points (pin to v1.0.0 for GTSAM 4.2.0 compat)
+# Build gtsam_points (pin to v1.0.0 for GTSAM 4.2.0 compat) with GPU support.
+# Two source fixes are needed, and neither can be expressed as a cmake -D flag:
+#
+#  * CMAKE_CUDA_ARCHITECTURES. Upstream does
+#    `set(CMAKE_CUDA_ARCHITECTURES "native" ... FORCE)` on CMake >= 3.24, which
+#    silently discards -DCMAKE_CUDA_ARCHITECTURES=120. That would be survivable
+#    on this host, except `podman build` has no GPU: nvcc then resolves
+#    -arch=native to its own default (sm_52) with nothing but a warning, and the
+#    image ships cubins that cannot run on a 5090 ("no kernel image is available
+#    for execution on the device"). Pin the architecture instead.
+#
+#  * thrust forward declarations. v1.0.0 hand-writes `namespace thrust {
+#    template<...> class pair; }` (and device_vector / device_ptr) to avoid
+#    pulling thrust into three public headers. Every CCCL >= 2.4 -- i.e. every
+#    CUDA that can target sm_120 -- puts the real types in a *versioned inline*
+#    namespace (thrust::THRUST_200802_SM_1200_NS::pair), so those hand-written
+#    declarations introduce second, unrelated types and ~400 "thrust::pair is
+#    ambiguous" errors follow. Swap them for the real headers; consumers get the
+#    include path automatically because gtsam_points_cuda links CUDA::cudart
+#    PUBLIC.
 RUN git clone https://github.com/koide3/gtsam_points.git -b v1.0.0 --recursive && \
-    cd gtsam_points && mkdir build && cd build && \
+    cd gtsam_points && \
+    sed -i 's/set(CMAKE_CUDA_ARCHITECTURES "native" CACHE STRING "CUDA architectures" FORCE)/set(CMAKE_CUDA_ARCHITECTURES 120 CACHE STRING "CUDA architectures" FORCE)/' CMakeLists.txt && \
+    grep -q 'set(CMAKE_CUDA_ARCHITECTURES 120 CACHE' CMakeLists.txt && \
+    sed -i '/^namespace thrust {$/,/^}  \/\/ namespace thrust$/c\#include <thrust\/pair.h>' include/gtsam_points/types/gaussian_voxelmap_gpu.hpp && \
+    sed -i '/^namespace thrust {$/,/^}  \/\/ namespace thrust$/c\#include <thrust\/device_vector.h>' include/gtsam_points/cuda/stream_temp_buffer_roundrobin.hpp && \
+    sed -i '/^namespace thrust {$/,/^}$/c\#include <thrust\/device_ptr.h>' include/gtsam_points/factors/nonlinear_factor_gpu.hpp && \
+    ! grep -rq '^namespace thrust' include src && \
+    mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
-             -DBUILD_WITH_CUDA=OFF \
+             -DBUILD_WITH_CUDA=ON \
              -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds" && \
     make -j$(nproc) && make install && ldconfig && \
+    cuobjdump --list-elf /usr/local/lib/libgtsam_points_cuda.so | grep -q sm_120 && \
     cd / && rm -rf gtsam_points
 
-# Build GLIM v1.0.0
+# Build GLIM v1.0.0. BUILD_WITH_CUDA already defaults to ON here, but the
+# installed gtsam_points-config.cmake sets the same variable and is read first,
+# so the flag that actually decides is gtsam_points'. State it anyway: this is
+# what produces libodometry_estimation_gpu.so.
 RUN git clone https://github.com/koide3/glim.git -b v1.0.0 --recursive && \
     cd glim && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release && \
-    make -j$(nproc) && make install && ldconfig
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CUDA=ON && \
+    make -j$(nproc) && make install && ldconfig && \
+    test -f /usr/local/lib/libodometry_estimation_gpu.so
 
 # A plain (non-ROS) glim build installs NO executables — it has no add_executable
 # and no main() anywhere. Upstream's data-ingesting binaries (glim_rosnode,
@@ -67,5 +112,6 @@ RUN cmake -S /opt/glim_kitti/src -B /opt/glim_kitti/build -DCMAKE_BUILD_TYPE=Rel
 # source clone at /glim/config. Ship the KITTI-tuned variant on a stable path.
 COPY config_kitti /usr/local/share/glim_kitti/config
 COPY config_kitti_posegraph /usr/local/share/glim_kitti/config_posegraph
+COPY config_kitti_gpu /usr/local/share/glim_kitti/config_gpu
 
 WORKDIR /data

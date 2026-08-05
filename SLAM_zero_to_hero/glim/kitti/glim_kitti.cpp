@@ -31,6 +31,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <glim/util/config.hpp>
+#include <glim/util/extension_module.hpp>
 #include <glim/util/logging.hpp>
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
@@ -205,8 +206,39 @@ int main(int argc, char** argv) {
     global_mapping = std::make_shared<glim::AsyncGlobalMapping>(global);
   }
 
-  // NOTE: no extension module (libstandard_viewer.so / libinteractive_viewer.so)
-  // is loaded, so no OpenGL context is ever created -> fully headless.
+  // ---- extension modules (viewers) ----------------------------------------
+  // GLIM's viewers are ordinary extension modules: loading one is all it takes,
+  // because it subscribes to glim's callback slots itself and renders from its
+  // own thread. Load nothing and no OpenGL context is ever created, which is
+  // what keeps the default run headless.
+  //
+  // Sources, in order of precedence:
+  //   GLIM_KITTI_VIEWER=1                 -> force libstandard_viewer.so
+  //   config_ros.json glim_ros/extension_modules -> upstream's own convention
+  std::vector<std::shared_ptr<glim::ExtensionModule>> extensions;
+  {
+    std::vector<std::string> module_names;
+    const char* viewer_env = std::getenv("GLIM_KITTI_VIEWER");
+    if (viewer_env && std::string(viewer_env) != "0") {
+      module_names.push_back("libstandard_viewer.so");
+    } else {
+      module_names = glim::Config(glim::GlobalConfig::get_config_path("config_ros"))
+                       .param<std::vector<std::string>>("glim_ros", "extension_modules", std::vector<std::string>{});
+    }
+    for (const auto& name : module_names) {
+      spdlog::info("load extension module {}", name);
+      auto ext = glim::ExtensionModule::load_module(name);
+      if (!ext) {
+        // Not fatal: a missing viewer should not throw away a mapping run.
+        spdlog::warn("failed to load extension module {} (continuing headless)", name);
+        continue;
+      }
+      extensions.push_back(ext);
+    }
+    if (!extensions.empty()) {
+      spdlog::info("{} extension module(s) active -- close the viewer window to abort early", extensions.size());
+    }
+  }
 
   // ---- enumerate scans ----------------------------------------------------
   const std::filesystem::path velodyne_dir = std::filesystem::path(seq_dir) / "velodyne";
@@ -267,6 +299,23 @@ int main(int argc, char** argv) {
     }
     odometry_estimation->insert_frame(preprocessed);
 
+    // A viewer that has been closed reports !ok(); stop feeding so the user can
+    // abort a long run from the GUI. needs_wait() lets a module that has fallen
+    // behind (the viewer, when rendering a big map) throttle the feed.
+    bool aborted = false;
+    for (const auto& ext : extensions) {
+      while (ext->needs_wait()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      if (!ext->ok()) {
+        aborted = true;
+      }
+    }
+    if (aborted) {
+      spdlog::warn("viewer closed at scan {}/{} -- stopping feed and saving what we have", i, num_scans);
+      break;
+    }
+
     if (i % 25 == 0) {
       spdlog::info("fed scan {}/{} stamp={:.6f} raw_pts={} pre_pts={}", i, num_scans, raw->stamp, raw->size(), preprocessed->size());
     }
@@ -299,6 +348,17 @@ int main(int argc, char** argv) {
   spdlog::info("saving dump to {}", dump_path);
   global_mapping->save(dump_path);
   spdlog::info("saved");
+
+  // With a viewer up, exiting immediately would slam the window shut the instant
+  // mapping finished, which is useless for actually looking at the result. Hold
+  // it open until the user closes it. Headless runs skip this entirely, so CI
+  // behaviour is unchanged.
+  if (!extensions.empty()) {
+    spdlog::info("mapping finished -- close the viewer window to exit");
+    while (std::all_of(extensions.begin(), extensions.end(), [](const auto& ext) { return ext->ok(); })) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
 
   return 0;
 }
