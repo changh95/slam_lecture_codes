@@ -34,13 +34,13 @@ Clones MonoLaneMapping and `openlane_bag` into a catkin workspace inside the ima
 The authors provide the OpenLane validation split already converted to rosbags — 202 segments, 433 MB zipped. This is all the demo needs; the original OpenLane image/annotation download is not required.
 
 ```bash
-mkdir -p ~/data/openlane && cd ~/data/openlane
-curl -L -o OpenLane.zip \
-  "https://hkustconnect-my.sharepoint.com/:u:/g/personal/zqiaoac_connect_ust_hk/EQxCBwl1Wc5Foq1wNOJ7ZKQBrNik0GK_qa7qEed_zrbGmQ?download=1"
-unzip -q OpenLane.zip
+python3 ../download_openlane.py           # 433 MB -> 630 MB in ~/data/openlane/
+python3 ../download_openlane.py --list    # what is in the zip, and the scenario splits
 ```
 
-A [Baidu mirror](https://pan.baidu.com/s/1Hrd8ashoiB4_f0B-iz6OHQ?pwd=2023) is in the upstream readme. The image also carries one segment at `examples/data/`, so `run_mapping.py` with no `--bag` works before you download anything.
+It is one archive, so there is no per-segment download. Once it is unpacked, `--scenario curve` (or `night`, `updown`, `intersection`, …) prints the bags in OpenLane's own scenario splits, which is how to pick a `--bag`. Note that the `?download=1` share link in the upstream readme now answers 403 without the share page's cookie; the script uses the `_layouts/15/download.aspx?share=…` form of the same file, which also resumes. A [Baidu mirror](https://pan.baidu.com/s/1Hrd8ashoiB4_f0B-iz6OHQ?pwd=2023) is in the upstream readme.
+
+The image also carries one segment at `examples/data/`, so `run_mapping.py` with no `--bag` works before you download anything.
 
 ## Run
 

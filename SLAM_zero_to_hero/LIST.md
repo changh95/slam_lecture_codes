@@ -11,7 +11,7 @@
 | **cow_and_lady** | `~/data/cow_and_lady/` | RGB-D + Vicon | voxblox |
 | **Monado SLAM** | baked into the `basalt` image at `/MIPB07_beatsaber_fitbeat_expertplus_2` | Valve Index stereo + IMU | basalt |
 | **FAST-LIVO2-Dataset** | `~/data/fast_livo2/Retail_Street.bag` (**the fast_livo2 demo sequence**) + `calibration.yaml`; `Red_Sculpture.bag` and `CBD_Building_01.bag` also downloaded but unused | Livox Avia + built-in IMU + RGB pinhole cam | fast_livo2 (`download_fast_livo2.py`, 17 more sequences available) |
-| **OpenLane (rosbag conversion)** | `~/data/openlane/OpenLane/lane3d_1000/rosbag/` — 202 x 20 s Waymo segments, 630 MB | PersFormer 3D lane detections + GT lanes + vehicle pose (**no images**) | monolane_mapping |
+| **OpenLane (rosbag conversion)** | `~/data/openlane/OpenLane/lane3d_1000/rosbag/` — 202 x 20 s Waymo segments, 630 MB | PersFormer 3D lane detections + GT lanes + vehicle pose (**no images**) | monolane_mapping (`download_openlane.py`, one 433 MB zip holds all 202) |
 | **UZH-FPV Drone Racing** | `~/data/uzh_fpv/indoor_forward_3_snapdragon_with_gt.bag` (1.5 GiB) + `calib/` (Kalibr, per environment) | Snapdragon Flight 640x480 stereo **fisheye** @30 Hz + 500 Hz IMU + partial GT (49.5 s of 92 s) | svo_pro_open (`download_uzh_fpv.py`, 28 sequences available; each environment has its **own** calibration) |
 
 ### KITTI: what is actually extracted
