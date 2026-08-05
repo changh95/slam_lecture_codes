@@ -1,0 +1,4 @@
+# Run outputs. The README's figures live in docs/ instead, because the repo
+# root .gitignore excludes **/results/ wholesale and a negation cannot reach
+# inside an excluded directory.
+*.rrd

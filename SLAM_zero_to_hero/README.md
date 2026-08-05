@@ -177,6 +177,7 @@ echo "xhost +local:docker" >> ~/.profile
     - [MASt3r-SLAM](mast3r_slam)
     - [PIN-SLAM](pin_slam)
     - [Suma++](suma_pp)
+    - [MonoLaneMapping](monolane_mapping)
   - Chapter 3: Hardware/Software optimization for SLAM performance
     - Differences between desktop, server, and embedded boards
     - Characteristics of real-time SLAM
@@ -196,7 +197,7 @@ echo "xhost +local:docker" >> ~/.profile
 
 ## Acknowledgements
 
-ORB-SLAM 2/3 authors, Basalt-VIO authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, and all the authors of the libraries used in this repository.
+ORB-SLAM 2/3 authors, Basalt-VIO authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, and all the authors of the libraries used in this repository.
 
 ## Contributors
 

@@ -11,6 +11,7 @@
 | **cow_and_lady** | `~/data/cow_and_lady/` | RGB-D + Vicon | voxblox |
 | **Monado SLAM** | baked into the `basalt` image at `/MIPB07_beatsaber_fitbeat_expertplus_2` | Valve Index stereo + IMU | basalt |
 | **FAST-LIVO2-Dataset** | `~/data/fast_livo2/Retail_Street.bag` (**the fast_livo2 demo sequence**) + `calibration.yaml`; `Red_Sculpture.bag` and `CBD_Building_01.bag` also downloaded but unused | Livox Avia + built-in IMU + RGB pinhole cam | fast_livo2 (`download_fast_livo2.py`, 17 more sequences available) |
+| **OpenLane (rosbag conversion)** | `~/data/openlane/OpenLane/lane3d_1000/rosbag/` — 202 x 20 s Waymo segments, 630 MB | PersFormer 3D lane detections + GT lanes + vehicle pose (**no images**) | monolane_mapping |
 
 ### KITTI: what is actually extracted
 
@@ -50,6 +51,7 @@ Status legend: ✅ verified end-to-end (Docker build → real-data run → captu
 | concept_fusion | ❌ | — | ICL, ScanNet (ScanNet requires institutional access) |
 | cuvslam | 🟡 | — | NVIDIA cuVSLAM; benchmark in `perf_bench/dgx_spark/cuvslam.json` |
 | nvblox | 🟡 | — | Replica, Redwood; benchmark in `perf_bench/dgx_spark/nvblox.json` |
+| monolane_mapping | ✅ | **OpenLane rosbags, all 202 segments / 27.4 km.** One segment in detail: 199 frames, 307 m, 14 lane landmarks, 494 control points = **86× fewer points than the raw detections** (5.8 kB vs 497 kB), 75 ms/frame. Pose refinement measured with `--odo_noise`: yaw RPE 1.262° vs 1.608° raw at a 10 m baseline, but no better than raw by 50 m — see its README. Bags ship GT poses, so without `--odo_noise` every RPE is 0. | OpenLane only. Lane-map F1 (`openlane_eval3d.py`) additionally needs the original OpenLane `lane3d_1000/validation` jsons, which the rosbag zip does not include |
 | fast_livo2 | ✅ | **FAST-LIVO2-Dataset `Retail_Street`** (native Livox Avia + RGB cam; 1351 poses, 67.42 m closed loop, 4 cm end-to-start = 0.06 % drift, LIO 14.1 ms + VIO 4.7 ms) and Hilti `exp14_basement_2.bag` (738 poses, 37.94 m, LIO 19.3 + VIO 4.2 ms) | 19 more FAST-LIVO2-Dataset sequences via `download_fast_livo2.py` — but groups 2-4 need their own calibration block, see its README. MARS-LVIG, NTU VIRAL launches also ship. |
 
 ---
