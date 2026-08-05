@@ -10,13 +10,6 @@ sliding-window backend — on drone-racing footage recorded by the same lab that
 - Also relevant: [SVO: Fast Semi-Direct Monocular Visual Odometry](http://rpg.ifi.uzh.ch/docs/ICRA14_Forster.pdf) (ICRA 2014, the original); [Benefit of Large Field-of-View Cameras for Visual Odometry](http://rpg.ifi.uzh.ch/docs/ICRA16_Zhang.pdf) (ICRA 2016, the fisheye camera model this demo relies on); [Keyframe-based visual–inertial odometry using nonlinear optimization](https://doi.org/10.1177/0278364914554813) (Leutenegger et al., IJRR 2015 — the OKVIS backend this repo's sliding window is modified from; paywalled, and its freely readable RSS 2013 predecessor is [Keyframe-Based Visual-Inertial SLAM Using Nonlinear Optimization](https://www.roboticsproceedings.org/rss09/p37.pdf))
 - **Dataset**: [UZH-FPV Drone Racing Dataset](https://fpv.ifi.uzh.ch/) — [Are We Ready for Autonomous Drone Racing?](https://rpg.ifi.uzh.ch/docs/ICRA19_Delmerico.pdf), Delmerico, Cieslewski, Rebecq, Faessler and Scaramuzza, ICRA 2019
 
-Verified on UZH-FPV `indoor_forward_3` (Snapdragon stereo fisheye + 500 Hz IMU):
-**RMS ATE 0.43 ± 0.04 m over a 278 m flight (~0.16 %)** in stereo, tracking all 92 s
-without a single loss. That is a mean over seven runs of the same bag — the pipeline
-runs in real time, so the figure moves by ±0.05 m between runs, and a run with the GUI
-open scores slightly worse than a headless one. Full numbers, and
-why the monocular pipeline scores *better* here (0.156 m), in [NOTES.md](NOTES.md).
-
 ![SVO Pro stereo VIO on UZH-FPV indoor_forward_3](docs/rviz_stereo_vio.png)
 
 Left: the fisheye image with tracked features (green). Right: keyframe frusta and
@@ -28,29 +21,6 @@ trajectory in blue.
 ```bash
 podman build -t slam_zero_to_hero:svo_pro_open .
 ```
-
-Ubuntu 20.04 + ROS Noetic, one of the two configurations upstream lists as tested.
-The build pulls 13 dependency repos and compiles Ceres, glog, gflags, DBoW2 and
-OpenGV from source, so it takes a few minutes and needs network throughout.
-
-Five things upstream's instructions do not cover, all handled in the Dockerfile:
-
-| Problem | Fix |
-|---|---|
-| Every URL in `dependencies.yaml` is `git@github.com:` (SSH), and `dbow2_catkin` SSH-clones DBoW2 again *during* `catkin build`. A build container has no SSH key. | A single `git config --global url."https://github.com/".insteadOf git@github.com:` before `vcs import`, which covers both. |
-| `glog_catkin` builds glog via `autoreconf`, which dies with `Can't exec "libtoolize"` on a stock ROS image. | Install `autoconf automake libtool libtool-bin`. Not in upstream's dependency list. |
-| `SvoSetup.cmake` hardcodes `-Werror`, with no way to override it from the catkin command line. GCC 9 raises diagnostics GCC 7 (Melodic) did not. | `sed` out only `-Werror`. Warnings still print; no optimisation or ABI flag is touched. |
-| Podman's default OCI image format **silently ignores `SHELL`**, so `RUN source ...` would run under dash and fail with `source: not found`. | No `SHELL` directive; the step needing the ROS environment calls `bash -c` explicitly. |
-| `evo` installs an `argcomplete` that subscripts `collections.abc.Iterable` — Python 3.9+ syntax, while Noetic ships 3.8. Every `evo_*` entry point dies with `'ABCMeta' object is not subscriptable`. | Pin `argcomplete==3.1.6` and add the `packaging` dependency evo fails to declare. |
-
-The iSAM2 global-map variant is deliberately off. It needs two independent switches
-flipped (`rm svo_global_map/CATKIN_IGNORE` **and** `SET(USE_GLOBAL_MAP TRUE)`) plus a
-hand-patched GTSAM 4.0.3, and VIO does not use it. `svo_global_map` keeps its upstream
-`CATKIN_IGNORE`.
-
-> `SvoSetup.cmake` also hardcodes `-march=native`, so this image is compiled for the
-> CPU that built it. Rebuild rather than copying the image to another machine, or
-> expect `SIGILL`.
 
 ## Download the dataset
 
@@ -134,7 +104,6 @@ several laps of the indoor racing track, with error staying low except at one tu
 
 ![Stereo APE against ground truth](docs/ape_stereo_trajectory.png)
 
-This is one representative run (RMS ATE 0.471 m, the worst of the six), not the mean.
 `run_fpv.sh` writes the same plot for every run.
 
 ## Supported datasets
@@ -146,18 +115,3 @@ This is one representative run (RMS ATE 0.471 m, the worst of the six), not the 
 | **UZH-FPV** mDAVIS | same, with `cam0_topic:=` overridden | not provided here | 346×260 frames; expect to lower `grid_size` and `img_align_max_level` for the smaller image. |
 | **EuRoC MAV** | upstream `euroc_vio_stereo.launch`, `euroc_vio_mono.launch` | upstream `euroc_{stereo,mono}.yaml` | Ships with the repo. Mono needs a start offset (`-s 10` for `V2_02_medium`). |
 | **FLA** stereo+IMU | upstream `launch/frontend/fla_stereo_imu.launch` | upstream `fla_stereo_imu.yaml` | Frontend-with-IMU only, no ceres backend. |
-
-Camera models the code actually accepts, from
-`vikit/vikit_cameras/src/camera_yaml_serialization.cpp`: `pinhole` with `none`,
-`radial-tangential`, `equidistant` (fisheye, 4 coefficients — what UZH-FPV uses) or
-`fisheye` (the 1-parameter atan/FOV model), plus `omni` with a 24-element intrinsics
-vector. Note that Kalibr writes `radtan`, which this loader does **not** match — rename
-it to `radial-tangential` by hand.
-
-Verified accuracy on `indoor_forward_3`: stereo **RMS ATE 0.43 ± 0.04 m** (mean of seven
-runs, range 0.376–0.476 m; the six headless runs average 0.427 m and the one GUI run
-scored 0.476 m), monocular **0.156 m** (mean of two runs,
-range 0.132–0.180 m; Sim(3)-aligned, but scale was recovered to within 0.06 % so the
-comparison is near-metric). Why mono scores better
-than stereo here, the run-to-run variance, and the calibration conversion the whole
-demo depends on are all in [NOTES.md](NOTES.md).

@@ -190,7 +190,7 @@ echo "xhost +local:docker" >> ~/.profile
     - [CUDA acceleration hands-on](part5_ch03_08)
 - Final projects
   - Project 1: [SLAM for autonomous driving](monolane_mapping)
-  - Project 2: SLAM for drones
+  - Project 2: [SLAM for drones](svo_pro_open)
   - Project 3: SLAM for mobile scanner systems
   - Project 4: SLAM for quadruped robots
   - Project 5: SLAM for humanoid robots
