@@ -7,17 +7,17 @@ Online lane mapping from a monocular camera. Per-frame 3D lane detections plus o
 - Rosbag converter: [qiaozhijian/openlane_bag](https://github.com/qiaozhijian/openlane_bag) (defines the `LaneList` messages)
 - Dataset: [OpenLane](https://github.com/OpenDriveLab/OpenLane) · detector: [PersFormer](https://github.com/OpenDriveLab/PersFormer_3DLane)
 
-**What this is not:** the monocular detector is *not* run here. The rosbags carry PersFormer's 3D lane predictions, the ground-truth lanes, and the vehicle pose — no images. This repository is the mapping and optimisation back end, which is what the paper contributes.
+**What this is not:** the monocular detector is *not* run here. The rosbags carry PersFormer's 3D lane predictions, the ground-truth lanes, and the vehicle pose — no images. This repository is the mapping and optimisation back end, which is what the paper contributes. (The camera panel in the live viewer needs the gated OpenLane image download; see [below](#the-front-camera-panel).)
 
 ## Output
 
-One 20-second OpenLane segment, top-down: 325 m of road, about six physical lane markings across. Grey = raw per-frame detections accumulated in the map frame, coloured line = the fitted Catmull-Rom spline, red spheres = the control points the factor graph actually optimises.
+One 20-second OpenLane segment, top-down: 308 m of road sweeping through a 44 degree left-hand curve, about seven physical lane markings across. Grey = raw per-frame detections accumulated in the map frame, coloured line = the fitted Catmull-Rom spline, red spheres = the control points the factor graph actually optimises.
 
 ![lane map, top down](docs/lane_map_bev.png)
 
-The blank vertical band is real, not a rendering artifact: detections drop out for ~17 m (78 → 95 m along the drive) and every marking is re-initialised as a fresh landmark on the far side. That is why the saved map holds 14 landmarks for ~6 markings — the association stage recovers tracks across frames but not across a gap this wide.
+Detections are continuous on this segment, so the two central markings survive the whole drive as single landmarks — 339 m and 329 m, 121 and 117 control points. The remaining five run 131–237 m: the two on the far left only exist over the first 145 m and two others only appear later, which is the road genuinely changing lane count through the curve rather than tracking dropping out. The map also carries two spurious 4-control-point stubs that survived the NMS prune.
 
-A 45 m close-up of the same map — the control-point chord is 3 m, and the grey ribbon around each spline is the measurement spread it was fitted through:
+A 46 m close-up from three quarters of the way along — the control-point chord is 3 m, and the grey ribbon around each spline is the measurement spread it was fitted through:
 
 ![lane map, close up](docs/lane_map_detail.png)
 
@@ -66,11 +66,12 @@ podman run --rm \
   -v "$(pwd)/results":/out \
   slam_zero_to_hero:monolane_mapping \
   python3 run_mapping.py --output_dir /out \
-    --bag /data/OpenLane/lane3d_1000/rosbag/segment-14486517341017504003_3406_349_3426_349_with_camera_labels.bag \
-    --screenshot /out/lane_map_bev.png --detail_screenshot /out/lane_map_detail.png
+    --bag /data/OpenLane/lane3d_1000/rosbag/segment-9041488218266405018_6454_030_6474_030_with_camera_labels.bag \
+    --screenshot /out/lane_map_bev.png \
+    --detail_screenshot /out/lane_map_detail.png --detail_at 0.78
 ```
 
-Drop `--bag` to use the segment bundled in the image. ~15 s for 199 frames.
+Drop `--bag` to use the straight segment bundled in the image, which needs no download. ~22 s for 198 frames on the curved one.
 
 **With the GUI**, on the host X display — no `xhost` change and no `--net=host` needed:
 
@@ -104,12 +105,33 @@ On the timeline, per frame:
 |---|---|
 | `world/map/lane_NNN` | each landmark's spline + control points, **coloured by landmark id** |
 | `world/frame/detections` | this frame's raw detections in world coords, coloured by the landmark they were associated to — **white means not yet associated** |
-| `world/vehicle`, `world/traj/{est,odom,gt}` | estimated pose and the three trajectories |
+| `world/vehicle`, `world/traj/{est,odom,gt}` | estimated pose, and three trajectories: **ground truth** drawn widest and darkest as a corridor, with optimised (green) and raw odometry (red) inside it |
+| `camera/image` | the front camera frame, with the lane detections reprojected onto it — needs `--image_dir`, see below |
 | `plots/{map,timing,pose}` | landmark and control-point counts, per-stage ms, position error vs GT |
 
 Colouring both the map and the live detections by landmark id is what makes the algorithm legible: you can watch association latch a new detection onto an existing lane, and watch the 78→95 m drop-out force a re-initialisation as the colour changes on the far side. Run it **with `--odo_noise`** — that's the only way the three trajectories separate and the pose error plot does anything.
 
 Other sinks: `--rrd FILE` records instead of streaming (~11 MB for one segment, replay with `rerun FILE`), and `--connect HOST:PORT` targets a viewer you're already running.
+
+### The front camera panel
+
+`--image_dir` adds a 2D camera view with the lane detections reprojected onto it, and `--annotation_dir` supplies the per-frame intrinsic that the reprojection needs:
+
+```bash
+  python3 stream_mapping.py --output_dir /out/stream --rate 10 \
+    --image_dir /data/OpenLane/images \
+    --annotation_dir /data/OpenLane/lane3d_1000/validation
+```
+
+**You need a dataset this repo cannot fetch for you.** The rosbags carry no imagery at all — their only topics are `/gt_pose_wc`, `/lanes_gt` and `/lanes_predict`, and the intrinsic appears nowhere in them or in upstream's code. Both the images and the `lane3d_1000/validation` jsons come from the full OpenLane download, which is gated behind [a Google Form](https://forms.gle/BzxxkUZDuPTqFKgu9) *and* prior registration with the [Waymo Open Dataset](https://waymo.com/open/). Those are consent steps for a human, so the code path is built and waiting rather than exercised on real frames.
+
+What is verified:
+
+- **The frame lookup.** Images resolve as `<image_dir>/validation/<segment>/<stamp>.jpg`, where `<stamp>` comes from upstream's own `'{:<018}'.format(int(timestamp * 1e6))` — a left-align-zero-fill that turns 16-digit microseconds into OpenLane's 18-digit names. Checked against the real filenames listed in `lane3d_1000/test/1000_curve.txt`: the last frame of this segment maps to `150897940901379400.jpg`, exactly as listed.
+- **The reprojection.** Bag lane points are already in OpenLane's camera frame, so only the OpenLane→OpenCV axis permutation and the intrinsic apply. Projecting `/lanes_gt` puts **100 % of points inside a 1920×1280 frame, all in its lower half** where road markings belong.
+- **The plumbing**, against 198 synthetic frames with a plausible Waymo intrinsic: 198/198 images found, lanes overlaid on 198/198.
+
+What is *not* verified is whether real OpenLane imagery lines up with the overlay, since that needs the real intrinsics. Worth knowing if you wire it up: the obvious-looking chain — `transform_points_from_cam_to_ground()` then `projection_g2im_extrinsic()` — is **wrong here and fails silently**, putting 80 % of points behind the camera and the rest at u ≈ −6 000 000. Those two helpers are for the json lane coordinates the evaluator reads, one frame further out than what the bag carries.
 
 **All 202 segments**, pose benchmark pooled (upstream's `examples/mapping_bm.py`, minus the per-frame json dump that needs the original OpenLane annotations):
 
@@ -130,6 +152,7 @@ podman run --rm \
 | `--from_map <map.npy>` | Re-render an existing map without re-running the pipeline. |
 | `--eval_pose` | Pose metrics only; skips the map save and json output. |
 | `--limit N` | Cap `--all_segments`, for a quick check. |
+| `--detail_at` | Where along the drive the close-up crop starts, as a fraction. The default 0.4 lands on a patch of spurious stubs in the curved segment; 0.78 is cleaner. |
 
 Upstream's own entry points are all present under `/catkin_ws/src/MonoLaneMapping`. `examples/demo_curve_fitting.py` (the toy spline fit) runs as-is. `examples/mapping_bm.py`, `examples/lane_association.py` and `examples/openlane_eval3d.py` still read `config/lane_mapping.yaml` / `config/lane_association.yaml`, which carry the authors' own absolute paths — pass `--cfg_file config/lane_mapping_docker.yaml` or edit `dataset_dir` to `/data/OpenLane/` first.
 
@@ -137,22 +160,24 @@ Upstream's own entry points are all present under `/catkin_ws/src/MonoLaneMappin
 
 Everything below was measured with this image on a 32-core host. The pipeline is CPU-only — nothing here touches the GPU except the viewer's OpenGL.
 
-**One segment, `segment-14486517341017504003…`, 199 frames, 307 m** — clean odometry:
+**One segment, `segment-9041488218266405018…`, 198 frames, 308 m through a curve** — clean odometry:
 
 | | |
 |---|---|
-| lane landmarks | 14 (≈6 physical markings, fragmented at the drop-out) |
-| saved map | 494 control points |
-| vs raw measurements | 42,406 points → **86× fewer** (5.8 kB vs 497 kB as float32) |
-| whole pipeline | 75 ms/frame |
-| ├ odometry | 0.21 ms |
-| ├ lane association | 1.33 ms |
-| ├ graph build | 44 ms |
-| └ iSAM2 / LM solve | 29 ms |
+| lane landmarks | 9 (≈7 physical markings + 2 spurious stubs) |
+| saved map | 541 control points |
+| vs raw measurements | 56,320 points → **104× fewer** (6.3 kB vs 660 kB as float32) |
+| whole pipeline | 111 ms/frame |
+| ├ odometry | 0.24 ms |
+| ├ lane association | 1.42 ms |
+| ├ graph build | 69 ms |
+| └ iSAM2 / LM solve | 41 ms |
 
-The 86× is the paper's memory argument, concretely: what gets stored is the spline, not the point cloud it was fitted through.
+The straight segment bundled in the image is cheaper — 199 frames, 307 m, 14 landmarks, 494 control points, 86× fewer points, 75 ms/frame. Curves cost roughly 50% more per frame because more control points fall inside the optimiser's sliding window.
 
-`stream_mapping.py` on the same segment ends at the same 14 landmarks / 494 control points — the streaming hook wraps `lane_nms` and only reads state, so it cannot perturb the result. Live logging costs ~10 ms/frame on top of the pipeline (12.4 fps vs 13.3 flat out).
+The 104× is the paper's memory argument, concretely: what gets stored is the spline, not the point cloud it was fitted through.
+
+`stream_mapping.py` on the same segment ends at the same 9 landmarks / 541 control points — the streaming hook wraps `lane_nms` and only reads state, so it cannot perturb the result. Live logging costs ~10 ms/frame on top of the pipeline (12.4 fps vs 13.3 flat out).
 
 **All 202 segments, 27.4 km of driving**, clean odometry: mean **260 control points** per segment map, and relative pose error of exactly `0.000` at every baseline (29,657 pairs at 10 m down to 17,731 at 50 m) — which is the `--odo_noise` caveat above, measured. With ground-truth poses in the bag there is nothing for the pose factors to fix.
 

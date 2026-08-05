@@ -54,6 +54,15 @@ def parse_args():
     p.add_argument("--odo_noise", action="store_true",
                    help="corrupt the odometry so the pose factors have work to do")
 
+    cam = p.add_argument_group("front camera panel (needs the gated OpenLane download)")
+    cam.add_argument("--image_dir", default=None, metavar="DIR",
+                    help="OpenLane image root; frames are looked up at "
+                         "DIR/validation/<segment>/<timestamp>.jpg")
+    cam.add_argument("--annotation_dir", default=None, metavar="DIR",
+                    help="OpenLane lane3d_1000/validation root. Only needed to overlay "
+                         "the lanes on the image -- the per-frame intrinsic lives in "
+                         "those jsons and nowhere else")
+
     sink = p.add_argument_group("where to send the stream")
     sink.add_argument("--serve", action="store_true",
                      help="host the web viewer in this container (the default)")
@@ -95,7 +104,7 @@ class StreamingLaneMapping(object):
 
 
 class RerunLogger(object):
-    def __init__(self, rate_hz, spline_samples):
+    def __init__(self, rate_hz, spline_samples, image_dir=None, annotation_dir=None):
         self.period = (1.0 / rate_hz) if rate_hz and rate_hz > 0 else 0.0
         self.samples = spline_samples
         self.colors = _palette()
@@ -105,6 +114,13 @@ class RerunLogger(object):
         self._prev_ctrl = {}
         self.est, self.odom, self.gt = [], [], []
 
+        self.image_dir = image_dir
+        self.annotation_dir = annotation_dir
+        self.segment = None
+        self._missing_warned = False
+        self.frames_with_image = 0
+        self.frames_with_overlay = 0
+
         from misc.curve.catmull_rom import CatmullRomSplineList
         self._Spline = CatmullRomSplineList
 
@@ -112,12 +128,6 @@ class RerunLogger(object):
     def log_static(self):
         # OpenLane's camera frame is x-forward, y-left, z-up.
         rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-        for path, name, colour, width in (
-                ("world/traj/est", "estimated", [40, 170, 70], 2.0),
-                ("world/traj/odom", "raw odometry", [210, 60, 60], 2.0),
-                ("world/traj/gt", "ground truth", [40, 40, 40], 2.0)):
-            rr.log(path + "_style", rr.SeriesLine(color=colour, name=name, width=width),
-                   static=True)
         for path, name, colour in (
                 ("plots/map/landmarks", "lane landmarks", [70, 110, 200]),
                 ("plots/map/control_points", "control points", [200, 120, 40]),
@@ -137,9 +147,12 @@ class RerunLogger(object):
         rr.set_time_sequence("frame", frame.frame_id)
         rr.set_time_seconds("sensor_time", frame.timestamp - self.t_sensor0)
 
+        if self.segment is None:
+            self.segment = mapper.segment
         self._log_map(mapper)
         self._log_detections(frame)
         self._log_poses(mapper, frame)
+        self._log_camera(frame)
         self._log_plots(mapper)
         self._pace()
 
@@ -206,12 +219,96 @@ class RerunLogger(object):
                rr.Arrows3D(vectors=np.eye(3) * 2.0,
                            colors=[[220, 50, 50], [50, 200, 50], [50, 120, 230]]))
 
-        for path, track, colour in (("world/traj/est", self.est, [40, 170, 70]),
-                                    ("world/traj/odom", self.odom, [210, 60, 60]),
-                                    ("world/traj/gt", self.gt, [40, 40, 40])):
+        # Ground truth is drawn widest and darkest so it reads as a corridor the
+        # other two sit inside. Without that it is invisible whenever the
+        # odometry is clean, because then all three coincide exactly.
+        for path, track, colour, radius, label in (
+                ("world/traj/gt", self.gt, [30, 30, 30], 0.34, "ground truth"),
+                ("world/traj/odom", self.odom, [220, 60, 60], 0.17, "raw odometry"),
+                ("world/traj/est", self.est, [30, 200, 90], 0.17, "optimised")):
             if len(track) > 1:
-                rr.log(path, rr.LineStrips3D([np.asarray(track)],
-                                             colors=[colour], radii=0.16))
+                rr.log(path, rr.LineStrips3D([np.asarray(track)], colors=[colour],
+                                             radii=radius, labels=[label]))
+
+    # ------------------------------------------------------------ camera panel
+    def _annotation(self, stamp18):
+        """Per-frame OpenLane json -- the only place the intrinsic exists."""
+        if not self.annotation_dir:
+            return None
+        path = os.path.join(self.annotation_dir, self.segment, stamp18 + ".json")
+        if not os.path.exists(path):
+            return None
+        import json
+        with open(path) as fp:
+            return json.load(fp)
+
+    def _log_camera(self, frame):
+        if not self.image_dir:
+            return
+        # Upstream's own format string: '{:<018}' left-aligns and zero-fills on
+        # the *right*, which is exactly how 16-digit microseconds become
+        # OpenLane's 18-digit frame names. Verified against the filenames in
+        # lane3d_1000/test/1000_curve.txt.
+        stamp18 = "{:<018}".format(int(frame.timestamp * 1e6))
+        jpg = os.path.join(self.image_dir, "validation", self.segment, stamp18 + ".jpg")
+        if not os.path.exists(jpg):
+            if not self._missing_warned:
+                print("no image at {} -- camera panel stays empty".format(jpg))
+                self._missing_warned = True
+            return
+
+        import cv2
+        bgr = cv2.imread(jpg)
+        if bgr is None:
+            return
+        rr.log("camera/image", rr.Image(bgr[:, :, ::-1]))
+        self.frames_with_image += 1
+
+        gt = self._annotation(stamp18)
+        if gt is None or "intrinsic" not in gt:
+            return
+
+        # The lane points in the bag are already in OpenLane's camera frame
+        # (x-front, y-left, z-up), so projecting them needs only the permutation
+        # to OpenCV axes and the intrinsic -- the extrinsic does not enter.
+        #
+        # The tempting chain, transform_points_from_cam_to_ground() followed by
+        # projection_g2im_extrinsic(), is wrong here and fails silently: it puts
+        # 80% of the points behind the camera and the rest at u ~ -6e6. Those
+        # two helpers are for the *json* lane coordinates the evaluator reads,
+        # which are one frame further out than what the bag carries. Checked by
+        # projecting /lanes_gt: this chain puts 100% of them inside the frame,
+        # in its lower half where road markings belong.
+        K = np.asarray(gt["intrinsic"], dtype=float)
+        openlane_to_cv = np.linalg.inv(np.array([[0, 0, 1, 0],
+                                                 [-1, 0, 0, 0],
+                                                 [0, -1, 0, 0],
+                                                 [0, 0, 0, 1]], dtype=float))
+
+        strips, cols = [], []
+        h, w = bgr.shape[:2]
+        for lf in frame.get_lane_features():
+            xyz = np.asarray(lf.get_xyzs(), dtype=float).reshape(-1, 3)
+            if len(xyz) < 2:
+                continue
+            hom = np.vstack([xyz.T, np.ones((1, len(xyz)))])
+            uvw = K @ (openlane_to_cv @ hom)[:3]
+            in_front = uvw[2] > 1e-3
+            if in_front.sum() < 2:
+                continue
+            uv = (uvw[:2, in_front] / uvw[2, in_front]).T
+            inside = ((uv[:, 0] > -w) & (uv[:, 0] < 2 * w) &
+                      (uv[:, 1] > -h) & (uv[:, 1] < 2 * h))
+            if inside.sum() < 2:
+                continue
+            strips.append(uv[inside])
+            cols.append(([235, 235, 235] if lf.id == -1
+                         else self.colors[lf.id % len(self.colors)]))
+        if strips:
+            rr.log("camera/image/lanes", rr.LineStrips2D(strips, colors=cols, radii=2.5))
+            self.frames_with_overlay += 1
+        else:
+            rr.log("camera/image/lanes", rr.Clear(recursive=False))
 
     def _log_plots(self, mapper):
         rr.log("plots/map/landmarks", rr.Scalar(len(mapper.lanes_in_map)))
@@ -239,15 +336,22 @@ class RerunLogger(object):
             self.next_deadline = now      # fell behind; don't accumulate debt
 
 
-def blueprint():
+def blueprint(with_camera=False):
+    plots = rrb.Vertical(
+        rrb.TimeSeriesView(origin="plots/map", name="Map growth"),
+        rrb.TimeSeriesView(origin="plots/timing", name="Per-frame cost (ms)"),
+        rrb.TimeSeriesView(origin="plots/pose", name="Position error vs GT (m)"),
+    )
+    if with_camera:
+        right = rrb.Vertical(
+            rrb.Spatial2DView(origin="camera/image", name="Front camera"),
+            plots, row_shares=[2, 3])
+    else:
+        right = plots
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial3DView(origin="world", name="Lane map (building)"),
-            rrb.Vertical(
-                rrb.TimeSeriesView(origin="plots/map", name="Map growth"),
-                rrb.TimeSeriesView(origin="plots/timing", name="Per-frame cost (ms)"),
-                rrb.TimeSeriesView(origin="plots/pose", name="Position error vs GT (m)"),
-            ),
+            right,
             column_shares=[3, 2],
         ),
         rrb.TimePanel(state="expanded"),
@@ -267,22 +371,24 @@ def main():
     for sub in ("logs", "visualization", "results", "results_det", "eval_results"):
         mkdir_if_missing(os.path.join(cfg.output_dir, sub))
 
+    bp = blueprint(with_camera=bool(args.image_dir))
     rr.init(APP_ID, default_enabled=True)
     if args.rrd:
         mkdir_if_missing(os.path.dirname(os.path.abspath(args.rrd)))
-        rr.send_blueprint(blueprint())
+        rr.send_blueprint(bp)
         rr.save(args.rrd)
         print("recording to {}".format(args.rrd))
     elif args.connect:
-        rr.connect(args.connect, default_blueprint=blueprint())
+        rr.connect(args.connect, default_blueprint=bp)
         print("streaming to viewer at {}".format(args.connect))
     else:
         rr.serve(open_browser=False, web_port=args.web_port, ws_port=args.ws_port,
-                 default_blueprint=blueprint())
+                 default_blueprint=bp)
         print("\n  open  http://localhost:{}/?url=ws://localhost:{}\n"
               .format(args.web_port, args.ws_port))
 
-    logger = RerunLogger(args.rate, args.spline_samples)
+    logger = RerunLogger(args.rate, args.spline_samples,
+                         image_dir=args.image_dir, annotation_dir=args.annotation_dir)
     logger.log_static()
 
     print("loading {}".format(os.path.basename(args.bag)))
@@ -301,6 +407,9 @@ def main():
     # "upstream map_size metric" line.
     print("final map after the merge pass: {} landmarks, {} control points".format(
         len(mapper.lanes_in_map), mapper.map_size()))
+    if args.image_dir:
+        print("camera frames found: {}/{}, lanes overlaid on {}".format(
+            logger.frames_with_image, n, logger.frames_with_overlay))
 
     if not args.rrd and not args.connect:
         print("\nviewer is still served; Ctrl-C to stop.")

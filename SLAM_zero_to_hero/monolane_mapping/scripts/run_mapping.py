@@ -35,6 +35,9 @@ def parse_args():
                    help="render the finished map to this PNG (top-down, whole map)")
     p.add_argument("--detail_screenshot", default=None,
                    help="also render a 45 m close-up showing the control points")
+    p.add_argument("--detail_at", type=float, default=0.40,
+                   help="where along the drive the --detail_screenshot crop starts, "
+                        "as a fraction of path length")
     p.add_argument("--from_map", default=None,
                    help="skip mapping and re-render an existing visualization/<seg>/map.npy")
     p.add_argument("--odo_noise", action="store_true",
@@ -164,7 +167,7 @@ def _fit_camera(vis, points, right, up, width, height, fov_deg=55.0, margin=1.06
     vis.get_view_control().convert_from_pinhole_camera_parameters(params, allow_arbitrary=True)
 
 
-def render_map(lanes_in_map, png_path, view="bev", title=""):
+def render_map(lanes_in_map, png_path, view="bev", title="", detail_at=0.40):
     """Render the finished map offscreen (works headless under Xvfb)."""
     import open3d as o3d
 
@@ -178,7 +181,7 @@ def render_map(lanes_in_map, png_path, view="bev", title=""):
         # A 45 m window from the middle of the drive, close enough that the
         # 3 m control-point chord and the raw measurements are separable.
         mid = fitted.mean(axis=0)
-        start = np.quantile((fitted - mid) @ axis, 0.40)
+        start = np.quantile((fitted - mid) @ axis, detail_at)
 
         def crop(pts):
             t = (pts - mid) @ axis
@@ -188,6 +191,10 @@ def render_map(lanes_in_map, png_path, view="bev", title=""):
         if fitted is None:
             print("nothing in the map to render")
             return False
+        # Re-fit the axis to just the crop. The global PCA axis is a poor local
+        # frame on a curving road -- using it tilts the close-up and throws the
+        # lanes diagonally across the canvas.
+        axis = _road_axis(fitted)
         width, height = 1600, 620
     else:
         # The map is ~17x longer than it is wide, so the canvas is a strip.
@@ -293,7 +300,7 @@ def main():
         if args.screenshot:
             render_map(lanes, args.screenshot, "bev", os.path.basename(args.from_map))
         if args.detail_screenshot:
-            render_map(lanes, args.detail_screenshot, "detail", os.path.basename(args.from_map))
+            render_map(lanes, args.detail_screenshot, "detail", os.path.basename(args.from_map), args.detail_at)
         return
 
     # save_result=True needs the original OpenLane json annotations for the
@@ -342,7 +349,7 @@ def main():
     if args.screenshot:
         render_map(lanes_in_map, args.screenshot, "bev", mapper.segment)
     if args.detail_screenshot:
-        render_map(lanes_in_map, args.detail_screenshot, "detail", mapper.segment)
+        render_map(lanes_in_map, args.detail_screenshot, "detail", mapper.segment, args.detail_at)
     if args.gui:
         mapper.visualize_map()
 
