@@ -1,0 +1,35 @@
+{
+  /*** CPU counterpart, used only when config.json points config_odometry here.
+       It exists so the GPU payoff can be measured against the other backend glim
+       v1.0.0 ships that also needs the IMU (requires_imu()==true) -- i.e. the
+       choice a user actually faces. NOTE it is not the identical algorithm: the
+       CPU module registers each scan against one LRU-managed target voxelmap
+       while the GPU module registers against a keyframe set. Every parameter
+       that CAN be matched to config_odometry_gpu.json is matched. ***/
+  "odometry_estimation": {
+    "so_name": "libodometry_estimation_cpu.so",
+    "initialization_mode": "LOOSE",
+    "initialization_window_size": 1.0,
+    "init_pose_damping_scale": 1e10,
+    "smoother_lag": 5.0,
+    "use_isam2_dogleg": false,
+    "isam2_relinearize_skip": 1,
+    "isam2_relinearize_thresh": 0.1,
+    "fix_imu_bias": false,
+    // VGICP rather than the shipped GICP/iVox, so the cost function evaluated is
+    // the same VGICP cost the GPU module evaluates.
+    "registration_type": "VGICP",
+    "max_iterations": 8,
+    "lru_thresh": 100,
+    "target_downsampling_rate": 0.1,
+    // inert while registration_type is VGICP
+    "ivox_resolution": 1.0,
+    "ivox_min_dist": 0.1,
+    // matched to config_odometry_gpu.json's voxel params
+    "vgicp_resolution": 0.5,
+    "vgicp_voxelmap_levels": 2,
+    "vgicp_voxelmap_scaling_factor": 2.0,
+    "save_imu_rate_trajectory": true,
+    "num_threads": 2
+  }
+}

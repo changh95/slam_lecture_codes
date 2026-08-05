@@ -1,0 +1,44 @@
+{
+  "sub_mapping": {
+    "so_name": "libsub_mapping.so",
+    // DEVIATION: config_kitti_gpu forces false, but only because KITTI has no IMU
+    // stream at all so the preintegration factors were built over an empty
+    // buffer. Korea_drive has 163,765 IMU samples. Back to upstream's default.
+    "enable_imu": true,
+    // false, upstream's default: odometry already runs a 5 s fixed-lag smoother
+    // over the same frames, and this is the step that throws
+    // IndeterminantLinearSystemException.
+    "enable_optimization": false,
+    // DISPLACEMENT KEPT from config_kitti_gpu: with "OVERLAP" on Ubuntu 24.04
+    // only a handful of giant submaps appear, leaving global ISAM2
+    // underconstrained.
+    "keyframe_update_strategy": "DISPLACEMENT",
+    // DEVIATION: 20 x 4.0 m => a new submap every ~80 m, so the 11.0 km drive
+    // yields ~126 submaps (measured). config_kitti_gpu's 15 x 1.0 m closes a
+    // submap every ~15 m => ~730 submaps, and every one keeps a GPU voxelmap
+    // alive inside global mapping (VGICP_GPU) for the whole 27-minute run. 80 m
+    // is still short enough for a submap to be locally rigid.
+    "max_num_keyframes": 20,
+    "keyframe_update_min_points": 500,
+    // DEVIATION: 3.14 disables the rotation trigger outright. A car turning
+    // through an intersection travels little but rotates a lot; 0.5 rad (~29 deg)
+    // keeps a 90 deg turn from landing inside one keyframe.
+    "keyframe_update_interval_rot": 0.5,
+    "keyframe_update_interval_trans": 4.0,
+    "max_keyframe_overlap": 0.6,
+    "create_between_factors": false,
+    "between_registration_type": "GICP",
+    "registration_error_factor_type": "VGICP_GPU",
+    "keyframe_randomsampling_rate": 1.0,
+    // DEVIATION: 0.5/2 instead of 0.25, matching the odometry voxel resolution
+    // for the same outdoor reason.
+    "keyframe_voxel_resolution": 0.5,
+    "keyframe_voxelmap_levels": 2,
+    "keyframe_voxelmap_scaling_factor": 2.0,
+    // 0.3 KEPT from config_kitti_gpu (upstream ships 0.1): at 0.1 m a submap
+    // spanning 80 m of road at 100 m range would retain millions of points, and
+    // every submap is held for the whole run.
+    "submap_downsample_resolution": 0.3,
+    "submap_voxel_resolution": 0.5
+  }
+}

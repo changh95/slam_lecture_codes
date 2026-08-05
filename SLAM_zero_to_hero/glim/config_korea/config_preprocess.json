@@ -1,0 +1,30 @@
+{
+  "preprocess": {
+    // 1.5 KEPT from config_kitti_gpu, and re-measured on this bag (14 scans
+    // across the 27 min, 1.50 M points): only 0.023 % of points fall inside
+    // 1.5 m and essentially nothing lies between 1.5 and 3.0 m -- the ~25
+    // points/scan under 1.5 m are ego-vehicle roof returns, so clipping them
+    // costs no scene structure. The dataset's own config (0.5) keeps them.
+    "distance_near_thresh": 1.5,
+    // 100 KEPT: range p99 is 124.6 m and 2.16 % of points are beyond 100 m, so
+    // this keeps 97.8 % of each scan while bounding voxelmap growth.
+    "distance_far_thresh": 100.0,
+    "use_random_grid_downsampling": true,
+    "downsample_resolution": 0.5,
+    // 20000 KEPT (dataset config uses 10000): 109k points/scan here vs KITTI's
+    // 120k, so keeping KITTI's target makes throughput/accuracy comparable to
+    // the published KITTI numbers.
+    "random_downsample_target": 20000,
+    "random_downsample_rate": 0.1,
+    // KEPT false even though is_dense is FALSE on every message: 0 non-finite
+    // and 0 exact-(0,0,0) points in the 1.50 M sampled. And it is not the right
+    // tool anyway -- CloudPreprocessor's distance filter carries an allFinite()
+    // guard, so any NaN/Inf that does appear is dropped before covariance
+    // estimation regardless of this flag.
+    "enable_outlier_removal": false,
+    "outlier_removal_k": 10,
+    "outlier_std_mul_factor": 1.0,
+    "k_correspondences": 10,
+    "num_threads": 4
+  }
+}

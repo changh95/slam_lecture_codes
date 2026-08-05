@@ -1,0 +1,53 @@
+{
+  "global_mapping": {
+    "so_name": "libglobal_mapping.so",
+    // false, same as config_kitti_gpu -- and NOT just inherited caution. Upstream
+    // ships true and true is what you would want, but it does not survive a long
+    // sequence in v1.0.0. Measured on the full 27 min bag with enable_imu true:
+    // global ISAM2 threw IndeterminantLinearSystemException 67 times, always on a
+    // per-submap VELOCITY variable (v241, v243, v245, ...), and the optimized
+    // trajectory came out unusable -- ATE 3D rmse 148.2 m with a 615 m z extent
+    // vs GNSS's 38 m, while the raw odometry of the same run was 15.4 m. The
+    // 400 s slice showed 0 exceptions, so it only appears once enough submaps
+    // accumulate. With false the same full run gives ATE 3D 16.5 m / 2D 5.3 m.
+    // Honest caveat: 79 exceptions still occur with false, now on the newest POSE
+    // variable (x49, x50, ... one per inserted submap, cascading after the
+    // first), but those are non-destructive -- glim catches them, skips that
+    // update, and the trajectory is good. Only the velocity variables were fatal.
+    "enable_imu": false,
+    "enable_optimization": true,
+    "init_pose_damping_scale": 1e10,
+    // KEPT from config_kitti_gpu and load-bearing: with "GICP",
+    // create_between_factors() runs an LM/GICP alignment at a hard-coded 0.5 m
+    // correspondence distance and does NOT catch
+    // IndeterminantLinearSystemException, so one degenerate pair kills the
+    // process. "NONE" takes the early-return branch and adds a stiff
+    // (precision 1e6) BetweenFactor from the odometry delta.
+    "create_between_factors": true,
+    "between_registration_type": "NONE",
+    "registration_error_factor_type": "VGICP_GPU",
+    // 0.2 KEPT (upstream ships 1.0): 126 submaps of an 11 km drive are all
+    // resident for the whole run; 1.0 would put every point of every submap into
+    // a GPU factor.
+    "randomsampling_rate": 0.2,
+    "submap_voxel_resolution": 0.5,
+    // DEVIATION: config_kitti_gpu uses 1; back to upstream's 2, and this one is
+    // load-bearing for loop closure. find_overlapping_submaps() evaluates overlap
+    // against voxelmaps.back(), i.e. the COARSEST level, so with a single 0.5 m
+    // level consecutive submaps of an 80 m road corridor score below threshold.
+    // Measured on the 400 s slice: levels 1 + overlap 0.2 -> 2 matching-cost
+    // factors for 44 submaps; levels 2 + overlap 0.1 -> 39. Without them global
+    // mapping degenerates into a pose chain of odometry deltas.
+    "submap_voxelmap_levels": 2,
+    "submap_voxelmap_scaling_factor": 2.0,
+    // 100 m KEPT. At ~80 m submap spacing this links each submap to its
+    // neighbours, and it is what can close the real loop: the drive ends 2.0 m
+    // from where it started (GNSS), so the last submaps overlap the first.
+    "max_implicit_loop_distance": 100.0,
+    // DEVIATION: 0.2 -> 0.1 (also the code's own default). See levels note above.
+    "min_implicit_loop_overlap": 0.1,
+    "use_isam2_dogleg": false,
+    "isam2_relinearize_skip": 1,
+    "isam2_relinearize_thresh": 0.1
+  }
+}

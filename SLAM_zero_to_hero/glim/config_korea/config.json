@@ -1,0 +1,16 @@
+{
+  "global": {
+    "config_path": "",
+    "config_ros": "config_ros.json",
+    "config_viewer": "config_viewer.json",
+    "config_sensors": "config_sensors.json",
+    "config_preprocess": "config_preprocess.json",
+    // DEVIATION vs config_kitti_gpu (which uses config_odometry_ct.json):
+    // Korea_drive has a real 100 Hz IMU, so OdometryEstimationGPU
+    // (requires_imu()==true) is finally usable. Swap this one line to
+    // "config_odometry_cpu.json" for the CPU comparison.
+    "config_odometry": "config_odometry_gpu.json",
+    "config_sub_mapping": "config_sub_mapping_gpu.json",
+    "config_global_mapping": "config_global_mapping_gpu.json"
+  }
+}

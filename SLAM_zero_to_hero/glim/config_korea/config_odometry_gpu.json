@@ -1,0 +1,45 @@
+{
+  /*** Keyframe-based VGICP odometry, GPU. voxel_resolution guidance from
+       upstream: 0.25~0.5 indoor, 0.5~2.0 outdoor. ***/
+  "odometry_estimation": {
+    "so_name": "libodometry_estimation_gpu.so",
+    // LOOSE is safe: GNSS shows the vehicle stationary for the first ~2 s, so
+    // the 1 s loose-coupling window sees genuinely static gravity/bias data.
+    "initialization_mode": "LOOSE",
+    "initialization_window_size": 1.0,
+    "init_pose_damping_scale": 1e10,
+    "smoother_lag": 5.0,
+    "use_isam2_dogleg": false,
+    "isam2_relinearize_skip": 1,
+    "isam2_relinearize_thresh": 0.1,
+    // false KEPT (the dataset's own config sets true): over a 27-minute drive a
+    // frozen accel bias integrates into metres of drift, and the static start
+    // gives the estimator a clean bootstrap.
+    "fix_imu_bias": false,
+    // DEVIATION: config_kitti_gpu uses 0.25. This is a 100 m-range OUTDOOR drive
+    // with 0.71 m median inter-scan displacement peaking at 3.3 m (119 km/h), so
+    // 0.25 m voxels waste GPU memory on sparse far returns and make the
+    // frame-to-keyframe correspondence brittle exactly when displacement is
+    // largest. 0.5 with 2 levels => 0.5 m and 1.0 m.
+    "voxel_resolution": 0.5,
+    "voxelmap_levels": 2,
+    "voxelmap_scaling_factor": 2.0,
+    // 2 KEPT: upstream recommends 3~5 only for aggressive motion; this is smooth
+    // road driving (|gyro| median 0.014 rad/s).
+    "full_connection_window_size": 2,
+    // KEPT: at 0.71 m median displacement a 2.0 m threshold inserts a keyframe
+    // every ~3 scans, so 15 keyframes span ~30 m of local map -- the right order
+    // for a 100 m-range outdoor scan.
+    "keyframe_update_strategy": "OVERLAP",
+    "max_num_keyframes": 15,
+    "keyframe_min_overlap": 0.01,
+    "keyframe_max_overlap": 0.7,
+    "keyframe_delta_trans": 2.0,
+    "keyframe_delta_rot": 0.5,
+    "keyframe_entropy_thresh": 0.99,
+    // KEPT true: this writes each submap's imu_rate.txt (100 Hz IMU-rate pose
+    // trace), the cheapest proof the IMU reached the estimator.
+    "save_imu_rate_trajectory": true,
+    "num_threads": 2
+  }
+}

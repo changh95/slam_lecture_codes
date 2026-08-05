@@ -114,4 +114,87 @@ COPY config_kitti /usr/local/share/glim_kitti/config
 COPY config_kitti_posegraph /usr/local/share/glim_kitti/config_posegraph
 COPY config_kitti_gpu /usr/local/share/glim_kitti/config_gpu
 
+# ROS 2 Jazzy + glim_ros2 v1.0.0. Appended last so the CUDA/GTSAM/gtsam_points/
+# glim layers above stay cached (~35 min to rebuild).
+# v1.0.0 is the pin because koide3 tags glim and glim_ros2 in lockstep and
+# glim_ros2 v1.0.0's package.xml declares <depend>glim</depend> UNVERSIONED, so
+# it links the glim v1.0.0 already installed here. glim_ros2 v1.2.x pairs with
+# glim v1.2.x, whose gtsam_points targets GTSAM 4.2a9/4.3a1 instead of the 4.2.0
+# pinned above - that would cascade into a full CUDA rebuild.
+# Ubuntu 24.04 => the ROS 2 distro is Jazzy.
+ARG ROS_DISTRO=jazzy
+ENV ROS_DISTRO=jazzy
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+      > /etc/apt/sources.list.d/ros2.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ros-${ROS_DISTRO}-ros-base \
+      ros-${ROS_DISTRO}-cv-bridge \
+      ros-${ROS_DISTRO}-image-transport \
+      ros-${ROS_DISTRO}-ament-cmake-auto && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build glim_ros2 against the glim installed above. Plain cmake, not colcon:
+# ament_cmake_auto's find_package(glim) resolves the plain-CMake
+# /usr/local/lib/cmake/glim/glim-config.cmake fine, so a colcon workspace (and
+# python3-colcon-common-extensions) buys nothing here. Each .cpp #defines
+# GLIM_ROS2 itself, so no extra -D is needed. ament_auto_add_executable installs
+# executables to lib/glim_ros/, libraries to lib/ - hence the paths below.
+# The asserts make a silently missing artifact fail the build; the last one
+# actually EXECUTES glim_rosbag (it prints usage and exits 0 before touching
+# CUDA, so it works in a GPU-less build) which proves every dynamic dependency
+# (glim, gtsam, gtsam_points, iridescence, rclcpp, rosbag2, cv_bridge) resolves.
+RUN git clone https://github.com/koide3/glim_ros2.git -b v1.0.0 /opt/glim_ros2 && \
+    . /opt/ros/${ROS_DISTRO}/setup.sh && \
+    cmake -S /opt/glim_ros2 -B /opt/glim_ros2/build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_WITH_CUDA=ON \
+          -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build /opt/glim_ros2/build -j$(nproc) && \
+    cmake --install /opt/glim_ros2/build && \
+    ldconfig && \
+    test -x /usr/local/lib/glim_ros/glim_rosbag && \
+    test -f /usr/local/lib/librviz_viewer.so && \
+    test -f /usr/local/lib/libglim_ros.so && \
+    ! ldd /usr/local/lib/glim_ros/glim_rosbag | grep "not found" && \
+    /usr/local/lib/glim_ros/glim_rosbag 2>&1 | grep -q "usage: glim_rosbag" && \
+    rm -rf /opt/glim_ros2/build
+
+# Register glim in the ament index. Without this, running glim_rosbag WITHOUT an
+# absolute -p config_path:= aborts with
+#   terminate called ... ament_index_cpp::PackageNotFoundError: package 'glim'
+#   not found, searching: [/usr/local, /opt/ros/jazzy]
+# because GlimROS treats a relative config_path as relative to glim's share dir.
+# An upstream colcon build gets this for free (glim's CMakeLists calls
+# ament_package() only when ROS_VERSION is set, which it was not here). This also
+# closes the "the non-ROS build never installs its config JSONs" gap.
+RUN mkdir -p /usr/local/share/ament_index/resource_index/packages /usr/local/share/glim && \
+    touch /usr/local/share/ament_index/resource_index/packages/glim && \
+    cp -r /glim/config /usr/local/share/glim/config && \
+    test -f /usr/local/share/glim/config/config.json
+
+# Thin wrappers so no one has to remember to source setup.bash. They are not
+# optional: rosbag2 finds its sqlite3 storage plugin through pluginlib, i.e.
+# through AMENT_PREFIX_PATH, and rmw_implementation dlopens librmw_fastrtps_cpp
+# from /opt/ros/jazzy/lib.
+RUN printf '#!/bin/bash\n. /opt/ros/%s/setup.bash\nexport AMENT_PREFIX_PATH=/usr/local:$AMENT_PREFIX_PATH\nexec /usr/local/lib/glim_ros/%s "$@"\n' \
+      "${ROS_DISTRO}" glim_rosbag > /usr/local/bin/glim_rosbag && \
+    printf '#!/bin/bash\n. /opt/ros/%s/setup.bash\nexport AMENT_PREFIX_PATH=/usr/local:$AMENT_PREFIX_PATH\nexec /usr/local/lib/glim_ros/%s "$@"\n' \
+      "${ROS_DISTRO}" glim_rosnode > /usr/local/bin/glim_rosnode && \
+    printf '#!/bin/bash\n. /opt/ros/%s/setup.bash\nexport AMENT_PREFIX_PATH=/usr/local:$AMENT_PREFIX_PATH\nexec /usr/local/lib/glim_ros/%s "$@"\n' \
+      "${ROS_DISTRO}" offline_viewer > /usr/local/bin/glim_offline_viewer && \
+    chmod +x /usr/local/bin/glim_rosbag /usr/local/bin/glim_rosnode /usr/local/bin/glim_offline_viewer && \
+    glim_rosbag 2>&1 | grep -q "usage: glim_rosbag"
+
+# Korea_drive config set (headless), plus a viewer variant derived from it so
+# there is a single source of truth for every other key.
+COPY config_korea /usr/local/share/glim_korea/config
+RUN cp -r /usr/local/share/glim_korea/config /usr/local/share/glim_korea/config_viewer && \
+    sed -i 's|"extension_modules": \[\]|"extension_modules": ["libstandard_viewer.so", "librviz_viewer.so"]|' \
+      /usr/local/share/glim_korea/config_viewer/config_ros.json && \
+    grep -q 'librviz_viewer.so' /usr/local/share/glim_korea/config_viewer/config_ros.json
+
 WORKDIR /data

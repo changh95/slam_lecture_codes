@@ -216,3 +216,78 @@ An azimuth-derived alternative (KISS-ICP convention, `GLIM_KITTI_TIME_MODE=azimu
 ## Other datasets
 
 The driver is KITTI-specific, but the pipeline is not: any directory of velodyne-style `.bin` scans works if you supply a `times.txt` (it falls back to a synthetic 10 Hz clock and warns). For LiDAR + IMU sequences, GLIM's IMU-based odometry (`config_odometry_cpu.json`, `enable_imu: true`) is the intended path and is where its loop closure actually earns its keep — but feeding IMU needs either an extension of this driver or `glim_ros1`/`glim_ros2` in a ROS-based image.
+
+---
+
+# Korea_drive (ROS 2 bag) and the glim_ros2 switch
+
+## Why glim_ros2 rather than another custom driver
+
+`glim_kitti` reads KITTI `.bin` files; Korea_drive is a ROS 2 bag (`.db3`, sqlite3, 49 GB), so it needed a
+different frontend. Upstream's `glim_ros2` was chosen over hand-rolling a bag reader, and it turned out to be the
+cheap option: koide3 tags `glim` and `glim_ros2` in lockstep, and **glim_ros2 v1.0.0's `package.xml` declares
+`<depend>glim</depend>` unversioned**, so it links the glim v1.0.0 already installed here. Nothing in the CUDA
+stack moved — verified by md5-matching every core library across the before/after images, and by the build
+reporting **13 cached layers** when the ROS block is appended last.
+
+Going to the latest `glim_ros2` (v1.2.x) would have pulled glim v1.2.x, whose gtsam_points targets GTSAM
+4.2a9/4.3a1 instead of the pinned 4.2.0 — cascading into a full ~35 minute CUDA rebuild.
+
+Cost: **+265.7 MB (+1.98 %)**. `ros-jazzy-ros-base` only, no `rviz2`; `librviz_viewer.so` needs only
+rclcpp/sensor_msgs/nav_msgs/tf2_ros to build.
+
+## Verified results
+
+Bag: 1638.27 s, 520,271 msgs. `/surf/hesai_lidar` 16,379 × PointCloud2 (109,078 pts, `point_step` 28,
+`is_dense` false, per-point `timestamp` as absolute float64); `/surf/oxts/imu` 163,765 @ 100 Hz;
+`/surf/oxts/gnss/fix` 163,765 NavSatFix.
+
+Full bag, GPU odometry, headless. Every figure below was independently recomputed by a second pass from the raw
+sqlite3 blobs (its own CDR reader, own WGS84→ECEF→ENU about the first fix, own Kabsch with scale fixed at 1) and
+matched to three decimals:
+
+| | value |
+|---|---|
+| poses | 16,367 of 16,379 (first 12 scans consumed by IMU init) |
+| path length | 11,062.5 m 3D / **10,959.4 m** 2D (GNSS 11,011.7 / 10,989.6) |
+| path ratio | 1.0046 (3D), **0.9973** (2D) |
+| ATE vs GNSS | **16.55 m** rmse 3D, **5.28 m** rmse 2D, max 53.5 m |
+| inter-frame step | median 0.707 m, max 2.887 m (median speed 7.11 m/s) |
+| submaps / factors | 126 / 113 |
+| NaNs | 0 |
+
+Bounded 60 s run with the **baked** config on the committed image: ATE 3D rmse **0.333 m**, path 604.1 vs
+604.8 m (ratio 0.9988), 589 poses, drift 0.049 % of path.
+
+GPU vs CPU odometry (identical config apart from `config.json`'s `config_odometry` line):
+
+| | throughput | ATE 3D rmse (400 s slice) |
+|---|---|---|
+| GPU | 77.7 scans/s (7.8× real time) | **2.18 m** |
+| CPU | 49.6 scans/s (5.0× real time) | 8.65 m |
+
+`OdometryEstimationGPU` genuinely ran — `load libodometry_estimation_gpu.so`, plus the IMU state initialiser
+(`estimate initial IMU state`) which only `OdometryEstimationIMU` performs. No fallback to CT.
+
+KITTI seq 04 re-run on the new image: ATE 2.60 m, path 376.57 m — the published baseline reproduced to 0.01 m.
+
+## Honest limitations
+
+- **The loop does not close.** GNSS start-to-end is 2.03 m; the SLAM trajectory's is **51.15 m**, ending ~49.8 m
+  below where it began. Start-to-end distance is invariant under rigid alignment, so this is a real vertical
+  failure and must not be dressed up as "final pose error 7.95 m = 0.07 % of path".
+- **`T_lidar_imu` is only partly calibrated.** The 1.544° roll/pitch was recovered from gravity plus the ground
+  plane, but yaw is unobservable that way and the lever arm was never measured. This is the main residual: ATE 3D
+  (16.5 m) is 3× ATE 2D (5.3 m).
+- **glim v1.0.0's global mapping is fragile at this length.** `global_mapping/enable_imu: true` is unusable — 67
+  `IndeterminantLinearSystemException`s on per-submap velocity variables, output ATE 148 m. Even with it false,
+  ISAM2 still throws 76 times (on pose variables x49..x124).
+- **Only `glim_ros2` is version-pinned.** `ros-jazzy-ros-base`, `-cv-bridge`, `-image-transport`,
+  `-ament-cmake-auto` carry no apt version constraint and `ros.key` comes from rosdistro `master`, so a rebuild
+  months from now may pick up different Jazzy patch releases.
+- `rviz2` is not installed, so `librviz_viewer.so` was verified via `ros2 topic list` / `echo` / `hz` rather than
+  by looking at an rviz window. `standard_viewer` was confirmed visually (window `screen`, 1850×1016).
+- The camera block in `config_korea/config_sensors.json` is inherited from the KITTI config and is inert here
+  (`image_topic` `/image` carries nothing in this bag). Harmless, but it is not calibration for this rig.
+- Throughput figures were measured while other containers shared the box; A/B pairs were run back-to-back to
+  cancel that, but treat absolute scans/s as indicative.

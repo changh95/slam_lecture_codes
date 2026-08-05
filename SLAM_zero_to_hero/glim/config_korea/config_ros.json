@@ -1,0 +1,23 @@
+{
+  "glim_ros": {
+    "enable_local_mapping": true,
+    "enable_global_mapping": true,
+    "imu_time_offset": 0.0,
+    // 1.0: /surf/oxts/imu is plain REP-103 m/s^2 (measured |acc| median 9.810,
+    // acc_z +9.797 at rest). 9.80665 would only be right for a Livox IMU.
+    "acc_scale": 1.0,
+    // NEW KEY (glim_rosbag reads it; default 100.0 = throttle to 100x realtime).
+    // 0.0 disables throttling so a run measures the pipeline, not a sleep loop.
+    "playback_speed": 0.0,
+    // Headless. The dataset's own config asks for libmemory_monitor.so and
+    // libimu_validator.so, but those live in glim_ext which this image does not
+    // build -- they would only log "failed to load" and trigger a glim_ext ament
+    // lookup. config_viewer/ (derived in the Dockerfile) enables the two that do
+    // exist: libstandard_viewer.so (glim) + librviz_viewer.so (glim_ros2).
+    "extension_modules": [],
+    "imu_topic": "/surf/oxts/imu",
+    "points_topic": "/surf/hesai_lidar",
+    // No image topic in this bag, so this name is inert.
+    "image_topic": "/image"
+  }
+}
