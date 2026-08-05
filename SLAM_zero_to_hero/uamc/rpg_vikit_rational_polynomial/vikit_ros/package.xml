@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>vikit_ros</name>
+  <version>0.0.0</version>
+
+  <description>The vikit_ros package</description>
+
+  <!-- One maintainer tag required, multiple allowed, one person per tag -->
+  <maintainer email="forster@ifi.uzh.ch">cforster</maintainer>
+
+  <!-- One license tag required, multiple allowed, one license per tag -->
+  <license>GPLv3</license>
+
+  <!-- Url tags are optional, but multiple are allowed, one per tag -->
+  <!-- <url type="website">http://wiki.ros.org/vikit_ros</url> -->
+  <!-- Author tags are optional, multiple are allowed, one per tag -->
+  <!-- <author email="jane.doe@example.com">Jane Doe</author> -->
+  <!-- The *_depend tags are used to specify dependencies -->
+  <!-- Dependencies can be ament packages or system dependencies -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>cmake_modules</depend> <!-- for FindEigen.cmake module -->
+  <depend>vikit_common</depend>
+  <depend>tf2</depend>
+  <depend>visualization_msgs</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+  
+  <!-- The export tag contains other, unspecified, tags -->
+  <export>
+    <!-- You can specify that this package is a metapackage here: -->
+    <!-- <metapackage/> -->
+    <!-- Other tools can request additional information be placed here -->
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,15 @@
+.git
+.gitignore
+build/
+install/
+log/
+
+*.bag
+*.db3
+*.mcap
+*.pcd
+
+Log/Colmap/
+Log/image/
+Log/pcd/
+Log/result/

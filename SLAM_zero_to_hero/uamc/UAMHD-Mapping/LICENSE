@@ -1,0 +1,42 @@
+UAMHD — Universal Adapter for Mapping Handheld Device
+Copyright (c) 2026 U-AMC (Jason Kim)
+
+This work — including the 3D-printable CAD/STL files, documentation, images, and
+setup scripts in this repository — is licensed under the
+
+    Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License
+    (CC BY-NC-SA 4.0)
+
+You are free to:
+  • Share — copy and redistribute the material in any medium or format.
+  • Adapt — remix, transform, and build upon the material.
+
+Under the following terms:
+  • Attribution (BY)    — You must give appropriate credit, provide a link to
+                          this license, and indicate if changes were made.
+  • NonCommercial (NC)  — You may not use the material for commercial purposes.
+  • ShareAlike (SA)     — If you remix, transform, or build upon the material,
+                          you must distribute your contributions under the same
+                          license as the original.
+
+No additional restrictions — You may not apply legal terms or technological
+measures that legally restrict others from doing anything the license permits.
+
+-------------------------------------------------------------------------------
+
+Full legal code:   https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+Human-readable summary: https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+The full text of the CC BY-NC-SA 4.0 license at the URL above is incorporated
+into this LICENSE by reference and governs your use of this work.
+
+For uses beyond the scope of this license — including any commercial use —
+contact marimo117@urobotics.ai.
+
+-------------------------------------------------------------------------------
+DISCLAIMER
+This work is provided "as-is", without warranty of any kind, express or implied.
+The author is not liable for any damages, injury, or loss arising from the
+fabrication, assembly, or use of this hardware design or its accompanying
+software. You are responsible for verifying fitness, safety, and regulatory
+compliance for your own use.

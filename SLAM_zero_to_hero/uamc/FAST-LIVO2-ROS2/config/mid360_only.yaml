@@ -1,0 +1,104 @@
+/**:
+  ros__parameters:
+    common:
+      img_topic: "/oak/rgb/image_raw"
+      lid_topic: "/livox/lidar_192_168_1_150"
+      imu_topic: "/livox/imu_192_168_1_150"
+      img_en: 0
+      lidar_en: 1
+      ros_driver_bug_fix: false
+      livox_msg_type: "livox_ros_driver2"
+
+    extrin_calib:
+      extrinsic_T: [0.011, 0.02329, -0.04412]
+      extrinsic_R: [1., 0., 0.,
+                    0., 1., 0.,
+                    0., 0., 1.]
+      Rcl: [-0.99592574,  0.01558709,  0.08881982,
+            -0.07711178, -0.65783989, -0.74919988,
+            0.04675138, -0.75299650,  0.65636163]
+      Pcl: [-0.19803049, 0.12062488, 0.22892291]
+
+    time_offset:
+      imu_time_offset: 0.0
+      img_time_offset: 1200.252661
+      exposure_time_init: 0.0
+
+    rolling_shutter:
+      enable: true          # set true for rolling-shutter cameras (e.g. RealSense D435/D455 RGB)
+      tr_readout: 0.01101      # total top-to-bottom frame readout time, in seconds
+      anchor_factor: 0.5     # where in the readout the image header.stamp falls: 0.0=row 0, 0.5=middle row, 1.0=last row
+      debug_print: false     # print per-frame IMU staleness, |omega|, |a_w| at handleVIO time
+      td_estimate_enable: true   # online 1D Gauss-Newton refinement of img_time_offset
+      td_step_alpha: 0.1          # learning rate per frame (0..1)
+      td_step_cap: 0.0005         # max step per frame, seconds (0.5 ms)
+      td_lambda: 100.0            # Tikhonov damping
+      td_min_jac_sq: 1.0          # ignore step when motion-driven signal is below this
+
+    preprocess:
+      point_filter_num: 1
+      filter_size_surf: 0.1
+      lidar_type: 8 # 8 : Livox Mid-360 LiDAR
+      scan_line: 4
+      blind: 0.1
+
+    vio:
+      max_iterations: 5
+      outlier_threshold: 1000
+      img_point_cov: 100
+      patch_size: 8
+      patch_pyrimid_level: 4
+      normal_en: true
+      raycast_en: false
+      inverse_composition_en: false
+      exposure_estimate_en: true
+      inv_expo_cov: 0.1
+
+    imu:
+      imu_en: true
+      imu_int_frame: 50
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.001
+      b_gyr_cov: 0.001
+
+    lio:
+      max_iterations: 5
+      dept_err: 0.02
+      beam_err: 0.15
+      min_eigen_value: 0.005
+      voxel_size: 0.5
+      max_layer: 2
+      max_points_num: 50
+      layer_init_num: [5, 5, 5, 5, 5]
+
+    local_map:
+      map_sliding_en: false
+      half_map_size: 100
+      sliding_thresh: 8.0
+
+    uav:
+      imu_rate_odom: false
+      gravity_align_en: true
+
+    publish:
+      dense_map_en: true
+      pub_effect_point_en: false
+      pub_plane_en: false
+      pub_scan_num: 1
+      blind_rgb_points: 0.0
+
+    evo:
+      seq_name: "mid360_01"
+      pose_output_en: false
+
+    pcd_save:
+      pcd_save_en: false
+      type: 0
+      colmap_output_en: false
+      filter_size_pcd: 0.15
+      interval: -1
+
+    image_save:
+      img_save_en: false
+      interval: 1

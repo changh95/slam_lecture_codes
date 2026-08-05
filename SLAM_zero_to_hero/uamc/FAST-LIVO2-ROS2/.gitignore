@@ -1,0 +1,18 @@
+Log/*
+build/*
+
+# Local assistant/project notes
+CLAUDE.md
+
+# IDE-local settings
+.vscode/
+
+# Local utility scripts
+scripts/restamp_bag.py
+
+# Local documentation drafts and reports
+docs/
+docs/**/*report*
+docs/**/*.pdf
+docs/**/*.docx
+docs/**/*.pptx

@@ -1,0 +1,15 @@
+# ROS 2 / colcon workspace artifacts (created under setup/ by the build scripts)
+setup/build/
+setup/install/
+setup/log/
+setup/src/
+
+# Recorded data
+*.bag
+*.db3
+*.mcap
+handheld_*/
+
+# OS / editor cruft
+.DS_Store
+*~

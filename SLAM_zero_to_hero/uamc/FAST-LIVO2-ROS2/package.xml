@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fast_livo</name>
+  <version>0.0.0</version>
+
+  <description>
+    This is a modified version of LOAM which is original algorithm
+    is described in the following paper:
+    J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
+      Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
+  </description>
+
+  <maintainer email="dev@livoxtech.com">claydergc</maintainer>
+
+  <license>BSD</license>
+
+  <author email="zhangji@cmu.edu">Ji Zhang</author>
+  
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rclpy</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>visualization_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>tf2_ros</build_depend>
+  <build_depend>pcl_ros</build_depend>
+  <build_depend>pcl_conversions</build_depend>
+  <build_depend>livox_ros_driver2</build_depend>
+  <build_depend>livox_interfaces</build_depend>
+  <build_depend>vikit_common</build_depend>
+  <build_depend>vikit_ros</build_depend>
+  <build_depend>cv_bridge</build_depend>
+  <build_depend>image_transport</build_depend>
+  <build_depend>libopencv-dev</build_depend>
+  <build_depend>sophus</build_depend>
+  <build_depend>eigen</build_depend>
+  <build_depend>fmt</build_depend>
+
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <!-- https://github.com/ros-perception/image_transport_tutorials/blob/humble/package.xml -->
+    <!-- <image_transport plugin="${prefix}/resized_plugins.xml"/> -->
+  </export>
+</package>

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<package format="3">
+ <name>vikit_common</name>
+ <version>0.0.0</version>
+
+ <description>The vikit_common package</description>
+
+ <!-- One maintainer tag required, multiple allowed, one person per tag -->
+ <maintainer email="forster@ifi.uzh.ch">cforster</maintainer>
+
+ <!-- One license tag required, multiple allowed, one license per tag -->
+ <license>GPLv3</license>
+
+ <!-- Buildtool dependencies -->
+ <buildtool_depend>ament_cmake</buildtool_depend>
+
+ <!-- Build dependencies -->
+ <build_depend>rclcpp</build_depend>
+ <build_depend>cmake_modules</build_depend> <!-- for FindEigen.cmake module -->
+ 
+ <!-- Run dependencies -->
+ <exec_depend>rclcpp</exec_depend>
+
+ <!-- The export tag contains other, unspecified, tags -->
+ <export>
+   <!-- You can specify that this package is a metapackage here: -->
+   <!-- <metapackage/> -->
+   <!-- Other tools can request additional information be placed here -->
+ </export>
+</package>

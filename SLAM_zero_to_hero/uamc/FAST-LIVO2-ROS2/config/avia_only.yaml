@@ -1,0 +1,106 @@
+/**:
+  ros__parameters:
+    common:
+      img_topic: "/oak/rgb/image_raw"
+      lid_topic: "/livox/lidar_3JEDM180010C211"
+      imu_topic: "/livox/imu_3JEDM180010C211"
+      img_en: 0
+      lidar_en: 1
+      ros_driver_bug_fix: false
+      livox_msg_type: "livox_interfaces"  # "livox_ros_driver2" or "livox_interfaces"
+
+    extrin_calib:
+      extrinsic_T: [0.04165, 0.02326, -0.0284]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+      Rcl: [0.00610193,-0.999863,-0.0154172,
+            -0.00615449,0.0153796,-0.999863,
+            0.999962,0.00619598,-0.0060598] 
+      Pcl: [0.0194384, 0.104689,-0.0251952]
+
+    time_offset:
+      imu_time_offset: 0.0
+      img_time_offset: 1200.252661
+      exposure_time_init: 0.0
+
+    rolling_shutter:
+      enable: true          # set true for rolling-shutter cameras (e.g. RealSense D435/D455 RGB)
+      tr_readout: 0.01101      # total top-to-bottom frame readout time, in seconds
+      anchor_factor: 0.5     # where in the readout the image header.stamp falls: 0.0=row 0, 0.5=middle row, 1.0=last row
+      debug_print: false     # print per-frame IMU staleness, |omega|, |a_w| at handleVIO time
+      td_estimate_enable: true   # online 1D Gauss-Newton refinement of img_time_offset
+      td_step_alpha: 0.1          # learning rate per frame (0..1)
+      td_step_cap: 0.0005         # max step per frame, seconds (0.5 ms)
+      td_lambda: 100.0            # Tikhonov damping
+      td_min_jac_sq: 1.0          # ignore step when motion-driven signal is below this
+
+    preprocess:
+      point_filter_num: 1
+      filter_size_surf: 0.1
+      lidar_type: 1 # Livox Avia LiDAR
+      scan_line: 6
+      blind: 1.0
+
+    vio:
+      max_iterations: 5
+      outlier_threshold: 1000
+      img_point_cov: 1000
+      patch_size: 8
+      patch_pyrimid_level: 4
+      normal_en: true
+      raycast_en: false
+      inverse_composition_en: false
+      exposure_estimate_en: true
+      inv_expo_cov: 0.1
+
+    imu:
+      imu_en: true
+      imu_int_frame: 50
+      acc_cov: 0.8 
+      gyr_cov: 0.5 
+      b_acc_cov: 0.01 # 0.1
+      b_gyr_cov: 0.01 # 0.1
+
+    lio:
+      max_iterations: 5
+      dept_err: 0.02
+      beam_err: 0.05
+      min_eigen_value: 0.0025 # 0.005
+      voxel_size: 0.4
+      max_layer: 2
+      max_points_num: 50
+      layer_init_num: [5, 5, 5, 5, 5]
+
+    local_map:  
+      map_sliding_en: false
+      half_map_size: 100
+      sliding_thresh: 8.0
+
+    uav:
+      imu_rate_odom: false
+      gravity_align_en: true
+
+    publish:
+      dense_map_en: false
+      pub_effect_point_en: false 
+      pub_plane_en: false
+      pub_scan_num: 1
+      blind_rgb_points: 0.0
+
+    evo:
+      seq_name: "CBD_Building_01"
+      pose_output_en: false
+
+    pcd_save:
+      pcd_save_en: false
+      type: 0 # 0: World Frame, 1: Body Frame;
+      colmap_output_en: false # need to set interval = -1
+      filter_size_pcd: 0.15
+      interval: -1
+      # how many LiDAR frames saved in each pcd file;
+      # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+    image_save:
+      img_save_en: false
+      interval: 1
