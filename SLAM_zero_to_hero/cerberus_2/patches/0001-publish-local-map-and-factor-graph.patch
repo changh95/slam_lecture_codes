@@ -1,0 +1,312 @@
+diff --git a/include/fusion/VILOFusion.hpp b/include/fusion/VILOFusion.hpp
+index e478878..ab0b323 100644
+--- a/include/fusion/VILOFusion.hpp
++++ b/include/fusion/VILOFusion.hpp
+@@ -23,6 +23,7 @@
+ #include <sensor_msgs/Imu.h>
+ #include <sensor_msgs/JointState.h>
+ #include <sensor_msgs/PointCloud.h>
++#include <visualization_msgs/Marker.h>
+ #include <tf/transform_broadcaster.h>
+ 
+ // project files
+@@ -48,6 +49,8 @@ class VILOFusion {
+ 
+   void publishPOEstimationResult(const Eigen::VectorXd& x, const Eigen::MatrixXd& P, const Eigen::Matrix<double, NUM_LEG, 1>& contact_est);
+ 
++  void publishVILOLocalMap();
++  void publishVILOFactorGraph();
+   void publishVILOEstimationResult(Eigen::Matrix<double, VS_OUTSIZE, 1>& state);
+   void publishVILOTF(double timestamp, Eigen::Matrix<double, VS_OUTSIZE, 1>& state, const Eigen::Vector3d& tic, const Eigen::Matrix3d& ric);
+ 
+@@ -74,6 +77,11 @@ class VILOFusion {
+   ros::Publisher twist_vilo_pub_;      // VILO twist
+   ros::Publisher contact_pub_;         // contact state estimated by MIPO
+   ros::Publisher vis_joint_state_pub;  // publish joint state according to robot
++  ros::Publisher map_points_pub_;  // VILO sliding-window landmarks, world frame
++  ros::Publisher kf_poses_pub_;    // VILO keyframe positions, world frame
++  ros::Publisher graph_imu_pub_;   // keyframe-to-keyframe IMU preintegration factors
++  ros::Publisher graph_leg_pub_;   // keyframe-to-keyframe leg-odometry factors
++  ros::Publisher graph_obs_pub_;   // landmark-to-keyframe reprojection factors
+ 
+   std::thread po_loop_thread_;
+   std::thread vilo_loop_thread_;
+diff --git a/include/vilo/VILOEstimator.hpp b/include/vilo/VILOEstimator.hpp
+index 8920faf..99b4aba 100644
+--- a/include/vilo/VILOEstimator.hpp
++++ b/include/vilo/VILOEstimator.hpp
+@@ -60,6 +60,48 @@ class VILOEstimator {
+   Eigen::Matrix3d getRic() const { return ric[0]; }
+   Eigen::Vector3d getTic() const { return tic[0]; }
+ 
++  // Sliding-window map readout, for visualization only.
++  //
++  // Everything needed to draw the local map -- feature_manager_, Ps, Rs, ric,
++  // tic -- is private, and src/utils/visualization.cpp's pubPointCloud(), which
++  // is where upstream did this, is commented out along with eleven other
++  // publishers. This accessor exposes the same quantity that function computed:
++  // every landmark whose depth the sliding-window solver has actually converged
++  // on (solve_flag == 1), lifted into the world frame through the pose of the
++  // frame it was first seen in.
++  //   points    -- landmark positions in "world"
++  //   kf_poses  -- the WINDOW_SIZE+1 keyframe positions in "world"
++  //
++  // NOT const, and non-blocking: both accessors *try*-lock mProcess, the mutex
++  // processMeasurements() holds while it mutates Ps/Rs and feature_manager_. Two
++  // reasons. Reading feature_manager_->feature (a std::list) unlocked while the
++  // solver inserts and erases is a data race that hangs the caller on a corrupted
++  // iterator -- observed as the estimator silently stopping partway through a bag.
++  // And a *blocking* lock would let the 20 Hz visualization stall the solver, so
++  // if the window is busy these simply skip a frame.
++  void getLocalMap(std::vector<Eigen::Vector3d>& points, std::vector<Eigen::Vector3d>& kf_poses);
++
++  // The sliding window as a factor graph, for visualization only.
++  //
++  // The window that ceres actually solves is a bipartite graph: WINDOW_SIZE+1
++  // keyframe pose nodes, one node per triangulated landmark, and three kinds of
++  // factor connecting them.
++  //   imu_edges    consecutive keyframe pairs joined by an IMU preintegration
++  //                factor. Always present once the window is full.
++  //   leg_edges    the same pairs, where a *leg*-odometry preintegration factor
++  //                also exists (vilo_fusion_type 1 -> lo_pre_integrations,
++  //                type 2 -> tlo_pre_integration with the leg in contact). These
++  //                are the factors that make this VI**L**O rather than VIO, so
++  //                they get their own edge set instead of hiding underneath the
++  //                IMU one.
++  //   obs_edges    landmark -> every keyframe that observed it, i.e. one
++  //                reprojection factor each.
++  // All three are returned as world-frame endpoint pairs, so the caller can drop
++  // them into LINE_LIST markers and the estimator stays ROS-free.
++  void getFactorGraph(std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& imu_edges,
++                      std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& leg_edges,
++                      std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& obs_edges);
++
+  private:
+   enum SolverFlag { INITIAL, NON_LINEAR };
+ 
+diff --git a/src/fusion/VILOFusion.cpp b/src/fusion/VILOFusion.cpp
+index 16e1293..49cc34d 100644
+--- a/src/fusion/VILOFusion.cpp
++++ b/src/fusion/VILOFusion.cpp
+@@ -38,6 +38,11 @@ VILOFusion::VILOFusion(ros::NodeHandle nh) {
+   contact_pub_ = nh.advertise<geometry_msgs::PoseStamped>("/mipo/contact", 1000);
+ 
+   vis_joint_state_pub = nh_.advertise<sensor_msgs::JointState>("/vis_joint_state", 1000);
++  map_points_pub_ = nh_.advertise<sensor_msgs::PointCloud>("/vilo/point_cloud", 10);
++  kf_poses_pub_ = nh_.advertise<visualization_msgs::Marker>("/vilo/key_poses", 10);
++  graph_imu_pub_ = nh_.advertise<visualization_msgs::Marker>("/vilo/factor_graph_imu", 10);
++  graph_leg_pub_ = nh_.advertise<visualization_msgs::Marker>("/vilo/factor_graph_leg", 10);
++  graph_obs_pub_ = nh_.advertise<visualization_msgs::Marker>("/vilo/factor_graph_obs", 10);
+ 
+   // initialize the filter
+   for (int i = 0; i < 3; i++) {
+@@ -211,6 +216,8 @@ void VILOFusion::POLoop() {
+     // extract the result from VILO estimator and publish it
+     vilo_x = vilo_estimator->outputState();
+     publishVILOEstimationResult(vilo_x);
++    publishVILOLocalMap();
++    publishVILOFactorGraph();
+     publishVILOTF(prev_esti_time, vilo_x, vilo_estimator->getTic(), vilo_estimator->getRic());
+ 
+     /* record end time */
+@@ -412,6 +419,103 @@ void VILOFusion::publishPOEstimationResult(const Eigen::VectorXd& x, const Eigen
+   return;
+ }
+ 
++// Draw the sliding-window map. Nothing upstream publishes it: every landmark
++// publisher in src/utils/visualization.cpp is commented out, so rviz has no way
++// to show what the visual half of the estimator is actually tracking.
++void VILOFusion::publishVILOLocalMap() {
++  std::vector<Eigen::Vector3d> points;
++  std::vector<Eigen::Vector3d> kf_poses;
++  vilo_estimator->getLocalMap(points, kf_poses);
++  if (points.empty() && kf_poses.empty()) {
++    return;
++  }
++
++  sensor_msgs::PointCloud cloud;
++  cloud.header.stamp = ros::Time::now();
++  cloud.header.frame_id = "world";
++  cloud.points.reserve(points.size());
++  for (auto& p : points) {
++    geometry_msgs::Point32 pt;
++    pt.x = p.x();
++    pt.y = p.y();
++    pt.z = p.z();
++    cloud.points.push_back(pt);
++  }
++  map_points_pub_.publish(cloud);
++
++  visualization_msgs::Marker kf;
++  kf.header = cloud.header;
++  kf.ns = "vilo_keyframes";
++  kf.type = visualization_msgs::Marker::SPHERE_LIST;
++  kf.action = visualization_msgs::Marker::ADD;
++  kf.pose.orientation.w = 1.0;
++  kf.scale.x = kf.scale.y = kf.scale.z = 0.16;
++  kf.color.r = 1.0;
++  kf.color.g = 0.4;
++  kf.color.b = 0.0;
++  kf.color.a = 1.0;
++  kf.points.reserve(kf_poses.size());
++  for (auto& p : kf_poses) {
++    geometry_msgs::Point pt;
++    pt.x = p.x();
++    pt.y = p.y();
++    pt.z = p.z();
++    kf.points.push_back(pt);
++  }
++  kf_poses_pub_.publish(kf);
++}
++
++// Draw the sliding window as a factor graph: the keyframe chain the IMU and leg
++// preintegration factors live on, and every landmark-to-keyframe reprojection
++// factor. Two LINE_LISTs so they can be toggled and coloured separately.
++void VILOFusion::publishVILOFactorGraph() {
++  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> imu_edges;
++  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> leg_edges;
++  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> obs_edges;
++  vilo_estimator->getFactorGraph(imu_edges, leg_edges, obs_edges);
++  if (imu_edges.empty() && obs_edges.empty()) {
++    return;
++  }
++
++  // dz offsets the whole edge set vertically. The IMU and leg factors constrain the
++  // *same* pairs of keyframe nodes, so drawn in place one hides the other; nudging
++  // them apart by a few centimetres shows both as parallel edges.
++  auto make_lines = [](const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& edges, const std::string& ns,
++                       double width, float r, float g, float b, float a, double dz = 0.0) {
++    visualization_msgs::Marker m;
++    m.header.stamp = ros::Time::now();
++    m.header.frame_id = "world";
++    m.ns = ns;
++    m.type = visualization_msgs::Marker::LINE_LIST;
++    m.action = visualization_msgs::Marker::ADD;
++    m.pose.orientation.w = 1.0;
++    m.scale.x = width;
++    m.color.r = r;
++    m.color.g = g;
++    m.color.b = b;
++    m.color.a = a;
++    m.points.reserve(2 * edges.size());
++    for (auto& e : edges) {
++      geometry_msgs::Point p0, p1;
++      p0.x = e.first.x();
++      p0.y = e.first.y();
++      p0.z = e.first.z() + dz;
++      p1.x = e.second.x();
++      p1.y = e.second.y();
++      p1.z = e.second.z() + dz;
++      m.points.push_back(p0);
++      m.points.push_back(p1);
++    }
++    return m;
++  };
++
++  // Reprojection factors are numerous (up to ~120 landmarks x 11 frames), so they
++  // are thin and translucent; the keyframe chain is drawn thick on top.
++  graph_obs_pub_.publish(make_lines(obs_edges, "vilo_reprojection_factors", 0.004, 0.35f, 0.75f, 1.0f, 0.25f));
++  graph_imu_pub_.publish(make_lines(imu_edges, "vilo_imu_factors", 0.035, 1.0f, 0.95f, 0.2f, 1.0f, 0.04));
++  graph_leg_pub_.publish(make_lines(leg_edges, "vilo_leg_factors", 0.035, 1.0f, 0.35f, 0.85f, 1.0f, -0.04));
++}
++
+ void VILOFusion::publishVILOEstimationResult(Eigen::Matrix<double, VS_OUTSIZE, 1>& state) {
+   Eigen::Vector3d pos = state.segment(1, 3);
+   Eigen::Quaterniond quat(state(7), state(4), state(5),
+diff --git a/src/vilo/VILOEstimator.cpp b/src/vilo/VILOEstimator.cpp
+index d3ee038..73ffd21 100644
+--- a/src/vilo/VILOEstimator.cpp
++++ b/src/vilo/VILOEstimator.cpp
+@@ -356,6 +356,92 @@ bool VILOEstimator::loVelAvailable(double t) {
+     return false;
+ }
+ 
++void VILOEstimator::getLocalMap(std::vector<Eigen::Vector3d>& points, std::vector<Eigen::Vector3d>& kf_poses) {
++  points.clear();
++  kf_poses.clear();
++  std::unique_lock<std::mutex> lock(mProcess, std::try_to_lock);
++  if (!lock.owns_lock()) {
++    return;  // solver is mid-optimisation; skip this visualization frame
++  }
++  // Before the window is initialised, Ps/Rs and every estimated_depth are
++  // meaningless, and publishing them puts a cloud of NaNs into rviz.
++  if (solver_flag != NON_LINEAR) {
++    return;
++  }
++  for (int i = 0; i <= frame_count; i++) {
++    kf_poses.push_back(Ps[i]);
++  }
++  for (auto& it_per_id : feature_manager_->feature) {
++    if (it_per_id.solve_flag != 1 || it_per_id.estimated_depth <= 0.0) {
++      continue;
++    }
++    int imu_i = it_per_id.start_frame;
++    if (imu_i < 0 || imu_i > frame_count || it_per_id.feature_per_frame.empty()) {
++      continue;
++    }
++    // point is the normalised camera-frame ray of the first observation; scale
++    // it by the solved depth, take it to the imu/body frame with (ric, tic),
++    // then to the world frame with that frame's pose. Same chain as upstream's
++    // pubPointCloud().
++    Eigen::Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;
++    points.push_back(Rs[imu_i] * (ric[0] * pts_i + tic[0]) + Ps[imu_i]);
++  }
++}
++
++void VILOEstimator::getFactorGraph(std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& imu_edges,
++                                   std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& leg_edges,
++                                   std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& obs_edges) {
++  imu_edges.clear();
++  leg_edges.clear();
++  obs_edges.clear();
++  std::unique_lock<std::mutex> lock(mProcess, std::try_to_lock);
++  if (!lock.owns_lock()) {
++    return;  // solver is mid-optimisation; skip this visualization frame
++  }
++  if (solver_flag != NON_LINEAR) {
++    return;
++  }
++  for (int i = 0; i < frame_count; i++) {
++    // pre_integrations[j] integrates i -> j, so the factor on the pair (i, i+1)
++    // is indexed i+1. Same convention for the leg terms.
++    int j = i + 1;
++    if (pre_integrations[j] != nullptr) {
++      imu_edges.emplace_back(Ps[i], Ps[j]);
++    }
++    bool has_leg = false;
++    if (VILO_FUSION_TYPE == 1) {
++      has_leg = lo_pre_integrations[j] != nullptr;
++    } else if (VILO_FUSION_TYPE == 2) {
++      for (int l = 0; l < NUM_LEG; l++) {
++        if (tlo_pre_integration[j][l] != nullptr && tlo_all_in_contact[j][l]) {
++          has_leg = true;
++          break;
++        }
++      }
++    }
++    if (has_leg) {
++      leg_edges.emplace_back(Ps[i], Ps[j]);
++    }
++  }
++  for (auto& it_per_id : feature_manager_->feature) {
++    if (it_per_id.solve_flag != 1 || it_per_id.estimated_depth <= 0.0) {
++      continue;
++    }
++    int imu_i = it_per_id.start_frame;
++    if (imu_i < 0 || imu_i > frame_count || it_per_id.feature_per_frame.empty()) {
++      continue;
++    }
++    Eigen::Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;
++    Eigen::Vector3d lm = Rs[imu_i] * (ric[0] * pts_i + tic[0]) + Ps[imu_i];
++    // feature_per_frame holds one entry per *consecutive* frame from start_frame
++    // on, so the observing keyframes are exactly that index range.
++    int last = std::min(imu_i + static_cast<int>(it_per_id.feature_per_frame.size()) - 1, frame_count);
++    for (int j = imu_i; j <= last; j++) {
++      obs_edges.emplace_back(lm, Ps[j]);
++    }
++  }
++}
++
+ void VILOEstimator::processMeasurements() {
+   std::chrono::milliseconds dura(2);
+   while (ros::ok()) {

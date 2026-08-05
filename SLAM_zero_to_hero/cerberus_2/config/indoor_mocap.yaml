@@ -1,0 +1,122 @@
+%YAML:1.0
+
+# Cerberus 2.0 on an indoor RISQH-lab sequence, WITH Optitrack ground truth.
+#   bag: 20230615-risqh-standtrot-06-06-square.bag   93 s, Go1 stand-trotting a square
+#
+# The only sequences in the release with a pose topic in the bag
+# (/natnet_ros/Shuo_Go1/pose), so the only ones that yield a real ATE. Note the
+# 20230517 series is NOT usable: it records the foot IMUs at 27 Hz instead of
+# 200 Hz and the estimator stops emitting after ~11 s. The 20230615 / 20230620 /
+# 20230625 series are at the normal 200 Hz.
+#
+# Derived from upstream config/go1_config/hardware_go1_vilo_config.yaml. Same
+# robot, same RealSense rig, same WT901 foot IMUs recorded every sequence in the
+# release, so only four things change: dataset_name, output_path, and the
+# kf_type/vilo_fusion_type pair that selects which estimator variant runs.
+
+#common parameters
+imu: 1
+num_of_cam: 2
+
+robot_type: "go1"
+dataset_name: "indoor_mocap"    # names the result CSVs: <run>-indoor_mocap.csv
+
+imu_topic: "/unitree_hardware/imu"
+image0_topic: "/camera_forward/infra1/image_rect_raw"
+image1_topic: "/camera_forward/infra2/image_rect_raw"
+# /out is the container mount point for cerberus_2/results/. The four foot-IMU
+# topics (/WT901_47..50_Data) are NOT configurable here -- parameters.cpp only
+# reads them from the ROS param server, defaulting to the names these bags use.
+output_path: "/out"
+# leg topics
+leg_topic: "/unitree_hardware/joint_foot"
+
+cam0_calib: "go1_realsense_left.yaml"
+cam1_calib: "go1_realsense_right.yaml"
+image_width: 640
+image_height: 480
+
+# The Go1 is standing (not sitting) when this bag starts, so 0.3 m.
+init_base_height: 0.3
+
+# kf type
+kf_type:   0  # 0 is MIPO (multi-imu PO)
+              # 1 is SIPO (standard single imu PO)
+
+# leg related
+vilo_fusion_type: 1  # 0 - do not use leg for preintegration (then this is just VIO)
+                     # 1 - use LO velocity as preintegration
+                     # 2 - tightly couple leg and imu for preintegration
+# kf_type 0 + vilo_fusion_type 1 => run name "vilo-m" => vilo-m-indoor_mocap.csv
+
+foot_gyro_n: 0.1
+foot_gyro_w: 0.0002
+joint_angle_n: 0.1
+joint_vel_n: 0.1
+foot_vel_w: 0.0002
+rho_w: 0.0002
+
+estimate_kinematic: 0  # 0 - do not estimate kinematic parameters
+                       # 1 - estimate kinematic parameters
+
+# Extrinsic parameter between IMU and Camera.
+# 0, NOT upstream's 1. This is the one substantive change from
+# hardware_go1_vilo_config.yaml, and it is what makes the long runs work. Online
+# extrinsic estimation makes sense on live hardware, where the rig may have been
+# knocked about; on a recorded sequence with the rig's transform already given
+# below, it slowly corrupts the heading. Measured on CMU Garage, full 644 s:
+#     estimate_extrinsic: 1 -> 430.0 m xy span, 431.7 m end-to-start
+#     estimate_extrinsic: 0 -> 228.3 m xy span, 227.0 m end-to-start
+# and the proprioception-only filter on the same bag reports 225.9 m / 223.9 m,
+# i.e. with 0 the fused estimate agrees with it and with 1 it does not. On
+# Wightman Park's closed loop it takes the end-to-start error from 6.14 m to
+# 4.54 m over 137 m. Set it back to 1 with OVERRIDES=estimate_extrinsic=1.
+estimate_extrinsic: 0   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
+                        # 1  Have an initial guess about extrinsic parameters. We will optimize around your initial guess.
+
+body_T_cam0: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: d
+   data: [ 0,  0,  1, 0.24,
+          -1,  0,  0, 0.025,
+           0, -1,  0, 0.1114,
+           0., 0., 0., 1. ]
+
+body_T_cam1: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: d
+   data: [ 0,  0,  1, 0.24,
+          -1,  0,  0, -0.025,
+           0, -1,  0, 0.1114,
+           0., 0., 0., 1. ]
+
+max_cnt: 120            # max feature number in feature tracking
+min_dist: 10           # min distance between two features
+freq: 15                # frequence (Hz) of publish tracking result. At least 10Hz for good estimation. If set 0, the frequence will be same as raw image
+F_threshold: 1.0        # ransac threshold (pixel)
+show_track: 1           # publish tracking image as topic -- this is what feeds /vilo/image_track
+flow_back: 1            # perform forward and backward optical flow to improve feature tracking accuracy
+
+#optimization parameters
+max_solver_time: 0.1  # max solver itration time (ms), to guarantee real time
+max_num_iterations: 12   # max solver itrations, to guarantee real time
+keyframe_parallax: 10.0 # keyframe selection threshold (pixel)
+
+#imu parameters       The more accurate parameters you provide, the better performance
+acc_n: 0.9          # accelerometer measurement noise standard deviation. #0.2   0.04
+acc_n_z: 2.5
+gyr_n: 0.05         # gyroscope measurement noise standard deviation.     #0.05  0.004
+acc_w: 0.0004         # accelerometer bias random work noise standard deviation.  #0.002
+gyr_w: 0.0002       # gyroscope bias random work noise standard deviation.     #4.0e-5
+g_norm: 9.805         # gravity magnitude
+
+#unsynchronization parameters
+estimate_td: 0                      # online estimate time offset between camera and imu
+td: -0.02                           # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)
+
+#loop closure parameters
+load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path'
+pose_graph_save_path: "/out/pose_graph/" # save and load path
+save_image: 0                   # save image in pose graph for visualization prupose; you can close this function by setting 0

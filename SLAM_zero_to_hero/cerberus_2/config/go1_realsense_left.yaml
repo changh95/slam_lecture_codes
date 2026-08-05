@@ -1,0 +1,20 @@
+%YAML:1.0
+---
+# Left infrared imager of the forward-facing RealSense on the Go1.
+# Verbatim from upstream config/go1_config/go1_realsense_left.yaml -- the same
+# rig recorded every sequence in the release. The infra streams are already
+# rectified on the camera (image_rect_raw), hence the zero distortion.
+model_type: PINHOLE
+camera_name: camera
+image_width: 640
+image_height: 480
+distortion_parameters:
+   k1: 0.0
+   k2: 0.0
+   p1: 0.0
+   p2: 0.0
+projection_parameters:
+   fx: 385.7544860839844
+   fy: 385.7544860839844
+   cx: 323.1204833984375
+   cy: 236.7432098388672

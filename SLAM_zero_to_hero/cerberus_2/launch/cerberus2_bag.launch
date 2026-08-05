@@ -1,0 +1,88 @@
+<?xml version="1.0"?>
+<!--
+  Cerberus 2.0 on a recorded sequence.
+
+  Unlike upstream's launch/vilo_launch.launch this does NOT start rosbag play:
+  the bag is played by scripts/run_demo.sh so the estimator can be given a head
+  start and so playback end can be detected and the run drained cleanly. Upstream
+  worked around the same problem with launch-prefix="zsh -c 'sleep N; $0 $@'".
+
+  (XML comments here avoid double hyphens, which are illegal inside them; that is
+  why flags appear as e.g. "clock" rather than spelled out.)
+-->
+<launch>
+  <!-- The bag is played with the "clock" flag, so every node must read /clock.
+       This has to be set before any node starts, which is why it lives here and
+       not in run_demo.sh. -->
+  <param name="use_sim_time" value="true" />
+
+  <arg name="config" default="$(find cerberus2)/config/lecture/mill19_trail.yaml" />
+  <arg name="path_viz" default="true" />
+  <arg name="leg_viz" default="true" />
+  <!-- rviz is deliberately NOT a node here. Started as a roslaunch node it stays
+       alive but never maps a window (nothing in its log, no "process has died"),
+       while the identical `rviz -d <same config>` run as a plain child process on
+       the same display comes up every time. scripts/run_demo.sh therefore starts
+       it itself, once the estimator is advertising, and keeps its stderr in
+       /out/rviz.log. -->
+
+  <!-- The five topics parameters.cpp reads ONLY from the param server
+       (Utils::readParametersROS), never from the yaml. Upstream's own launch
+       files set none of them, so a stock run silently takes the compiled-in
+       defaults. Two of those defaults are wrong for the released bags:
+         GT_TOPIC defaults to /mocap_node/Go1_body/pose, but the indoor bags
+         publish mocap on /natnet_ros/Shuo_Go1/pose, so gt-<dataset>.csv comes
+         out empty. Outdoor bags have no pose topic at all, which is fine.
+       The four foot-IMU defaults do match these bags: the WT901 to leg
+       assignment {49,47} = {FL,RR} and {48,50} = {FR,RL} is confirmed by the
+       diagonal-pair correlation between each unit's gyro magnitude and its
+       leg's joint rates during a trot. Stated explicitly so a different
+       recording can override it here. -->
+  <arg name="gt_topic" default="/natnet_ros/Shuo_Go1/pose" />
+  <param name="GT_TOPIC" value="$(arg gt_topic)" />
+  <param name="FL_IMU_TOPIC" value="/WT901_49_Data" />
+  <param name="FR_IMU_TOPIC" value="/WT901_48_Data" />
+  <param name="RL_IMU_TOPIC" value="/WT901_50_Data" />
+  <param name="RR_IMU_TOPIC" value="/WT901_47_Data" />
+
+  <!-- required=true so a crash in the estimator tears the launch down instead of
+       leaving run_demo.sh to play 400 s of bag into nothing. -->
+  <node name="cerberus2_main" pkg="cerberus2" type="cerberus2_main"
+        args="$(arg config)" output="screen" required="true" />
+
+  <!-- src/utils/visualization.cpp has every publisher except pubTrackImage
+       commented out upstream, so nothing emits a nav_msgs/Path. This turns the
+       live /vilo/estimate_pose and /mipo/estimate_pose streams into paths so the
+       two trajectories are visible in rviz. Purely a viewer aid: it reads the
+       estimator's output and adds nothing to it. -->
+  <node if="$(arg path_viz)" name="pose_to_path" pkg="cerberus2" type="pose_to_path.py"
+        output="log" />
+
+  <!-- Leg odometry, drawn. cerberus2_main publishes /vis_joint_state precisely for
+       this: 12 joint positions under the names the shipped URDF uses
+       (FL_hip_joint, FL_thigh_joint, FL_calf_joint, ...). Feed that to
+       robot_state_publisher and the whole leg chain
+       base -> trunk -> {FL,FR,RL,RR}_{hip,thigh,calf,foot} appears in TF, moving
+       with the gait, anchored at the fused pose through publishVILOTF's
+       world -> robot. This is the kinematic chain the leg-odometry velocity is
+       computed from, so it is worth seeing.
+
+       The static robot -> base link is identity: `robot` is the trunk/IMU frame
+       the estimator broadcasts, and the URDF's base -> trunk joint is itself
+       fixed at identity.
+
+       Caveat: the description upstream ships is a1_description, an A1, while
+       every released bag is a Go1 (thigh/calf 0.20 m vs 0.213 m). It is cosmetic
+       only: the estimator's own leg kinematics come from
+       include/utils/casadi_kino.hpp, never from this URDF. -->
+  <group if="$(arg leg_viz)">
+    <param name="robot_description"
+           textfile="$(find cerberus2)/urdf/a1_description/urdf/a1.urdf" />
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"
+          output="log">
+      <remap from="joint_states" to="/vis_joint_state" />
+    </node>
+    <node name="body_to_urdf_base" pkg="tf2_ros" type="static_transform_publisher"
+          args="0 0 0 0 0 0 robot base" output="log" />
+  </group>
+</launch>

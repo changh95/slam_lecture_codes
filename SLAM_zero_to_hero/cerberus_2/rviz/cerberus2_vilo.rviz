@@ -1,0 +1,321 @@
+Panels:
+  # Property tree deliberately left collapsed (Expanded: ~): expanding a Path
+  # display fills the whole left dock with its properties and squeezes the image
+  # panel down to a thumbnail.
+  - Class: rviz/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 260
+  # No rviz/Views panel on purpose. "Views: collapsed: true" under Window
+  # Geometry does not hide it, and the panel takes a third of the left dock that
+  # the camera image needs. Orbit still works with the mouse.
+Visualization Manager:
+  Class: ""
+  Displays:
+    # 10 m cells over 600 m: the released outdoor sequences cover 50-250 m, so
+    # this doubles as the scale bar in a screenshot.
+    - Alpha: 0.5
+      Cell Size: 10
+      Class: rviz/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid (10 m cells)
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: <Fixed Frame>
+      Value: true
+    # No rviz/TF display on purpose. robot_state_publisher expands the URDF into
+    # ~25 frames (base, trunk, imu_link, stick_link, and hip/thigh_shoulder/thigh/
+    # calf/foot for all four legs) inside a 0.6 x 0.3 m body, so the axis triads and
+    # their name labels bury the robot. The RobotModel display below draws the same
+    # kinematics as actual geometry; re-add TF from the Add dialog if you need to
+    # debug a frame.
+    # Optitrack, indoor sequences only. pose_to_path.py re-anchors it to the first
+    # fused pose so the two are comparable on screen; the raw room-frame track is
+    # on /gt/path_viz_raw. Stays empty on the outdoor bags, which have no pose
+    # topic at all.
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz/Path
+      Color: 255; 255; 255
+      Enabled: true
+      Head Diameter: 0.3
+      Head Length: 0.2
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.05
+      Name: 0 GROUND TRUTH mocap (indoor only)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Queue Size: 10
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic: /gt/path_viz
+      Unreliable: false
+      Value: true
+    # The fused visual-inertial-leg estimate. This is the trajectory the papers
+    # report; it is what "Cerberus" refers to.
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz/Path
+      Color: 25; 255; 0
+      Enabled: true
+      Head Diameter: 0.3
+      Head Length: 0.2
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.03
+      Name: 1 FUSED = camera + IMU + legs (VILO)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Queue Size: 10
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic: /vilo/path_viz
+      Unreliable: false
+      Value: true
+    # The proprioception-only (multi-IMU) estimate that Cerberus fuses on top of.
+    # Watching it drift away from the green path is the point of the demo.
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz/Path
+      Color: 255; 170; 0
+      Enabled: true
+      Head Diameter: 0.3
+      Head Length: 0.2
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.03
+      Name: 2 NO-CAMERA = 5 IMUs + joints (MIPO)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Queue Size: 10
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic: /mipo/path_viz
+      Unreliable: false
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.4
+      Axes Radius: 0.05
+      Class: rviz/PoseWithCovariance
+      Color: 255; 25; 0
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: false
+        Position:
+          Alpha: 0.3
+          Color: 204; 51; 204
+          Scale: 1
+          Value: false
+        Value: false
+      Enabled: true
+      Head Length: 0.1
+      Head Radius: 0.1
+      Name: 4 POSE axes, fused
+      Shaft Length: 0.3
+      Shaft Radius: 0.03
+      Shape: Axes
+      Topic: /vilo/estimate_pose
+      Unreliable: false
+      Value: true
+    # The sliding-window landmarks the visual half actually solved for, and the
+    # keyframe positions they are anchored to. Both come from the patch in
+    # patches/: upstream's own pubPointCloud() is commented out, so a stock build
+    # publishes no 3D structure at all. sensor_msgs/PointCloud, not PointCloud2,
+    # hence rviz/PointCloud rather than rviz/PointCloud2.
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud
+      Color: 80; 200; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: 3 LANDMARKS sliding-window local map
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 4
+      Size (m): 0.05
+      Style: Points
+      Topic: /vilo/point_cloud
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: false
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /vilo/key_poses
+      Name: 3b KEYFRAMES in the window
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    # The sliding window drawn as the graph ceres actually solves. Blue is every
+    # landmark-to-keyframe reprojection factor -- thin and translucent because a
+    # full window holds up to ~1300 of them. Yellow and magenta are the two
+    # keyframe-to-keyframe factor types: IMU preintegration, and leg-odometry
+    # preintegration. Both constrain the same pairs of nodes, so the publisher
+    # nudges them 4 cm apart vertically or one would hide the other.
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /vilo/factor_graph_obs
+      Name: 3c FACTORS reprojection, landmark to keyframe
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /vilo/factor_graph_imu
+      Name: 3d FACTORS IMU preintegration, keyframe chain
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /vilo/factor_graph_leg
+      Name: 3e FACTORS leg odometry, keyframe chain
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    # The A1 mesh upstream ships, driven by /vis_joint_state through
+    # robot_state_publisher: the trunk plus all four three-link legs, moving with
+    # the gait at the fused pose. This is the chain the leg-odometry velocity is
+    # derived from. Mesh geometry is A1 while the data is Go1, so treat the shape
+    # as indicative.
+    - Alpha: 1
+      Class: rviz/RobotModel
+      Collision Enabled: false
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+      Name: 6 LEGS urdf driven by joint encoders
+      Robot Description: robot_description
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    # Left infra image with the KLT tracks drawn on it, published by
+    # pubTrackImage() -- the one visualization upstream left switched on.
+    - Class: rviz/Image
+      Enabled: true
+      Image Rendering: background and overlay
+      Image Topic: /vilo/image_track
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: 5 TRACKS stereo IR + KLT
+      Normalize Range: true
+      Overlay Alpha: 0.5
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+      Zoom Factor: 1
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Default Light: true
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+      Hide Inactive Objects: true
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+    - Class: rviz/Measure
+  Value: true
+  Views:
+    # Target Frame is `robot`, not `world`, so the camera FOLLOWS the robot.
+    # This matters for more than convenience: the landmark cloud on
+    # /vilo/point_cloud is the *sliding-window* map, ~10 keyframes' worth of
+    # features around the robot's current pose, and the leg model is likewise
+    # wherever the robot is. Anchor the view to `world` on a 200 m outdoor
+    # sequence and both scroll out of frame within seconds, leaving only the
+    # trajectory lines. Focal Point is therefore (0,0,0) -- i.e. the robot -- and
+    # 14 m at a 0.8 rad pitch is a three-quarter view close enough to read the
+    # leg geometry and the local map while still showing the last ~20 m of path. Scroll out to see a whole circuit, or set
+    # RVIZ_DISTANCE / RVIZ_FOCAL / RVIZ_PITCH per run.
+    Current:
+      Class: rviz/Orbit
+      Distance: 14
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Field of View: 0.785398
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.8
+      Target Frame: robot
+      Yaw: 4.71
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1040
+  Hide Left Dock: false
+  Hide Right Dock: true
+  Width: 1900
+  X: 10
+  Y: 30
+  feature tracks:
+    collapsed: false
