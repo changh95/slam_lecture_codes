@@ -188,7 +188,7 @@ echo "xhost +local:docker" >> ~/.profile
     - Introduction to NVIDIA Jetson
     - [CUDA acceleration hands-on](part5_ch03_08)
 - Final projects
-  - Project 1: SLAM for autonomous driving
+  - Project 1: [SLAM for autonomous driving](monolane_mapping)
   - Project 2: SLAM for drones
   - Project 3: SLAM for mobile scanner systems
   - Project 4: SLAM for quadruped robots
