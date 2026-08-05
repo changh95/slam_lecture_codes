@@ -1,0 +1,97 @@
+# UZH-FPV Drone Racing Dataset -- Snapdragon Flight, indoor_forward, stereo + IMU.
+#
+# Transcribed from the official Kalibr calibration:
+#   indoor_forward_calib_snapdragon/camchain-imucam-..indoor_forward_calib_snapdragon_imu.yaml
+#   indoor_forward_calib_snapdragon/imu.yaml
+#
+# Two conversions were applied and both matter:
+#
+# 1. Kalibr reports T_cam_imu; SVO wants T_B_C (body/IMU -> camera), so each
+#    matrix below is inv(T_cam_imu). Checked: det(R) = 1.0 for both cameras, and
+#    the resulting camera-centre distance is 0.079621 m, which agrees with the
+#    independent T_cn_cnm1 baseline of -0.0796 m in the Kalibr file.
+#
+# 2. The cameras are fisheye. Kalibr's `equidistant` model maps onto SVO's
+#    "pinhole" + "equidistant" pair, which vikit resolves to
+#    PinholeEquidistantGeometry (vikit/vikit_cameras/src/camera_yaml_serialization.cpp).
+label: "UZH-FPV indoor_forward snapdragon stereo"
+cameras:
+- camera:
+    label: cam0
+    line-delay-nanoseconds: 0
+    image_height: 480
+    image_width: 640
+    type: pinhole
+    intrinsics:
+      cols: 1
+      rows: 4
+      data: [278.66723066149086, 278.48991409740296, 319.75221200593535, 241.96858910358173]
+    distortion:
+      type: equidistant
+      parameters:
+        cols: 1
+        rows: 4
+        data: [-0.013721808247486035, 0.020727425669427896, -0.012786476702685545,
+               0.0025242267320687625]
+  T_B_C:
+    cols: 4
+    rows: 4
+    data: [-0.028228787369,  0.014401251862,  0.999497743624,  0.001102120574,
+           -0.999601488302, -0.000418870833, -0.028225682131,  0.021701418710,
+            0.000012175295, -0.999896208860,  0.014407337010, -0.000059278882,
+            0.0,             0.0,             0.0,             1.0]
+- camera:
+    label: cam1
+    line-delay-nanoseconds: 0
+    image_height: 480
+    image_width: 640
+    type: pinhole
+    intrinsics:
+      cols: 1
+      rows: 4
+      data: [277.61640629770613, 277.63749695723294, 314.8944703346039, 236.04310050462587]
+    distortion:
+      type: equidistant
+      parameters:
+        cols: 1
+        rows: 4
+        data: [-0.008456929295619607, 0.011407590938612062, -0.006951788325762078,
+               0.0015368127092821786]
+  T_B_C:
+    cols: 4
+    rows: 4
+    data: [-0.011823057801,  0.011552991632,  0.999863362509, -0.000290275186,
+           -0.999870144408,  0.010813766814, -0.011948086425, -0.057906947234,
+           -0.010950325391, -0.999874787577,  0.011423639621, -0.000191902924,
+            0.0,             0.0,             0.0,             1.0]
+
+# Every key here is read with an unchecked .as<double>() in
+# ImuHandler::loadCalibrationFromFile, so none of them may be omitted.
+imu_params:
+  # Kalibr reports timeshift_cam_imu = -0.01668 s for cam0. Left at 0.0 because
+  # SVO's sign convention (delay_imu_cam = cam_ts - cam_ts_delay) is the
+  # opposite of Kalibr's, and guessing wrong doubles the error rather than
+  # removing it. Upstream's own EuRoC config also ships 0.0.
+  delay_imu_cam: 0.0
+  max_imu_delta_t: 0.01
+  # Saturation limits, not noise. Snapdragon's MPU-9250 runs at +/-16 g and
+  # +/-2000 deg/s; drone racing actually approaches both, so these sit just
+  # below the sensor's own ceiling rather than at EuRoC's gentler values.
+  acc_max: 176.0
+  omega_max: 34.0
+  # Straight from Kalibr imu.yaml: noise densities, then random walks.
+  sigma_omega_c: 0.05
+  sigma_acc_c: 0.1
+  sigma_omega_bias_c: 4.0e-05
+  sigma_acc_bias_c: 0.002
+  sigma_integration: 0.0
+  g: 9.8082
+  imu_rate: 500
+
+imu_initialization:
+  velocity: [0.0, 0.0, 0.0]
+  omega_bias: [0.0, 0.0, 0.0]
+  acc_bias: [0.0, 0.0, 0.0]
+  velocity_sigma: 2.0
+  omega_bias_sigma: 0.01
+  acc_bias_sigma: 0.1

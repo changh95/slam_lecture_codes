@@ -12,6 +12,7 @@
 | **Monado SLAM** | baked into the `basalt` image at `/MIPB07_beatsaber_fitbeat_expertplus_2` | Valve Index stereo + IMU | basalt |
 | **FAST-LIVO2-Dataset** | `~/data/fast_livo2/Retail_Street.bag` (**the fast_livo2 demo sequence**) + `calibration.yaml`; `Red_Sculpture.bag` and `CBD_Building_01.bag` also downloaded but unused | Livox Avia + built-in IMU + RGB pinhole cam | fast_livo2 (`download_fast_livo2.py`, 17 more sequences available) |
 | **OpenLane (rosbag conversion)** | `~/data/openlane/OpenLane/lane3d_1000/rosbag/` — 202 x 20 s Waymo segments, 630 MB | PersFormer 3D lane detections + GT lanes + vehicle pose (**no images**) | monolane_mapping |
+| **UZH-FPV Drone Racing** | `~/data/uzh_fpv/indoor_forward_3_snapdragon_with_gt.bag` (1.5 GiB) + `calib/` (Kalibr, per environment) | Snapdragon Flight 640x480 stereo **fisheye** @30 Hz + 500 Hz IMU + partial GT (49.5 s of 92 s) | svo_pro_open (`download_uzh_fpv.py`, 28 sequences available; each environment has its **own** calibration) |
 
 ### KITTI: what is actually extracted
 
@@ -41,6 +42,7 @@ Status legend: ✅ verified end-to-end (Docker build → real-data run → captu
 | fast_lio2 | ✅ | Hilti 2022 `exp14_basement_2.bag` end-to-end with `config/hilti_pandarxt32.yaml` (737 poses, 37.93 m path, 6.05 ms/scan) | NCLT, any Velodyne/Ouster/Livox rosbag with an IMU stream |
 | glim | ✅ | KITTI 04 (ATE 2.60 m over 394 m) and KITTI 00 (4531 poses, ATE 10.2–11.5 m over 3.7 km) via the `glim_kitti` driver added in `glim/` — upstream ships **no executable** | LiDAR+IMU rosbags, but only through `glim_ros1`/`glim_ros2`, which are not in this image |
 | kimera | ✅ | EuRoC MAV `MH_01_easy` (perf_bench) | Stereo + IMU only |
+| svo_pro_open | ✅ | UZH-FPV `indoor_forward_3` Snapdragon stereo fisheye + IMU: **RMS ATE 0.43 ± 0.04 m over 278 m (~0.16 %)** SE(3)-aligned, mean of 7 runs (range 0.376–0.476 m — real-time replay is not deterministic; headless averages 0.427 m, with the rviz GUI open 0.476 m), 2551 poses, all 92 s tracked with zero losses; monocular 0.156 m Sim(3) (2 runs, 0.132–0.180 m) with scale solved to 0.99941 | UZH-FPV `indoor_45` / `outdoor_*` (each needs its own calibration) and mDAVIS; EuRoC via upstream's `euroc_vio_{mono,stereo}.launch`; FLA stereo+IMU (frontend only) |
 | voxblox | ✅ | cow_and_lady (perf_bench) | Generic ROS PointCloud2 / depth |
 | pin_slam | 🟡 | — | KITTI, TUM RGB-D, Replica, Newer College, MulRan, nuScenes, KITTI-360, Hilti |
 | gaussian_splatting_slam | 🟡 | — | EuRoC, TUM RGB-D, Replica |

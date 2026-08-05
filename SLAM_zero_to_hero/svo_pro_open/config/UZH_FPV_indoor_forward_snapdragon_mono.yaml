@@ -1,0 +1,50 @@
+# UZH-FPV Drone Racing Dataset -- Snapdragon Flight, indoor_forward, monocular + IMU.
+# cam0 (the left camera) only; see the stereo file in this directory for the
+# derivation of T_B_C and the notes on the equidistant/fisheye model.
+label: "UZH-FPV indoor_forward snapdragon mono"
+cameras:
+- camera:
+    label: cam0
+    line-delay-nanoseconds: 0
+    image_height: 480
+    image_width: 640
+    type: pinhole
+    intrinsics:
+      cols: 1
+      rows: 4
+      data: [278.66723066149086, 278.48991409740296, 319.75221200593535, 241.96858910358173]
+    distortion:
+      type: equidistant
+      parameters:
+        cols: 1
+        rows: 4
+        data: [-0.013721808247486035, 0.020727425669427896, -0.012786476702685545,
+               0.0025242267320687625]
+  T_B_C:
+    cols: 4
+    rows: 4
+    data: [-0.028228787369,  0.014401251862,  0.999497743624,  0.001102120574,
+           -0.999601488302, -0.000418870833, -0.028225682131,  0.021701418710,
+            0.000012175295, -0.999896208860,  0.014407337010, -0.000059278882,
+            0.0,             0.0,             0.0,             1.0]
+
+imu_params:
+  delay_imu_cam: 0.0
+  max_imu_delta_t: 0.01
+  acc_max: 176.0
+  omega_max: 34.0
+  sigma_omega_c: 0.05
+  sigma_acc_c: 0.1
+  sigma_omega_bias_c: 4.0e-05
+  sigma_acc_bias_c: 0.002
+  sigma_integration: 0.0
+  g: 9.8082
+  imu_rate: 500
+
+imu_initialization:
+  velocity: [0.0, 0.0, 0.0]
+  omega_bias: [0.0, 0.0, 0.0]
+  acc_bias: [0.0, 0.0, 0.0]
+  velocity_sigma: 2.0
+  omega_bias_sigma: 0.01
+  acc_bias_sigma: 0.1

@@ -1,0 +1,36 @@
+<!--
+  SVO Pro monocular visual-inertial odometry on the UZH-FPV Drone Racing Dataset
+  (Snapdragon Flight sensor set), using the left camera only.
+
+  Monocular VIO has to recover scale from the IMU before it is usable. Upstream
+  notes this initialisation is "relatively naive" (doc/known_issues_and_improvements.md),
+  so on aggressive sequences prefer the stereo launch file; keep this one for
+  showing the mono pipeline.
+-->
+<launch>
+  <arg name="calib_file"
+       default="$(find svo_ros)/param/calib/UZH_FPV_indoor_forward_snapdragon_mono.yaml"/>
+  <arg name="param_file" default="$(find svo_ros)/param/vio_mono_fpv.yaml"/>
+
+  <arg name="cam0_topic" default="/snappy_cam/stereo_l"/>
+  <arg name="imu_topic"  default="/snappy_imu"/>
+
+  <arg name="rviz" default="true"/>
+  <!-- Sized to fit the 1600x900 framebuffer that scripts/capture_rviz.sh
+       creates, and zoomed out far enough to show a whole lap. Upstream's
+       rviz_config_vio.rviz still works: pass rviz_config:=... to use it. -->
+  <arg name="rviz_config" default="$(find svo_ros)/fpv_vio.rviz"/>
+  <arg name="runlc" default="false"/>
+
+  <node pkg="svo_ros" type="svo_node" name="svo" clear_params="true"
+        output="screen" args="--v=0">
+    <param name="cam0_topic" value="$(arg cam0_topic)" type="str"/>
+    <param name="imu_topic"  value="$(arg imu_topic)"  type="str"/>
+    <param name="calib_file" value="$(arg calib_file)"/>
+    <rosparam file="$(arg param_file)"/>
+    <param name="runlc" value="$(arg runlc)"/>
+  </node>
+
+  <node if="$(arg rviz)" name="vis" pkg="rviz" type="rviz"
+        args="-d $(arg rviz_config)"/>
+</launch>

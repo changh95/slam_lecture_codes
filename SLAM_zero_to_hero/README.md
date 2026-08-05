@@ -146,6 +146,7 @@ echo "xhost +local:docker" >> ~/.profile
   - Chapter 2: Hands-on classical SLAM
     - [ORB-SLAM 2](orb_slam2)
     - [Basalt-VIO](basalt)
+    - [SVO Pro](svo_pro_open)
     - [Cartographer](cartographer)
     - [KISS-SLAM](kiss_slam)
     - [GLIM](glim)
@@ -197,7 +198,7 @@ echo "xhost +local:docker" >> ~/.profile
 
 ## Acknowledgements
 
-ORB-SLAM 2/3 authors, Basalt-VIO authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, and all the authors of the libraries used in this repository.
+ORB-SLAM 2/3 authors, Basalt-VIO authors, SVO/SVO Pro authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, and all the authors of the libraries used in this repository.
 
 ## Contributors
 
