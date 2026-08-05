@@ -50,9 +50,12 @@ add_executable(method_comparison examples/method_comparison.cpp)
 target_link_libraries(method_comparison ${PCL_LIBRARIES})
 
 # ============================================
-# Optional: TEASER++ support
+# TEASER++ (required by teaser_demo)
 # ============================================
-option(USE_TEASER "Build with TEASER++ support" OFF)
+# teaser_demo links the real TEASER++ solver and has no fallback path, so the
+# target is simply not built when the library is missing - a stand-in
+# implementation would only invite mistaking its numbers for TEASER++'s.
+option(USE_TEASER "Build teaser_demo against TEASER++" ON)
 
 if(USE_TEASER)
     find_package(teaserpp QUIET)
@@ -63,56 +66,27 @@ if(USE_TEASER)
             ${PCL_LIBRARIES}
             teaserpp::teaser_registration
         )
-        target_compile_definitions(teaser_demo PRIVATE WITH_TEASER)
+        # PCL's *EstimationOMP feature estimators pull in libgomp
+        find_package(OpenMP)
+        if(OpenMP_CXX_FOUND)
+            target_link_libraries(teaser_demo OpenMP::OpenMP_CXX)
+        endif()
     else()
-        message(STATUS "TEASER++ not found - teaser_demo will not be built")
+        message(WARNING "TEASER++ not found - teaser_demo will NOT be built")
         message(STATUS "To install TEASER++:")
         message(STATUS "  git clone https://github.com/MIT-SPARK/TEASER-plusplus.git")
-        message(STATUS "  cd TEASER-plusplus && mkdir build && cd build")
-        message(STATUS "  cmake .. && make && sudo make install")
+        message(STATUS "  cd TEASER-plusplus")
+        message(STATUS "  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF")
+        message(STATUS "  cmake --build build -j8 --target install")
     endif()
 else()
-    message(STATUS "TEASER++ support disabled (enable with -DUSE_TEASER=ON)")
-    # Build stub version without TEASER++ dependency
-    add_executable(teaser_demo examples/teaser_demo.cpp)
-    target_link_libraries(teaser_demo ${PCL_LIBRARIES})
-endif()
-
-# ============================================
-# Optional: KISS-ICP support
-# ============================================
-option(USE_KISS_ICP "Build with KISS-ICP support" OFF)
-
-if(USE_KISS_ICP)
-    find_package(kiss_icp QUIET)
-    if(kiss_icp_FOUND)
-        message(STATUS "KISS-ICP found - building kiss_icp_demo")
-        add_executable(kiss_icp_demo examples/kiss_icp_demo.cpp)
-        target_link_libraries(kiss_icp_demo
-            ${PCL_LIBRARIES}
-            kiss_icp::kiss_icp_pipeline
-        )
-        target_compile_definitions(kiss_icp_demo PRIVATE WITH_KISS_ICP)
-    else()
-        message(STATUS "KISS-ICP not found - kiss_icp_demo will not be built")
-        message(STATUS "To install KISS-ICP:")
-        message(STATUS "  pip install kiss-icp")
-        message(STATUS "  # Or from source:")
-        message(STATUS "  git clone https://github.com/PRBonn/kiss-icp.git")
-        message(STATUS "  cd kiss-icp/cpp && mkdir build && cd build")
-        message(STATUS "  cmake .. && make && sudo make install")
-    endif()
-else()
-    message(STATUS "KISS-ICP support disabled (enable with -DUSE_KISS_ICP=ON)")
-    # Build stub version without KISS-ICP dependency
-    add_executable(kiss_icp_demo examples/kiss_icp_demo.cpp)
-    target_link_libraries(kiss_icp_demo ${PCL_LIBRARIES})
+    message(STATUS "TEASER++ support disabled - teaser_demo will not be built")
 endif()
 
 # ============================================
 # Compiler flags
 # ============================================
-set(ALL_TARGETS gicp_demo ndt_demo method_comparison teaser_demo kiss_icp_demo)
+set(ALL_TARGETS gicp_demo ndt_demo method_comparison teaser_demo)
 
 foreach(target ${ALL_TARGETS})
     if(TARGET ${target})
@@ -126,23 +100,37 @@ foreach(target ${ALL_TARGETS})
 endforeach()
 
 # ============================================
+# Optional: rerun C++ SDK (live visualization)
+# ============================================
+find_package(rerun_sdk QUIET)
+if(rerun_sdk_FOUND)
+    message(STATUS "rerun C++ SDK found - demos stream results to a rerun viewer")
+    foreach(target ${ALL_TARGETS})
+        if(TARGET ${target})
+            target_link_libraries(${target} rerun_sdk)
+            target_compile_definitions(${target} PRIVATE HAVE_RERUN)
+        endif()
+    endforeach()
+else()
+    message(STATUS "rerun C++ SDK not found - demos run without live streaming")
+endif()
+
+# ============================================
 # Build summary
 # ============================================
 message(STATUS "")
-message(STATUS "=== Advanced ICP Methods Tutorial ===")
-message(STATUS "Core executables (always built):")
+message(STATUS "=== Advanced ICP Methods Tutorial (KITTI) ===")
+message(STATUS "Executables:")
 message(STATUS "  - gicp_demo:          Generalized ICP (plane-to-plane)")
 message(STATUS "  - ndt_demo:           Normal Distributions Transform")
 message(STATUS "  - method_comparison:  Compare ICP vs GICP vs NDT")
+if(TARGET teaser_demo)
+    message(STATUS "  - teaser_demo:        TEASER++ global registration")
+endif()
 message(STATUS "")
-message(STATUS "Optional executables:")
-message(STATUS "  - teaser_demo:        TEASER++ global registration (USE_TEASER=${USE_TEASER})")
-message(STATUS "  - kiss_icp_demo:      KISS-ICP odometry (USE_KISS_ICP=${USE_KISS_ICP})")
-message(STATUS "")
-message(STATUS "Usage:")
-message(STATUS "  ./gicp_demo <source.pcd> <target.pcd>")
-message(STATUS "  ./ndt_demo <source.pcd> <target.pcd> [resolution]")
-message(STATUS "  ./method_comparison <source.pcd> <target.pcd>")
-message(STATUS "  ./teaser_demo <source.pcd> <target.pcd>")
-message(STATUS "  ./kiss_icp_demo <sequence_dir>")
+message(STATUS "Usage (all demos read KITTI velodyne .bin scans):")
+message(STATUS "  ./gicp_demo [source.bin target.bin]")
+message(STATUS "  ./ndt_demo [source.bin target.bin [resolution]]")
+message(STATUS "  ./method_comparison [source.bin target.bin]")
+message(STATUS "  ./teaser_demo [source.bin target.bin]")
 message(STATUS "")

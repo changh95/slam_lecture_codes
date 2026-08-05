@@ -167,7 +167,7 @@ Final rotation error:     6.982 deg
 The per-frame translation is accurate, but a fraction of a degree of yaw error
 per frame integrates into a large across-track offset. Scan-to-scan ICP has no
 loop closure and no local map, so nothing ever corrects it.
-[part2_ch03_07](../part2_ch03_07) compares GICP / NDT / KISS-ICP on the same
+[part2_ch03_07](../part2_ch03_07) compares GICP / NDT / TEASER++ on the same
 data.
 
 ### Docker

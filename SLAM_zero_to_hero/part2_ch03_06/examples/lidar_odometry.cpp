@@ -625,7 +625,7 @@ void evaluateTrajectory(const std::vector<Eigen::Matrix4f>& estimated,
     std::cout << "small - the per-frame translation is accurate - while a fraction of a\n";
     std::cout << "degree of yaw error per frame integrates into a much larger\n";
     std::cout << "across-track offset. Heading, not distance, is what drifts.\n";
-    std::cout << "part2_ch03_07 compares GICP / NDT / KISS-ICP on the same data.\n";
+    std::cout << "part2_ch03_07 compares GICP / NDT / TEASER++ on the same data.\n";
 }
 
 /**
