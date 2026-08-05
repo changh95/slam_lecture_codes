@@ -1,0 +1,87 @@
+{
+  "_comment": [
+    "Calibration for the head-mounted Intel RealSense D435 in the Humanoid",
+    "Everyday recordings. Intrinsics and depth_to_colour are copied verbatim",
+    "from the dataset README (github.com/physical-superintelligence-lab/",
+    "Humanoid-Everyday). Depth is stored in the *depth* camera frame -- the",
+    "dataset's own example loader deprojects it with the depth intrinsics -- so",
+    "the two imagers do not share a projection.",
+    "",
+    "pelvis_to_colour_camera is NOT in the dataset. It was measured here from",
+    "the G1 loco_manipulation recordings: the rotation by hand-eye between the",
+    "depth-ICP camera trajectory and the odometry orientation (1.4 deg median",
+    "residual over 10-frame steps), the z offset from a RANSAC floor plane",
+    "(camera 1.209 m above the floor, pelvis 0.718 m by odometry). The forward",
+    "offset x is nominal from the G1's head placement, not measured -- it only",
+    "affects `--poses odom`, which this demo uses for comparison, not for",
+    "mapping.",
+    "",
+    "Pelvis frame is x forward, y left, z up. The measured rotation is a",
+    "forward-looking camera pitched 56.1 deg down, 3.6 deg off centre in yaw,",
+    "1.0 deg of roll -- which is why so much of the FOV is floor and tabletop."
+  ],
+  "robots": {
+    "g1": {
+      "colour_intrinsics": {
+        "fx": 606.2996826171875,
+        "fy": 606.292236328125,
+        "cx": 330.7660217285156,
+        "cy": 252.64605712890625
+      },
+      "depth_intrinsics": {
+        "fx": 386.00103759765625,
+        "fy": 386.00103759765625,
+        "cx": 320.4173278808594,
+        "cy": 240.45770263671875
+      },
+      "depth_to_colour": {
+        "rotation": [
+          [0.999901533126831, -0.012537548318505287, 0.006302413530647755],
+          [0.012552149593830109, 0.9999186396598816, -0.002282573375850916],
+          [-0.006273282691836357, 0.002361457562074065, 0.9999775290489197]
+        ],
+        "translation": [0.01490413211286068, -5.230475835560355e-06, 0.00011887117580045015]
+      },
+      "pelvis_to_colour_camera": {
+        "rotation": [
+          [-0.037086, -0.830167, 0.556280],
+          [-0.999154, 0.020899, -0.035422],
+          [0.017781, -0.557123, -0.830239]
+        ],
+        "translation": [0.08, 0.0, 0.491]
+      }
+    },
+    "h1": {
+      "colour_intrinsics": {
+        "fx": 606.8150634765625,
+        "fy": 606.3350219726562,
+        "cx": 321.4926452636719,
+        "cy": 247.55596923828125
+      },
+      "depth_intrinsics": {
+        "fx": 392.0318908691406,
+        "fy": 392.0318908691406,
+        "cx": 320.19580078125,
+        "cy": 235.5817413330078
+      },
+      "depth_to_colour": {
+        "rotation": [
+          [0.9999892115592957, -0.004639937076717615, -0.00007807503425283358],
+          [0.004640140105038881, 0.9999852180480957, 0.0028337170369923115],
+          [0.00006492561078630388, -0.0028340488206595182, 0.9999960064888]
+        ],
+        "translation": [0.014403801411390305, -0.00011738666944438592, 0.0005498263635672629]
+      },
+      "_pelvis_to_colour_camera_comment":
+        "Not measured. The G1 rotation is reused and the height scaled to the H1's taller torso, so `--poses odom` on H1 sequences is indicative only.",
+      "pelvis_to_colour_camera": {
+        "rotation": [
+          [-0.037086, -0.830167, 0.556280],
+          [-0.999154, 0.020899, -0.035422],
+          [0.017781, -0.557123, -0.830239]
+        ],
+        "translation": [0.10, 0.0, 0.70]
+      }
+    }
+  }
+}

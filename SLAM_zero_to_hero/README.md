@@ -194,12 +194,12 @@ echo "xhost +local:docker" >> ~/.profile
   - Project 2: [SLAM for drones](svo_pro_open)
   - Project 3: [SLAM for mobile scanner systems](uamc)
   - Project 4: [SLAM for quadruped robots](cerberus_2)
-  - Project 5: SLAM for humanoid robots
+  - Project 5: [SLAM for humanoid robots](nvblox)
   - Project 6: SLAM for VR/AR headsets
 
 ## Acknowledgements
 
-ORB-SLAM 2/3 authors, Basalt-VIO authors, SVO/SVO Pro authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, Cerberus/Cerberus 2.0 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, and all the authors of the libraries used in this repository.
+ORB-SLAM 2/3 authors, Basalt-VIO authors, SVO/SVO Pro authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, Cerberus/Cerberus 2.0 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, nvblox authors, Humanoid Everyday authors, and all the authors of the libraries used in this repository.
 
 ## Contributors
 
