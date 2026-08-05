@@ -6,10 +6,15 @@
  * - Loading source and target point clouds
  * - Setting up pcl::IterativeClosestPoint
  * - Configuring ICP parameters (iterations, epsilon, correspondence distance)
- * - Running ICP alignment and getting results
+ * - Running ICP alignment and scoring the result against a known transform
  *
- * Usage: ./icp_basic source.pcd target.pcd [--generate]
- *        --generate: Generate sample point clouds for testing
+ * By default the Stanford bunny (data/bun_zipper_res3.ply) is used as the
+ * target, and the source is the same model displaced by a known transform, so
+ * the estimate can be compared against the exact answer.
+ *
+ * Usage: ./icp_basic                       # Stanford bunny (default)
+ *        ./icp_basic source.pcd target.pcd # your own pair
+ *        ./icp_basic --generate            # synthetic half-sphere
  */
 
 #include <iostream>
@@ -22,13 +27,13 @@
 #include <pcl/point_types.h>
 #include <pcl/registration/icp.h>
 #include <pcl/common/transforms.h>
-#include <pcl/filters/voxel_grid.h>
 
 #include <Eigen/Dense>
 
-// Type aliases for convenience
-using PointT = pcl::PointXYZ;
-using PointCloudT = pcl::PointCloud<PointT>;
+#include "demo_common.hpp"
+
+using PointT = demo::PointT;
+using PointCloudT = demo::CloudT;
 
 /**
  * @brief Generate a sample point cloud (a simple bunny-like shape)
@@ -59,51 +64,6 @@ PointCloudT::Ptr generateSampleCloud(int num_points = 5000)
     return cloud;
 }
 
-/**
- * @brief Apply a transformation to create a transformed copy of the cloud
- */
-PointCloudT::Ptr transformCloud(const PointCloudT::Ptr& cloud,
-                                  float tx, float ty, float tz,
-                                  float rx, float ry, float rz)
-{
-    // Create transformation matrix
-    Eigen::Affine3f transform = Eigen::Affine3f::Identity();
-
-    // Rotation (in radians)
-    transform.rotate(Eigen::AngleAxisf(rx, Eigen::Vector3f::UnitX()));
-    transform.rotate(Eigen::AngleAxisf(ry, Eigen::Vector3f::UnitY()));
-    transform.rotate(Eigen::AngleAxisf(rz, Eigen::Vector3f::UnitZ()));
-
-    // Translation
-    transform.translation() << tx, ty, tz;
-
-    PointCloudT::Ptr transformed(new PointCloudT);
-    pcl::transformPointCloud(*cloud, *transformed, transform);
-
-    return transformed;
-}
-
-/**
- * @brief Print transformation matrix in a readable format
- */
-void printTransformation(const Eigen::Matrix4f& T, const std::string& name)
-{
-    std::cout << "\n" << name << ":\n";
-    std::cout << "  Rotation matrix:\n";
-    for (int i = 0; i < 3; ++i)
-    {
-        std::cout << "    [";
-        for (int j = 0; j < 3; ++j)
-        {
-            std::cout << std::fixed << std::setprecision(6) << std::setw(10) << T(i, j);
-            if (j < 2) std::cout << ", ";
-        }
-        std::cout << "]\n";
-    }
-    std::cout << "  Translation: ["
-              << T(0, 3) << ", " << T(1, 3) << ", " << T(2, 3) << "]\n";
-}
-
 int main(int argc, char** argv)
 {
     std::cout << "=== Basic Point-to-Point ICP Example ===\n\n";
@@ -111,9 +71,9 @@ int main(int argc, char** argv)
     PointCloudT::Ptr source_cloud(new PointCloudT);
     PointCloudT::Ptr target_cloud(new PointCloudT);
 
-    // Check for generate flag or load from files
     bool generate_mode = false;
-    std::string source_file, target_file;
+    bool help_mode = false;
+    std::vector<std::string> files;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -122,69 +82,121 @@ int main(int argc, char** argv)
         {
             generate_mode = true;
         }
+        else if (arg == "--help" || arg == "-h")
+        {
+            help_mode = true;
+        }
+        else if (arg[0] != '-')
+        {
+            files.push_back(arg);
+        }
     }
+
+    if (help_mode)
+    {
+        std::cout << "Usage: " << argv[0] << "                        (Stanford bunny)\n";
+        std::cout << "       " << argv[0] << " source.pcd target.pcd\n";
+        std::cout << "       " << argv[0] << " --generate\n";
+        std::cout << "\nOptions:\n";
+        std::cout << "  (no arguments)          Use data/" << demo::kBunnyFile
+                  << " with a known transform\n";
+        std::cout << "  source, target          Input clouds (.ply, .pcd, or KITTI .bin)\n";
+        std::cout << "  --generate, -g          Generate a synthetic half-sphere instead\n";
+        return 0;
+    }
+
+    // The known transform applied to build the source cloud, when the demo
+    // creates the pair itself. Filled in once the model scale is known.
+    Eigen::Matrix4f ground_truth = Eigen::Matrix4f::Identity();
+    bool have_ground_truth = false;
 
     if (generate_mode)
     {
         std::cout << "Generating sample point clouds...\n";
 
-        // Generate target cloud
         target_cloud = generateSampleCloud(5000);
         std::cout << "Target cloud: " << target_cloud->size() << " points\n";
-
-        // Create source by transforming target
-        // Known transformation: translate (0.1, 0.05, 0.02) and rotate 5 degrees around Z
-        float angle = 5.0f * M_PI / 180.0f;  // 5 degrees in radians
-        source_cloud = transformCloud(target_cloud, 0.1f, 0.05f, 0.02f, 0.0f, 0.0f, angle);
-        std::cout << "Source cloud: " << source_cloud->size() << " points\n";
-        std::cout << "Applied transformation: tx=0.1, ty=0.05, tz=0.02, rz=5deg\n";
     }
-    else if (argc >= 3)
+    else if (files.size() >= 2)
     {
-        source_file = argv[1];
-        target_file = argv[2];
-
         std::cout << "Loading point clouds from files...\n";
 
-        // Load source cloud
-        if (pcl::io::loadPCDFile<PointT>(source_file, *source_cloud) == -1)
+        source_cloud = demo::loadCloud(files[0]);
+        if (!source_cloud)
         {
-            std::cerr << "Error: Could not load source cloud: " << source_file << "\n";
+            std::cerr << "Error: Could not load source cloud: " << files[0] << "\n";
             return -1;
         }
-        std::cout << "Source cloud: " << source_cloud->size() << " points from " << source_file << "\n";
+        std::cout << "Source cloud: " << source_cloud->size() << " points from " << files[0] << "\n";
 
-        // Load target cloud
-        if (pcl::io::loadPCDFile<PointT>(target_file, *target_cloud) == -1)
+        target_cloud = demo::loadCloud(files[1]);
+        if (!target_cloud)
         {
-            std::cerr << "Error: Could not load target cloud: " << target_file << "\n";
+            std::cerr << "Error: Could not load target cloud: " << files[1] << "\n";
             return -1;
         }
-        std::cout << "Target cloud: " << target_cloud->size() << " points from " << target_file << "\n";
+        std::cout << "Target cloud: " << target_cloud->size() << " points from " << files[1] << "\n";
     }
     else
     {
-        std::cout << "Usage: " << argv[0] << " source.pcd target.pcd\n";
-        std::cout << "       " << argv[0] << " --generate\n";
-        std::cout << "\nOptions:\n";
-        std::cout << "  source.pcd, target.pcd  Input point cloud files\n";
-        std::cout << "  --generate, -g          Generate sample point clouds for testing\n";
-        return 0;
+        // Default: the Stanford bunny, or any single cloud given on the command line
+        const std::string model = files.empty() ? demo::findDataFile(demo::kBunnyFile) : files[0];
+
+        if (model.empty())
+        {
+            std::cerr << "Error: Could not find data/" << demo::kBunnyFile << ".\n";
+            std::cerr << "Run from the project root or build/ directory, "
+                         "or pass a cloud file explicitly.\n";
+            return -1;
+        }
+
+        target_cloud = demo::loadCloud(model);
+        if (!target_cloud)
+        {
+            std::cerr << "Error: Could not load " << model << "\n";
+            return -1;
+        }
+        std::cout << "Loaded " << target_cloud->size() << " points from " << model << "\n";
+
+        // Centre the model so the injected rotation turns it about its own axis
+        target_cloud = demo::centerCloud(*target_cloud);
+    }
+
+    // ============================================
+    // Model scale
+    // ============================================
+    // The bunny is ~0.25 m across while a LiDAR scan spans ~100 m, so every
+    // distance below is a fraction of the bounding-box diagonal rather than a
+    // hard-coded value.
+    const double scale = demo::bboxDiagonal(*target_cloud);
+    const double voxel_size = scale * 0.005;
+    const double max_correspondence_distance = scale * 0.1;
+
+    std::cout << "\nModel scale (bbox diagonal): " << std::fixed << std::setprecision(4)
+              << scale << " m\n";
+
+    // Build the source cloud by displacing the target, when the demo owns the pair
+    if (source_cloud->empty())
+    {
+        const float shift = static_cast<float>(scale * 0.04);
+        const float angle = 8.0f * M_PI / 180.0f;
+
+        ground_truth = demo::makeTransform(shift, shift * 0.5f, shift * 0.2f, 0.0f, 0.0f, angle);
+        have_ground_truth = true;
+
+        pcl::transformPointCloud(*target_cloud, *source_cloud, ground_truth);
+
+        std::cout << "Source cloud: " << source_cloud->size() << " points\n";
+        std::cout << "Applied transformation: t=(" << std::setprecision(4) << shift << ", "
+                  << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=8deg\n";
     }
 
     // Optional: Downsample clouds for faster processing
-    std::cout << "\nDownsampling clouds with voxel size 0.01...\n";
-    pcl::VoxelGrid<PointT> voxel;
-    voxel.setLeafSize(0.01f, 0.01f, 0.01f);
+    std::cout << "\nDownsampling clouds with voxel size " << std::setprecision(4)
+              << voxel_size << " m...\n";
 
-    PointCloudT::Ptr source_filtered(new PointCloudT);
-    PointCloudT::Ptr target_filtered(new PointCloudT);
-
-    voxel.setInputCloud(source_cloud);
-    voxel.filter(*source_filtered);
-
-    voxel.setInputCloud(target_cloud);
-    voxel.filter(*target_filtered);
+    PointCloudT::Ptr source_filtered = demo::voxelDownsample(*source_cloud, voxel_size);
+    PointCloudT::Ptr target_filtered = demo::voxelDownsample(*target_cloud, voxel_size);
 
     std::cout << "Source after filtering: " << source_filtered->size() << " points\n";
     std::cout << "Target after filtering: " << target_filtered->size() << " points\n";
@@ -202,15 +214,16 @@ int main(int argc, char** argv)
 
     // Set ICP parameters
     icp.setMaximumIterations(50);           // Maximum number of iterations
-    icp.setTransformationEpsilon(1e-8);     // Transformation epsilon (convergence criteria)
-    icp.setEuclideanFitnessEpsilon(1e-6);   // Euclidean fitness epsilon (MSE convergence)
-    icp.setMaxCorrespondenceDistance(0.5);  // Maximum correspondence distance
+    icp.setTransformationEpsilon(1e-10);    // Transformation epsilon (convergence criteria)
+    icp.setEuclideanFitnessEpsilon(1e-8);   // Euclidean fitness epsilon (MSE convergence)
+    icp.setMaxCorrespondenceDistance(max_correspondence_distance);
 
     std::cout << "ICP Parameters:\n";
     std::cout << "  Max iterations: 50\n";
-    std::cout << "  Transformation epsilon: 1e-8\n";
-    std::cout << "  Euclidean fitness epsilon: 1e-6\n";
-    std::cout << "  Max correspondence distance: 0.5\n";
+    std::cout << "  Transformation epsilon: 1e-10\n";
+    std::cout << "  Euclidean fitness epsilon: 1e-8\n";
+    std::cout << "  Max correspondence distance: " << std::setprecision(4)
+              << max_correspondence_distance << " m (10% of model scale)\n";
 
     // ============================================
     // Run ICP alignment
@@ -236,39 +249,43 @@ int main(int argc, char** argv)
     if (icp.hasConverged())
     {
         Eigen::Matrix4f transformation = icp.getFinalTransformation();
-        printTransformation(transformation, "Estimated Transformation (Source -> Target)");
+        demo::printTransformation(transformation, "Estimated Transformation (Source -> Target)");
 
-        // Compute inverse to get Target -> Source transformation
-        Eigen::Matrix4f inverse_transformation = transformation.inverse();
-        printTransformation(inverse_transformation, "Inverse Transformation (Target -> Source)");
+        if (have_ground_truth)
+        {
+            // ICP aligns source onto target, so it recovers the inverse of the
+            // transform that produced the source.
+            demo::printTransformation(ground_truth.inverse(),
+                                      "Ground Truth Transformation (Source -> Target)");
+            demo::printPoseError(transformation, ground_truth.inverse(), scale);
+        }
 
-        // Interpret the fitness score
-        double fitness = icp.getFitnessScore();
+        // Interpret the fitness score, relative to the model scale
+        const double fitness = icp.getFitnessScore();
+        const double relative = std::sqrt(fitness) / scale;
         std::cout << "\nAlignment quality: ";
-        if (fitness < 0.001)
+        if (relative < 0.001)
         {
-            std::cout << "Excellent (MSE < 0.001)\n";
+            std::cout << "Excellent (RMS < 0.1% of model size)\n";
         }
-        else if (fitness < 0.01)
+        else if (relative < 0.01)
         {
-            std::cout << "Good (MSE < 0.01)\n";
+            std::cout << "Good (RMS < 1% of model size)\n";
         }
-        else if (fitness < 0.1)
+        else if (relative < 0.05)
         {
-            std::cout << "Acceptable (MSE < 0.1)\n";
+            std::cout << "Acceptable (RMS < 5% of model size)\n";
         }
         else
         {
-            std::cout << "Poor (MSE >= 0.1) - consider better initial guess or parameters\n";
+            std::cout << "Poor (RMS >= 5% of model size) - "
+                         "consider a better initial guess or parameters\n";
         }
 
         // Save aligned cloud
-        if (!generate_mode)
-        {
-            std::string output_file = "aligned_cloud.pcd";
-            pcl::io::savePCDFileBinary(output_file, *aligned_cloud);
-            std::cout << "\nAligned cloud saved to: " << output_file << "\n";
-        }
+        const std::string output_file = "aligned_cloud.pcd";
+        pcl::io::savePCDFileBinary(output_file, *aligned_cloud);
+        std::cout << "\nAligned cloud saved to: " << output_file << "\n";
     }
     else
     {
