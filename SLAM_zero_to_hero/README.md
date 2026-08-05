@@ -191,7 +191,7 @@ echo "xhost +local:docker" >> ~/.profile
 - Final projects
   - Project 1: [SLAM for autonomous driving](monolane_mapping)
   - Project 2: [SLAM for drones](svo_pro_open)
-  - Project 3: SLAM for mobile scanner systems
+  - Project 3: [SLAM for mobile scanner systems](uamc)
   - Project 4: SLAM for quadruped robots
   - Project 5: SLAM for humanoid robots
   - Project 6: SLAM for VR/AR headsets
