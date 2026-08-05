@@ -71,6 +71,32 @@ Two things to know about this configuration:
 - **`config/avia_retail_street.yaml` exists only because upstream's `avia.yaml` sets `evo.pose_output_en: false`.** A stock `mapping_avia.launch` run writes **no trajectory at all**. That file is upstream's `avia.yaml` with exactly two changes: `pose_output_en: true` and `seq_name: "Retail_Street"`.
 - **`rviz` defaults to `true`** in `mapping_avia.launch`, so `rviz:=false` is mandatory for a headless run. `run_avia.sh` handles that, plus the SIGINT-then-wait needed for FAST-LIVO2 to flush its trajectory as `main()` unwinds.
 
+### Watching it run (GUI on your desktop)
+
+Add `RVIZ=true` plus the X11 + GPU flags to the command above. `mapping_avia.launch` starts rviz with the bundled `rviz_cfg/fast_livo2.rviz`, which shows the colourized map building up alongside the `/rgb_img` camera view — the clearest way to see that this is LiDAR-**visual** odometry and not LIO alone:
+
+```bash
+mkdir -p results/gui
+timeout 1800 podman run --rm \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
+  -e DISPLAY=$DISPLAY -e XDG_RUNTIME_DIR=/tmp/runtime-root \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/data/fast_livo2:/data:ro \
+  -v "$PWD/results/gui":/catkin_ws/src/FAST-LIVO2/Log/result:rw \
+  -v "$PWD/results/gui":/out:rw \
+  -v "$PWD/config/avia_retail_street.yaml":/catkin_ws/src/FAST-LIVO2/config/avia.yaml:ro \
+  -v "$PWD/run_avia.sh":/run.sh:ro \
+  -e RVIZ=true \
+  slam_zero_to_hero:fast_livo2 bash /run.sh
+```
+
+Two packages exist in the image purely for this and are not in `ros:noetic`: `ros-noetic-rviz`, and `ros-noetic-compressed-image-transport` — without the latter only the `raw` transport registers, the launch file's `republish compressed in:=… raw out:=…` node cannot subscribe, and the image view stays blank on bags that ship compressed images.
+
+**No `xhost` change and no `--net=host`** are needed (rootless podman already authenticates as your uid; X goes over the bind-mounted socket). The `--runtime` and `NVIDIA_*` lines give rviz hardware GL on the RTX 5090 rather than software rendering. Confirm the window with `xwininfo -root -tree | grep -i rviz`, not `-root -children`.
+
+Expect one cosmetic red herring: rviz's `RobotModel` display shows an error, because there is no URDF for this rig. It does not affect the map.
+
 ### The timestamps really do say the year 2000
 
 The output trajectory starts at `946685437.899828` (2000-01-01), while `rosbag info` reports `start: Sep 27 2022`. Nothing is broken: the message header stamps *in the bag* are the Livox device clock, which was never wall-synced —

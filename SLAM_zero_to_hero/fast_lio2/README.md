@@ -57,6 +57,31 @@ python3 scripts/traj_stats.py results/fullA/fastlio_traj_tum.txt
 
 There is **no ATE for this sequence** — Hilti withheld ground truth for `exp14_basement_2`, and `evo` is not in the image. Judge the run by self-consistency instead: path length, inter-frame smoothness, and map crispness.
 
+## Watching it run (GUI on your desktop)
+
+Set `RVIZ=true` and add the X11 + GPU flags. `mapping_hilti.launch` then starts rviz with FAST_LIO's own `rviz_cfg/loam_livox.rviz`, so you watch the point cloud accumulate and the body frame move as the bag plays:
+
+```bash
+mkdir -p results/gui
+timeout 900 podman run --rm \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
+  -e DISPLAY=$DISPLAY -e XDG_RUNTIME_DIR=/tmp/runtime-root \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/data/hilti_2022:/data:ro \
+  -v "$PWD/results/gui":/out \
+  -v "$PWD/config/hilti_pandarxt32.yaml":/catkin_ws/src/FAST_LIO/config/hilti_pandarxt32.yaml:ro \
+  -v "$PWD/launch/mapping_hilti.launch":/catkin_ws/src/FAST_LIO/launch/mapping_hilti.launch:ro \
+  -v "$PWD/scripts":/scripts:ro \
+  -v "$PWD/run_hilti_offline.sh":/run.sh:ro \
+  -e RVIZ=true -e CONFIG=hilti_pandarxt32 \
+  slam_zero_to_hero:fast_lio2 bash /run.sh
+```
+
+`rviz` is installed for exactly this (it is not in `ros:noetic`), and renders on the RTX 5090 via the `--runtime` flags — without them it falls back to software GL. **No `xhost` change and no `--net=host` are needed**: podman here is rootless, so container root maps to your uid, which X already authorizes, and the connection goes over the bind-mounted socket.
+
+`XDG_RUNTIME_DIR` only silences rviz's `QStandardPaths: XDG_RUNTIME_DIR not set` warning. To confirm the window mapped, use `xwininfo -root -tree | grep -i rviz` — `-root -children` shows only a stray `Tool Properties` dock and reads as a failed launch.
+
 ## Why the Hesai needs its own config
 
 `config/hilti_pandarxt32.yaml` sets `lidar_type: 2` (the **Velodyne** branch). The reasoning matters more than the value:

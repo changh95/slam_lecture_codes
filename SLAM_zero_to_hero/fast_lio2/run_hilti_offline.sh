@@ -20,13 +20,19 @@ DURATION="${DURATION:-}"
 CONFIG="${CONFIG:-hilti_pandarxt32}"
 SAVE_PCD="${SAVE_PCD:-0}"
 RELAY="${RELAY:-0}"
+RVIZ="${RVIZ:-false}"
 
-source /opt/ros/noetic/setup.bash
-source /catkin_ws/devel/setup.bash
-
+# Export these BEFORE sourcing setup.bash. ROS's own
+# etc/catkin/profile.d/10.roslaunch.sh reads $ROS_MASTER_URI, and under `set -u`
+# an unset ROS_MASTER_URI aborts the whole script with "unbound variable" before
+# anything runs. (Only shows up when the container's ros_entrypoint.sh is
+# bypassed, e.g. --entrypoint /bin/bash, which is exactly what a GUI run does.)
 export ROS_MASTER_URI=http://localhost:11311
 export ROS_HOSTNAME=localhost
 export ROS_IP=127.0.0.1
+
+source /opt/ros/noetic/setup.bash
+source /catkin_ws/devel/setup.bash
 
 echo "[run] roscore (container-private netns, no --net=host)"
 roscore >/out/roscore.log 2>&1 &
@@ -42,8 +48,8 @@ fi
 
 PCD_ARG=false
 [ "$SAVE_PCD" = "1" ] && PCD_ARG=true
-echo "[run] roslaunch fast_lio mapping_hilti.launch config:=$CONFIG rviz:=false pcd_save:=$PCD_ARG"
-roslaunch fast_lio mapping_hilti.launch config:="$CONFIG" rviz:=false pcd_save:="$PCD_ARG" \
+echo "[run] roslaunch fast_lio mapping_hilti.launch config:=$CONFIG rviz:=$RVIZ pcd_save:=$PCD_ARG"
+roslaunch fast_lio mapping_hilti.launch config:="$CONFIG" rviz:="$RVIZ" pcd_save:="$PCD_ARG" \
     >/out/fastlio_stdout.log 2>&1 &
 LAUNCH_PID=$!
 

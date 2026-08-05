@@ -89,19 +89,32 @@ Output:
 
 The marginalization dump (`--marg-data /out/<name>_marg`) is only useful for downstream BA or re-optimization. It costs real time and disk: **663 MiB / 918 `.cereal` files** for EuRoC MH_01, and **4.1 GB** for the 8105-frame Monado sequence. Omitting it cut the Monado run from 85.1 s to 69.6 s — **18 % faster**. Both verified runs above leave it out deliberately.
 
-## Watching it run
+## Watching it run (GUI on your desktop)
 
 ```bash
-xhost +local:root
-podman run --rm \
-  --net=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v ~/data/euroc_mav/MH_01_easy:/dataset:ro \
+podman run --rm -it \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
+  -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
   slam_zero_to_hero:basalt \
   basalt_vio --show-gui 1 \
-    --dataset-path /dataset --dataset-type euroc \
-    --cam-calib /usr/local/share/basalt/euroc_eucm_calib.json \
-    --config-path /usr/local/share/basalt/euroc_config.json
+    --dataset-path /MIPB07_beatsaber_fitbeat_expertplus_2 \
+    --dataset-type euroc \
+    --cam-calib /usr/local/share/basalt/msdmi_calib.json \
+    --config-path /usr/local/share/basalt/msdmi_config.json
 ```
+
+That runs the baked-in Monado sequence, so it needs no bind-mounted dataset at all. For EuRoC instead, add `-v ~/data/euroc_mav/MH_01_easy:/dataset:ro` and point `--dataset-path` at `/dataset` with the `euroc_eucm_calib.json` / `euroc_config.json` pair.
+
+One Pangolin window titled **`Main`** opens: a `show_frame` slider, the stereo images with tracked features, and the 3D trajectory and landmark view, plus toggles for the feature and highlight menus.
+
+Three notes on the flags, each verified on this host:
+
+- **No `xhost +local:root`** — unnecessary (rootless podman already authenticates as your uid) and a needless security downgrade. Earlier revisions of this file said to run it.
+- **No `--net=host`** — the X connection goes over the bind-mounted socket.
+- **The `--runtime` and `NVIDIA_*` lines matter.** Without them this image renders through Mesa `swrast` software rasterization even though it is built `FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu22.04`; with them you get `NVIDIA GeForce RTX 5090` and OpenGL 4.6. podman 3.4 predates CDI, so `--device nvidia.com/gpu=all` does not work here.
+
+To confirm the window mapped, use `xwininfo -root -tree | grep Main` — `-root -children` misses it because the window manager reparents it.
 
 ## Other configs
 

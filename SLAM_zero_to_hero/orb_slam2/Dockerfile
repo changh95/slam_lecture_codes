@@ -39,13 +39,18 @@ RUN git clone https://github.com/changh95/Portable_ORB_SLAM2.git &&\
 # virtual one (`xvfb-run -a ./mono_kitti ...`) for headless / CI runs; X11
 # forwarding still works when you do want to watch the map being built.
 #
-# libgl1-mesa-dri is the part that makes a *headless* GL context possible:
-# libgl1-mesa-dev alone ships no DRI driver, so Pangolin dies inside Xvfb with
+# libgl1-mesa-dri is what makes the *headless* Xvfb path possible: libgl1-mesa-dev
+# alone ships no DRI driver, so Pangolin dies inside Xvfb with
 #   CommonMakeCurrent: Assertion `oldCtxInfo != NULL' failed
-# Pair it with LIBGL_ALWAYS_SOFTWARE=1 at run time to force the llvmpipe
-# software rasterizer instead of hunting for a GPU that isn't in the container.
-RUN apt-get install -y xvfb libgl1-mesa-dri mesa-utils && apt-get clean
-ENV LIBGL_ALWAYS_SOFTWARE=1
+# Under Xvfb, Mesa then auto-selects the llvmpipe software rasterizer on its own;
+# no LIBGL_ALWAYS_SOFTWARE is needed (verified both with and without it).
+#
+# Deliberately NOT setting ENV LIBGL_ALWAYS_SOFTWARE=1. It is a Mesa-only knob, so
+# once nvidia-container-runtime injects the NVIDIA GLVND vendor library it is
+# ignored outright -- but on a host where Mesa can reach /dev/dri it would force
+# software GL for the GUI path for no reason. libcanberra-gtk-module only silences
+# a GTK warning from the OpenCV frame window.
+RUN apt-get install -y xvfb libgl1-mesa-dri mesa-utils libcanberra-gtk-module && apt-get clean
 
 # `xvfb-run -a` intermittently hangs in this image without ever exec'ing its
 # child, so ship a deterministic wrapper instead: it starts Xvfb, waits for the

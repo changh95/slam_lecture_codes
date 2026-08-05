@@ -102,6 +102,33 @@ That second one is counter-intuitive, so it's worth being precise about what it 
 
 One genuine latent bug surfaced while checking this, in `kiss_icp/tools/point_cloud2.py::read_point_cloud`: NaN rows are filtered from `points` but **not** from `timestamps`, so the two arrays desynchronize on any cloud containing NaNs. Harmless for this bag (`is_dense: True`), but it would silently corrupt deskewing on a sensor that publishes NaN returns.
 
+## Watching it run (GUI on your desktop)
+
+`--visualize` / `-v` opens an Open3D window titled `RegistrationVisualizer` showing the local map and the growing trajectory:
+
+```bash
+podman run --rm -it \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
+  -e DISPLAY=$DISPLAY -e XDG_RUNTIME_DIR=/tmp/runtime-root \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/data/kitti_vo_slam/extracted/dataset:/data:ro \
+  -v "$(pwd)/results":/out -w /out \
+  slam_zero_to_hero:kiss_slam \
+  kiss_slam_pipeline --visualize --dataloader kitti --sequence 00 /data
+```
+
+No extra packages are needed — Open3D 0.19.0 and its X11/GL dependencies are already in the image, and it renders on the RTX 5090 via the `--runtime` flags. As elsewhere, **no `xhost` change and no `--net=host`**. `XDG_RUNTIME_DIR` suppresses a misleading `error: XDG_RUNTIME_DIR not set in the environment.` line that GLFW prints while probing for Wayland; the X11 path works regardless.
+
+Four things will confuse you if nobody says them first:
+
+- **It starts paused.** The window sits at `0/N` until you press `space`, and the instruction is printed only to stdout — so a student watching the window concludes it hung. Press `space` to run, `n` to step one frame, `esc` to quit.
+- **`--visualize`'s help text is wrong.** It claims "Visualize Ground Truth Loop Closures"; no ground truth and no closures are drawn. The closure-drawing code is dead in v0.0.2 — `RegistrationVisualizer.__init__` sets `self.closures = []` and nothing ever appends to it, so the red closure edges can never appear. Upstream bug, not something to fix here.
+- **The camera does not follow.** The viewpoint is set once at startup, so on a long sequence the map slides out of frame and the window looks frozen. Press `c` to re-centre.
+- **It costs ~60 % throughput** — 71 Hz headless versus ~28 Hz with the viewer on KITTI 00 — because every odometry pose is removed and re-added as an individual sphere mesh on each keypose update. Accuracy is unaffected, so keep runs you intend to measure headless.
+
+To confirm the window mapped, use `xwininfo -root -tree | grep RegistrationVisualizer`; `-root -children` misses it because the window manager reparents the GLFW window.
+
 ## Outputs
 
 Filenames derive from the loader and sequence, so they are not fixed. With `--dataloader rosbag` they are named after the bag; with `--dataloader kitti --sequence 04` you get `04_poses_*` **plus** `04_gt_*` ground-truth twins.

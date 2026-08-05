@@ -65,6 +65,19 @@ RUN . /opt/ros/noetic/setup.sh && . /catkin_ws/devel/setup.sh && \
 
 RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh
 
+# GUI prerequisites, both of which were missing:
+#   ros-noetic-rviz -- mapping_avia.launch defaults to rviz:=true and points at the
+#     bundled rviz_cfg/fast_livo2.rviz, but rviz was never installed, so the launch
+#     file's own default failed.
+#   ros-noetic-compressed-image-transport -- the launch file runs an image_transport
+#     `republish compressed in:=... raw out:=...` node. Without the plugin only
+#     'raw_sub' is registered, so the republish node cannot subscribe and the image
+#     view stays empty on bags that ship compressed images.
+# Kept as its own layer after catkin_make so the GUI costs one cheap rebuild.
+RUN apt-get update -y && apt-get install -y \
+      ros-noetic-rviz ros-noetic-compressed-image-transport && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /data
 
 ENTRYPOINT ["/ros_entrypoint.sh"]

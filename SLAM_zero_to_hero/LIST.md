@@ -6,7 +6,7 @@
 |---|---|---|---|
 | **EuRoC MAV** | `~/data/euroc_mav/MH_01_easy/` | stereo + IMU | basalt, kimera, orb_slam2 (mono/stereo) |
 | **TUM RGB-D** | `~/data/tum_rgbd/rgbd_dataset_freiburg{1,2,3}_*` | RGB-D | orb_slam2 (rgbd_tum), pin_slam, gaussian_splatting_slam, mast3r_slam |
-| **Hilti 2022** | `~/data/hilti_2022/exp14_basement_2.bag` | Hesai PandarXT-32 + Alphasense IMU + 5x cam | fast_lio2, fast_livo2, kiss_slam, cartographer (2D) |
+| **Hilti 2022** | `~/data/hilti_2022/exp14_basement_2.bag` | Hesai PandarXT-32 + Alphasense IMU + 5x cam | fast_lio2, fast_livo2, kiss_slam, cartographer (3D + IMU) |
 | **KITTI odometry** | `~/data/kitti_vo_slam/extracted/dataset/` | stereo grey + Velodyne HDL-64E + GT poses | orb_slam2 (mono/stereo), glim, kiss_slam |
 | **cow_and_lady** | `~/data/cow_and_lady/` | RGB-D + Vicon | voxblox |
 | **Monado SLAM** | baked into the `basalt` image at `/MIPB07_beatsaber_fitbeat_expertplus_2` | Valve Index stereo + IMU | basalt |
@@ -36,7 +36,7 @@ Status legend: ✅ verified end-to-end (Docker build → real-data run → captu
 | orb_slam2 | ✅ | KITTI 00 stereo (4541 frames, RMS ATE 1.30 m SE(3)-aligned) and mono (2217 keyframes, RMS ATE 5.28 m Sim(3)-aligned), both headless; TUM RGB-D `freiburg1_xyz` (perf_bench) | EuRoC (mono/stereo), TUM RGB-D (rgbd/mono), KITTI 03 / 04-12 with their own yaml |
 | basalt | ✅ | Monado SLAM Valve Index `MIPB07` (8105 frames, RMS ATE 0.062 m) **and** EuRoC `MH_01_easy` (3682 frames, RMS ATE ≈0.074 m) | TUM-VI 512x512, further Monado SLAM sequences, KITTI (via `basalt_convert_kitti_calib.py`) |
 | kiss_slam | ✅ | KITTI 00 (4541 scans, ATE 5.59 m / 0.58 %, 7 loop closures) and 04 (271 scans, ATE 0.59 m); Hilti `exp14_basement_2.bag` **only with `config/hilti_indoor.yaml`** — stock defaults diverge, see its README | MulRan, nuScenes, NCLT, Apollo, TUM, mcap, generic dirs of `.bin`/`.pcd`/`.ply` (14 loaders) |
-| cartographer | ✅ run, ⚠️ map quality | Hilti 2022 `exp14_basement_2.bag` (**2D** mode, `hilti_3d.lua`): 5 submaps, 390 nodes, 14 loop constraints. The occupancy grid is smeared — handheld tilt + `use_imu_data=false`; see its README | any ROS PointCloud2 (+ IMU) stream. Legacy KITTI 2D launch needs a `kitti2bag` bag and cannot run headless (`rviz` is `required="true"`) |
+| cartographer | ✅ | Hilti 2022 `exp14_basement_2.bag` in **3D + IMU** mode (`config/hilti_3d_lio.lua`): 730 poses, 38.38 m path, 4.19 m z extent, **0.084 m RMSE against FAST-LIO2**, 8 submaps / 26 loop constraints, 21.3 M-point 3D map. The old 2D config is kept for contrast — it cannot map a 4.19 m level change. | any ROS PointCloud2 + IMU stream. Legacy KITTI 2D launch needs a `kitti2bag` bag and cannot run headless (`rviz` is `required="true"`) |
 | fast_lio2 | ✅ | Hilti 2022 `exp14_basement_2.bag` end-to-end with `config/hilti_pandarxt32.yaml` (737 poses, 37.93 m path, 6.05 ms/scan) | NCLT, any Velodyne/Ouster/Livox rosbag with an IMU stream |
 | glim | ✅ | KITTI 04 (ATE 2.60 m over 394 m) and KITTI 00 (4531 poses, ATE 10.2–11.5 m over 3.7 km) via the `glim_kitti` driver added in `glim/` — upstream ships **no executable** | LiDAR+IMU rosbags, but only through `glim_ros1`/`glim_ros2`, which are not in this image |
 | kimera | ✅ | EuRoC MAV `MH_01_easy` (perf_bench) | Stereo + IMU only |

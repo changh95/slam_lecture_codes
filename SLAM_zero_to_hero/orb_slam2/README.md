@@ -126,20 +126,40 @@ The repo file is a legacy snippet, kept for reference only. Three reasons not to
 
 Its calibration values themselves are right, and match sequence 00's `calib.txt` exactly — `fx = fy = 718.856`, `cx = 607.1928`, `cy = 185.2157`, `Camera.bf = 386.1448` (= baseline × fx from `P1`). The stock in-image yaml carries the same numbers.
 
-## Watching it run
+## Watching it run (GUI on your desktop)
+
+The **stock** binaries need no flag — they hard-code `bUseViewer = true`, so they always open both windows. Use them, not the `*_headless` variants:
 
 ```bash
-xhost +local:root
-podman run --rm -it --net=host \
+podman run --rm -it \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
   -e DISPLAY=$DISPLAY -e QT_X11_NO_MITSHM=1 \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v ~/data/kitti_vo_slam/extracted/dataset:/data:ro \
   slam_zero_to_hero:orb_slam2 \
   ./Examples/Stereo/stereo_kitti \
     Vocabulary/ORBvoc.txt Examples/Stereo/KITTI00-02.yaml /data/sequences/00
 ```
 
-This uses the **stock** (viewer-enabled) binary and a real X server, which is the reliable way to see the map and keyframe graph. Inside the container without a display, `headless ./Examples/Stereo/stereo_kitti …` also works, but see the abort caveat above before relying on it for a full sequence.
+Swap in `./Examples/Monocular/mono_kitti … Examples/Monocular/KITTI00-02.yaml` for monocular. Relative paths work because `WORKDIR` is `/Portable_ORB_SLAM2`.
+
+Two windows appear:
+
+| Window | Size | Shows |
+|---|---|---|
+| `ORB-SLAM2: Map Viewer` | 1024×768 | Pangolin/GL: sparse map (black = all points, red = local points being tracked), blue keyframe frusta, green current pose and covisibility graph, and a control panel (Follow Camera, Show Points, Show KeyFrames, Show Graph, Localization Mode, Reset) |
+| `ORB-SLAM2: Current Frame` | 1241×396 | OpenCV: the KITTI image with green boxes on tracked ORB keypoints, plus a status line like `SLAM MODE \| KFs: 421, MPs: 47288, Matches: 360` |
+
+Three notes on the flags, each verified on this host:
+
+- **No `xhost +local:root`.** Earlier revisions of this file said to run it. It is unnecessary — podman here is rootless, so container root maps to host uid 1000, which the default `SI:localuser:<you>` grant already accepts — and it needlessly opens your X server to every local process.
+- **No `--net=host`.** The X connection goes over the bind-mounted unix socket.
+- **The `--runtime` and `NVIDIA_*` lines are what get you hardware GL** (`NVIDIA GeForce RTX 5090`, OpenGL 4.6). Drop them and it still works, but through Mesa `llvmpipe` software rendering. Note podman 3.4 predates CDI, so `--device nvidia.com/gpu=all` does *not* work here; the legacy runtime is the way.
+
+For a headless run, use `mono_kitti_headless` / `stereo_kitti_headless` as in the verified runs above, or `headless ./Examples/Stereo/stereo_kitti …` for the stock binary under Xvfb — but see the abort caveat before trusting the latter with a full sequence.
+
+Verifying a window really mapped: use `xwininfo -root -tree | grep ORB-SLAM2`, **not** `-root -children`. The window manager reparents both windows, so `-children` shows nothing and reads as a failed launch.
 
 ## Data availability on this host
 
