@@ -133,10 +133,15 @@ one in the same recording instead of overwriting it.
 
 ### Curve fitting
 
-`curve/observations` (the 100 noisy samples) and `curve/ground_truth` are static;
-`curve/symforce/initial` is the initial guess and `curve/symforce/fitted` redraws
-per iteration. Plots: `cost/symforce` (chi-squared) and
-`params/symforce/{a,b,c}`.
+The informative view here is the pair of plots: `cost/symforce` (chi-squared) and
+`params/symforce/{a,b,c}`. The curve entities are logged too —
+`curve/observations` (the 100 noisy samples) and `curve/ground_truth` static,
+`curve/symforce/initial` the initial guess, `curve/symforce/fitted` redrawn per
+iteration — and you can open them, but the 2D panel does not render usefully: a
+rerun `Spatial2DView` keeps a 1:1 aspect ratio and sizes itself to the full
+extent of everything logged, and here x spans a single unit while y reaches 391
+at the initial guess, so the view collapses into an unreadable sliver. The plots
+say the same thing and say more, so that is what the screenshot below shows.
 
 ```
 Ground truth : a=1.0000 b=2.0000 c=1.0000
@@ -148,6 +153,14 @@ Initial chi2: 80015976.9902
 Final chi2:   56.0874
 Reduction:    99.9999%
 ```
+
+![](./images/symforce_curve_fitting.png)
+
+Left, chi-squared falling off 8.0e7 and, by step 3, flat against the axis — the
+final 56.0874 is indistinguishable from zero at that scale. Right, `a, b, c`
+walking from the initial guess (2, -1, 5) onto the ground truth (1, 2, 1): the
+purple `c` descends 5 -> 1 (it enters from above the visible range) while `b`
+climbs -1 -> 2. The `iteration` timeline is the strip along the bottom.
 
 The C++ chapters report 80000165.0613 -> 84.1805 with
 `a=0.981351 b=2.02217 c=0.994798` for this same problem. Same model, same
@@ -178,6 +191,14 @@ Pose | ground truth        | initial             | optimized           | error
 Position RMSE vs ground truth: 0.1257 m -> 5.59e-17 m
 ```
 
+![](./images/symforce_pose_graph.png)
+
+Green is the ground-truth unit square with a heading arrow at each pose, grey the
+noisy initial estimate visibly off it, red the optimized trajectory sitting
+exactly on ground truth. The blue marker at the corner is where the `4-0` loop
+closure lands, the corner where x4 comes back onto x0. Below, chi-squared drops
+from 17.2 to effectively zero in the first step.
+
 The measurements are the **exact** relative transforms of ground truth, on
 purpose: only the initial estimate is perturbed, so the optimum is ground truth
 itself and any leftover error is the solver's, not the data's. That perturbation
@@ -206,6 +227,13 @@ Initial: sq_error 8826478.63  RMSE 15.560 px
 Final:   sq_error 303407.30  RMSE 2.885 px
 Reduction: 96.56% of squared error, 81.46% of pixel RMSE
 ```
+
+![](./images/symforce_bundle_adjustment.png)
+
+Grey is the initial landmark cloud, green the optimized landmarks sitting on top
+of it, blue the 21 recovered camera centres — Trafalgar Square is clearly
+recognisable. Below, `sum of squared reprojection error` 8.83e6 -> ~3.03e5 and
+`RMSE (px)` 15.56 -> 2.88, both essentially done after one LM step.
 
 Those match the g2o and Ceres chapters, which evaluate the same raw BAL
 projection: initial sq_error 8.82648e+06 (15.5602 px RMSE) falling to 303407

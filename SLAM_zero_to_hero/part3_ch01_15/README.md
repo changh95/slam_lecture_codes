@@ -103,7 +103,8 @@ working directory.
 
 ## Output
 
-Everything below is measured output from the commands above.
+Everything below is measured output from the commands above. Each screenshot is
+the rerun viewer parked on the last frame of that demo's `iteration` timeline.
 
 ### Curve fitting
 
@@ -125,9 +126,20 @@ Iterations   : 7 (frame 0 is the initial state)
 chi-squared falls from 8.0e7 to 84.18 in 7 iterations — about 0.84 per sample,
 which is what 100 samples of `sigma = 0.2` noise costs at the optimum.
 
-In the viewer: `curve/observations` and `curve/ground_truth` are static,
-`curve/ceres/fitted` moves along the `iteration` timeline, and the `cost/ceres`
-graph plots chi-squared per iteration next to `params/ceres/{a,b,c}`.
+![](./images/ceres_curve_fitting.png)
+
+The two time-series plots are the view worth keeping open: `cost/ceres` on the
+left, chi-squared collapsing off 8.0e7 within two steps, and
+`params/ceres/{a,b,c}` on the right, the three parameters walking from the
+initial guess `(2, -1, 5)` onto the ground truth `(1, 2, 1)` — `b` climbing from
+-1 to 2.02 while `a` and `c` converge just under 1.
+
+`curve/observations` and `curve/ground_truth` (static) and `curve/ceres/fitted`
+(per iteration) are logged as well, but they are deliberately not in the shot:
+rerun's `Spatial2DView` keeps a 1:1 aspect ratio and sizes itself to the full
+extent of everything logged, and here x spans one unit while y reaches 391 at
+the initial guess, so that panel renders as an unreadable sliver. Open the
+entities if you want the raw curve; the plots carry the story.
 
 ### Pose-graph optimization
 
@@ -157,9 +169,14 @@ Iterations   : 3 (frame 0 is the initial state)
 chi-squared goes 15.997 -> 7.8e-20 in 3 iterations: with consistent
 measurements the graph collapses onto ground truth to machine precision.
 
-In the viewer: `graph/ground_truth` and `graph/ceres/initial` are static,
-`graph/ceres/optimized` (positions, path and heading arrows) advances with the
-`iteration` timeline, and `cost/ceres` graphs chi-squared. The heading arrows
+![](./images/ceres_pose_graph.png)
+
+In the viewer: `graph/ground_truth` (green, with heading arrows at each pose) and
+`graph/ceres/initial` (grey, visibly off the square) are static, while
+`graph/ceres/optimized` (red — positions, path and heading arrows) advances with
+the `iteration` timeline and by the last frame sits exactly on the green square.
+The blue marker at the origin is where the `x4 -> x0` loop closure lands, and
+`cost/ceres` below graphs chi-squared down from 15.9973. The heading arrows
 matter here — pose 4 sits exactly on pose 0 and differs only in orientation, so
 the loop closure is invisible in a position-only plot.
 
@@ -189,11 +206,15 @@ component. Both are recomputed from the parameters rather than read out of
 `summary.final_cost`, so they mean the same thing in every chapter of this
 series.
 
-In the viewer: `world/initial_points` is the static starting cloud,
-`world/ceres/landmarks` and `world/ceres/cameras` advance with the `iteration`
-timeline (the cameras sit inside the cloud, since the centres are recovered as
-`C = -Rᵀt`), and `reprojection_error/ceres` and `rmse_px/ceres` graph the two
-metrics.
+![](./images/ceres_bundle_adjustment.png)
+
+In the viewer: `world/initial_points` is the static starting cloud (grey),
+`world/ceres/landmarks` (green) and `world/ceres/cameras` (blue, the 21 recovered
+centres) advance with the `iteration` timeline — the cameras sit inside the
+cloud, since the centres are recovered as `C = -Rᵀt`. By the last frame the green
+landmarks have tightened onto the grey cloud and Trafalgar Square is plainly
+recognisable. Below, `reprojection_error/ceres` graphs `sq_error` from 8.83e6 to
+~3.03e5 and `rmse_px/ceres` graphs RMSE from 15.56 px to 2.88 px.
 
 ---
 

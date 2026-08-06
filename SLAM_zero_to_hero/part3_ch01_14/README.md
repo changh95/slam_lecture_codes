@@ -93,16 +93,18 @@ docker run -it --rm --network=host \
 
 All three demos drive an `iteration` timeline in the viewer: scrub it (or press
 play) to watch the estimate move. Entity paths carry the library name, so a
-sibling chapter's run lands next to this one instead of overwriting it.
+sibling chapter's run lands next to this one instead of overwriting it. The
+screenshots below are frames from real runs streaming into a viewer.
 
 ### Curve fitting — recording `part3_curve_fitting`
 
 100 samples of `y = exp(a x² + b x + c)` with ground truth `(1, 2, 1)`, Gaussian
 noise `sigma = 0.2` (seed 42), started from `(2, -1, 5)`.
 
-Entities: `curve/observations`, `curve/ground_truth`, `curve/gtsam/initial`
-(static) and `curve/gtsam/fitted` (per iteration), plus the `cost/gtsam` and
-`params/gtsam/{a,b,c}` plots.
+Plots: `cost/gtsam` (chi-squared) and `params/gtsam/{a,b,c}`. The curve is logged
+as well — `curve/observations`, `curve/ground_truth`, `curve/gtsam/initial`
+(static) and `curve/gtsam/fitted` (per iteration) — but read the note under the
+screenshot before you go looking for it in a 2D view.
 
 ```
 Ground truth : a=1 b=2 c=1
@@ -118,6 +120,17 @@ Iteration 8: chi2 = 84.1805  a=0.981351 b=2.02217 c=0.994798
 Estimated    : a=0.981351 b=2.02217 c=0.994798
 chi2         : 8.00002e+07 -> 84.1805  (8 LM iterations)
 ```
+
+![](./images/gtsam_curve_fitting.png)
+
+The pair of plots is the informative view here: on the left chi-squared collapsing
+from 8.0e7 to its final value, on the right the three parameters walking off the
+initial guess `(2, -1, 5)` onto the ground truth `(1, 2, 1)`. There is
+deliberately no scatter-plus-curve panel in the layout. A rerun `Spatial2DView`
+keeps a 1:1 aspect ratio and sizes itself to the full extent of everything logged,
+and this problem has x spanning 1 unit against y reaching 391 at the initial
+guess, so the curve view renders as an unreadable sliver. The curve entities are
+still logged if you want to open one anyway.
 
 The estimate does not land exactly on `(1, 2, 1)` and should not: with
 `sigma = 0.2` noise on 100 samples, `(0.981, 2.022, 0.995)` at `chi2 = 84.2`
@@ -154,6 +167,14 @@ Pose | ground truth        | optimized           | position error
 Max position error: 7.82629e-15 m
 ```
 
+![](./images/gtsam_pose_graph.png)
+
+Green is the ground-truth unit square with a heading arrow at each pose, grey is
+the noisy initial estimate, and red is the optimized trajectory — sitting exactly
+on top of the green. The blue marker at the origin is where the loop-closure edge
+`x4 -> x0` lands. Below, chi-squared drops from 15.9973 to 0.00475 in the first
+iteration — indistinguishable from zero at that scale — and on down to 1e-26.
+
 Driving the residual to 1e-26 is not a suspiciously good result — it is the
 deliberate design of the exercise. The measurements are the **exact** relative
 transforms from ground truth, so ground truth *is* the global optimum and the
@@ -188,6 +209,14 @@ sq_error: 8.82649e+06 -> 303407
 rmse    : 15.5602 px -> 2.88492 px
 Reduction: 96.5625% of the squared error  (6 LM iterations)
 ```
+
+![](./images/gtsam_bundle_adjustment.png)
+
+The Trafalgar Square structure is plainly recognisable: green is the optimized
+landmark cloud, sitting on top of the grey initial cloud it started from, and the
+blue spheres are the 21 recovered camera centres. Below left, the sum of squared
+reprojection error drops 8.83e6 -> 3.03e5; below right, RMSE 15.56 px -> 2.88 px,
+almost all of it in the first iteration.
 
 The budget is 30 iterations; LM stops after 6 because the relative decrease falls
 below 1e-6 (the squared error is flat at 303407 from iteration 5 onwards).

@@ -97,7 +97,9 @@ Each demo logs one frame per solver iteration on an `iteration` timeline —
 drag the slider (or press play) in the viewer to watch the estimate converge.
 Frame 0 is always the initial state, frame *k* the state after iteration *k*.
 g2o's own Levenberg-Marquardt trace (chi2, lambda, `levenbergIter`) goes to
-**stderr**, so stdout stays a clean, comparable report.
+**stderr**, so stdout stays a clean, comparable report. The screenshots below
+are from real runs streaming into the viewer; the strip along the bottom of each
+is that `iteration` timeline.
 
 ### Curve fitting
 
@@ -121,9 +123,22 @@ Iterations   : 8 of 30 (converged early)
 `chi2 = 84.18` against 100 samples and 3 parameters (97 degrees of freedom) is
 what a correct fit of data with this noise level looks like — the estimate is
 not the ground truth because the samples are noisy, not because the solver
-stopped short. In the viewer, `curve/g2o/fitted` (red) sweeps from
-`curve/g2o/initial` (grey) onto `curve/ground_truth` (green) through the
-observation scatter, while `cost/g2o` and `params/g2o/{a,b,c}` plot the descent.
+stopped short.
+
+![](./images/g2o_curve_fitting.png)
+
+The two plots are the informative view here: `cost/g2o` on the left collapsing
+from 8.0e7, and `params/g2o/{a,b,c}` on the right walking from the initial guess
+`(2, -1, 5)` onto the ground truth `(1, 2, 1)` — `c` (purple) dropping from 5 to
+1, `b` (red) climbing from -1 to 2, `a` (green) drifting up to 2.1 before settling
+at 1. The cost is flat by frame 3, the parameters by frame 6.
+
+The curve entities `curve/observations`, `curve/ground_truth`, `curve/g2o/initial`
+and `curve/g2o/fitted` are logged too, and you can open them, but a rerun
+`Spatial2DView` holds a 1:1 aspect ratio and sizes itself to everything logged:
+`x` spans one unit while `y` reaches 391 at the initial guess, so that view
+renders as an unreadable vertical sliver. It is left out of the screenshot on
+purpose.
 
 ### Pose graph
 
@@ -154,11 +169,17 @@ Iterations : 4 of 30 (converged early)
 pushed `pi + dtheta` just past `pi`, and headings are wrapped into `(-pi, pi]`.
 It is the same angle.
 
+![](./images/g2o_pose_graph.png)
+
 In the viewer, `graph/ground_truth` (green) and `graph/g2o/initial` (grey) are
-static; `graph/g2o/optimized` (red) snaps onto ground truth over 4 frames.
-Heading arrows are logged with the positions because pose 4 sits exactly on
-pose 0 and differs only in orientation — the loop closure is invisible in a
-position-only plot.
+static; `graph/g2o/optimized` (red) snaps onto ground truth over 4 frames — at
+the last frame it covers the green square exactly, which is what the `5.66e-16 m`
+max position error looks like. The blue marker at the origin is where the loop
+closure `x4 -> x0` lands, and the `cost/g2o` plot below ("chi-squared") drops
+from 15.9973 to the floor of the axis on the first iteration; the remaining
+three only confirm it. Heading arrows are logged with the positions because pose 4
+sits exactly on pose 0 and differs only in orientation — the loop closure is
+invisible in a position-only plot.
 
 ### Bundle adjustment
 
@@ -187,12 +208,17 @@ Iterations: 30 (logged frames 0..30 on the 'iteration' timeline)
 ```
 
 The solver is essentially converged by iteration 15; the remaining iterations
-only shuffle lambda (visible in the stderr trace as `levenbergIter` > 1). In
-the viewer, `world/initial_points` (grey) is the starting cloud,
+only shuffle lambda (visible in the stderr trace as `levenbergIter` > 1).
+
+![](./images/g2o_bundle_adjustment.png)
+
+In the viewer, `world/initial_points` (grey) is the starting cloud,
 `world/g2o/landmarks` (green) and `world/g2o/cameras` (blue, larger dots) update
 every iteration, and `reprojection_error/g2o` / `rmse_px/g2o` plot both metrics.
-The camera centres sit inside the point cloud, 1.50–4.50 scene units from its
-centroid.
+By the frame above the green landmarks sit on top of the grey cloud and the
+structure of the square is recognisable, with the two plots below showing the
+`8.83e6 -> 3.03e5` and `15.56 -> 2.88 px` drops already flat. The camera centres
+sit inside the point cloud, 1.50–4.50 scene units from its centroid.
 
 ---
 

@@ -146,6 +146,12 @@ recover the trajectory to 3 cm, better than odometry alone. And PCM's graph
 keeps all 31 and drives their weights to zero — the same answer by two
 different mechanisms.
 
+Both 3D demos stream to the viewer, but neither has a screenshot here yet. Their
+graphs are perfectly planar (every pose at z = 0) so a 3D view does not
+auto-frame them, the line strips frequently fail to draw, and three to five
+overlapping solver variants in one 3D view is unreadable — the 3D pose-graph
+rendering still needs work.
+
 **`part3_pose_graph`** — the recording shared with chapters 13-16.
 `graph/ground_truth` and `graph/kimera_rpgo/{initial, optimized}` carry
 `/poses`, `/path` and `/heading` (heading arrows matter here: pose 4 sits
@@ -169,6 +175,16 @@ Pose | ground truth        | optimized           | error
 Final chi2   : 1.7e-29
 Stages       : 3 (0 = initial, 1 = after odometry, 2 = after loop closure)
 ```
+
+![](./images/rpgo_pose_graph.png)
+
+The 2D view on top holds all three trajectories: green is the ground-truth unit
+square with a heading arrow at each pose, grey the noisy initial estimate
+visibly off it, and red the optimized result sitting exactly on the green. The
+blue marker at the origin is where the loop closure x4 -> x0 lands — pose x4 is
+at the same position as pose x0 and differs only in orientation, which is why
+the heading arrows are logged at all. Below, `cost/kimera_rpgo` falls from
+15.9973 to ~0 across the three stages.
 
 ---
 
