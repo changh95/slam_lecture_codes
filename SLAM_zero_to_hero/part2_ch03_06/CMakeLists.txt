@@ -58,16 +58,6 @@ target_link_libraries(icp_point_to_plane
     Eigen3::Eigen
 )
 
-# ICP Visualization executable
-add_executable(icp_visualization
-    examples/icp_visualization.cpp
-)
-
-target_link_libraries(icp_visualization
-    ${PCL_LIBRARIES}
-    Eigen3::Eigen
-)
-
 # LiDAR Odometry executable
 add_executable(lidar_odometry
     examples/lidar_odometry.cpp
@@ -83,7 +73,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(WARNING_FLAGS -Wall -Wextra -Wpedantic)
     target_compile_options(icp_basic PRIVATE ${WARNING_FLAGS})
     target_compile_options(icp_point_to_plane PRIVATE ${WARNING_FLAGS})
-    target_compile_options(icp_visualization PRIVATE ${WARNING_FLAGS})
     target_compile_options(lidar_odometry PRIVATE ${WARNING_FLAGS})
 endif()
 
@@ -95,7 +84,6 @@ if(CMAKE_BUILD_TYPE MATCHES "Release")
     set(OPTIMIZATION_FLAGS -O3)
     target_compile_options(icp_basic PRIVATE ${OPTIMIZATION_FLAGS})
     target_compile_options(icp_point_to_plane PRIVATE ${OPTIMIZATION_FLAGS})
-    target_compile_options(icp_visualization PRIVATE ${OPTIMIZATION_FLAGS})
     target_compile_options(lidar_odometry PRIVATE ${OPTIMIZATION_FLAGS})
 endif()
 
@@ -103,16 +91,14 @@ endif()
 message(STATUS "")
 message(STATUS "=== ICP using PCL Tutorial ===")
 message(STATUS "Executables:")
-message(STATUS "  - icp_basic: Point-to-point ICP registration")
-message(STATUS "  - icp_point_to_plane: Point-to-plane ICP with normals")
-message(STATUS "  - icp_visualization: Visualize ICP alignment process")
+message(STATUS "  - icp_basic: Point-to-point ICP, interactive viewer")
+message(STATUS "  - icp_point_to_plane: Point-to-plane vs point-to-point, interactive viewer")
 message(STATUS "  - lidar_odometry: Sequential scan registration for LiDAR odometry")
 message(STATUS "")
 message(STATUS "Usage:")
-message(STATUS "  ./icp_basic                  # Stanford bunny (data/bun_zipper_res3.ply)")
+message(STATUS "  ./icp_basic                  # Stanford bunny, no arguments")
 message(STATUS "  ./icp_point_to_plane         # Stanford bunny")
-message(STATUS "  ./icp_visualization [--step] # Stanford bunny")
 message(STATUS "  ./lidar_odometry <kitti_sequence_dir>")
 message(STATUS "")
-message(STATUS "Pass --help to any demo for the full option list.")
+message(STATUS "Only lidar_odometry takes arguments; pass --help for its options.")
 message(STATUS "")

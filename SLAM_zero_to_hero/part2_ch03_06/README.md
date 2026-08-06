@@ -1,11 +1,12 @@
 # ICP Point Cloud Registration using PCL
 
-Code exercise for point-to-point and point-to-plane ICP registration, alignment
-visualization, and sequential LiDAR odometry using PCL.
+Code exercise for point-to-point and point-to-plane ICP registration and
+sequential LiDAR odometry using PCL.
 
-The three registration demos run on the **Stanford bunny** and the odometry demo
+The two registration demos run on the **Stanford bunny** and the odometry demo
 runs on a **KITTI odometry sequence**, so every exercise has ground truth to
-score against.
+score against. Both registration demos open an interactive viewer and step their
+ICP one iteration per keystroke.
 
 ---
 
@@ -17,14 +18,14 @@ part2_ch03_06/
 ├── CMakeLists.txt
 ├── Dockerfile
 ├── data/
-│   ├── bun_zipper_res3.ply    # Stanford bunny - default input for demos 1-3
+│   ├── bun_zipper_res3.ply    # Stanford bunny - input for demos 1-2
 │   ├── 000000.bin             # KITTI velodyne scan (single frame)
 │   └── scene.pcd
 └── examples/
     ├── demo_common.hpp           # Cloud loading (.ply/.pcd/.bin), scale helpers, pose error
+    ├── demo_viz.hpp              # Interactive viewer and per-keystroke ICP steppers
     ├── icp_basic.cpp             # Point-to-point ICP registration
-    ├── icp_point_to_plane.cpp    # Point-to-plane ICP with normals
-    ├── icp_visualization.cpp     # Visualize ICP alignment process
+    ├── icp_point_to_plane.cpp    # Point-to-plane vs point-to-point, side by side
     └── lidar_odometry.cpp        # Sequential scan registration for LiDAR odometry
 ```
 
@@ -37,7 +38,7 @@ Dependencies:
 - **Eigen3 3.3+** — required.
 - **MPI** — required (used by VTK/PCL visualization).
 
-All four executables are always built; there are no optional targets.
+All three executables are always built; there are no optional targets.
 
 ```bash
 # Local
@@ -53,56 +54,61 @@ docker build . -t slam_zero_to_hero:part2_ch03_06
 
 ## Run
 
-Every demo accepts `--help`. Demos 1-3 need no arguments: they load
-`data/bun_zipper_res3.ply`, centre it, and build the source cloud by applying a
-known transform, so the estimate is compared against the exact answer.
+Neither registration demo takes arguments: they load `data/bun_zipper_res3.ply`,
+centre it, and build the source cloud by applying a known transform, so the
+estimate is compared against the exact answer. Only `lidar_odometry` has options
+(`--help` lists them).
 
-### 1-3. ICP on the Stanford bunny
+### 1-2. ICP on the Stanford bunny
 
 ```bash
 # Point-to-point ICP
 ./build/icp_basic
 
-# Point-to-plane ICP, side by side with point-to-point
+# Point-to-plane ICP, stepped side by side with point-to-point
 ./build/icp_point_to_plane
-
-# Visualize the alignment (green: source, blue: target, red: aligned)
-./build/icp_visualization
-
-# Step-by-step: every keystroke in the viewer window runs one more ICP
-# iteration, so you can watch the source cloud converge onto the target
-# one step at a time ('q' quits; the window stays open once the iteration
-# limit is reached)
-./build/icp_visualization --step
 ```
 
-Your own clouds work too — `.ply`, `.pcd`, and KITTI `.bin` are all accepted:
-
-```bash
-./build/icp_basic source.pcd target.pcd   # register a pair
-./build/icp_basic my_model.ply            # single cloud + a known transform
-```
-
-`--generate` still builds synthetic inputs (half-sphere, indoor box, torus) for
-running without any data at all:
-
-```bash
-./build/icp_basic --generate
-./build/icp_visualization --generate --step
-```
+Both open a viewer and **advance one ICP iteration per keystroke**, so you watch
+the source converge onto the target rather than seeing only the end state. Target
+is blue, point-to-point yellow, point-to-plane magenta; any key steps, `q` quits,
+and the window stays open once every method has settled. An X display is
+required — run headless and the demos print the full numeric report, then say why
+the viewer could not open.
 
 **Scale-relative parameters.** The bunny is only ~0.25 m across, so absolute
 values tuned for LiDAR scans (0.5 m correspondence distance, 0.1 m normal
 radius) would be larger than the whole model and make ICP meaningless. Voxel
 size, correspondence distance, viewer camera distance and axis size are all
-derived from the bounding-box diagonal instead, so the same demos work on the
+derived from the bounding-box diagonal instead, so the same code works on the
 bunny and on room- or street-scale clouds.
 
-Expected result on the bunny: both methods recover the transform to
-0.0000 deg / 0.000000 m, with point-to-plane roughly 3x faster and about an
-order of magnitude lower in fitness score.
+**Why the bunny is a fair target for point-to-plane**, despite being nowhere near
+planar: the advantage does not come from the surface being flat overall, but from
+each normal's neighbourhood being locally smooth. Minimising distance to the
+tangent plane lets correspondences slide along the surface instead of being
+pinned point to point, and that is what costs point-to-point its iterations. On
+this model, k=20 normals span ~4.4 % of the bounding-box diagonal (mean point
+spacing 0.0043 m), so they are genuinely local and none come out invalid.
 
-### 4. LiDAR odometry on a KITTI sequence
+At a fixed iteration budget both methods reach the same answer on clean data —
+0.0000 deg / 0.000000 m — so the demo reports **iterations to converge**, which
+is what actually separates them:
+
+| | point-to-point | point-to-plane |
+|---|---|---|
+| iterations to converge | 9 | **3** |
+| alignment time | 12.4 ms | 5.1 ms |
+| normal estimation | not needed | 13 ms |
+
+Measured separately, the gap widens in the cases the demo does not ship: with
+~half the source cropped away, point-to-plane still converges in 3 iterations
+while point-to-point needs 50. Point-to-plane is not uniformly better, though —
+at low noise its tangent-plane freedom lets the solution slide slightly along the
+surface, so point-to-point ends up marginally more accurate in translation. Past
+about 1 % noise that reverses.
+
+### 3. LiDAR odometry on a KITTI sequence
 
 Point the demo at a KITTI odometry sequence directory. It finds `velodyne/`,
 `calib.txt`, and `../../poses/NN.txt` by itself:
@@ -117,7 +123,7 @@ Point the demo at a KITTI odometry sequence directory. It finds `velodyne/`,
 ./build/lidar_odometry /path/to/velodyne/
 ```
 
-Options: `--max-frames N`, `--voxel S`, `--no-prediction`, `--generate`.
+Options: `--max-frames N`, `--voxel S`, `--no-prediction`.
 
 What the demo does per frame:
 
@@ -173,13 +179,13 @@ data.
 ### Docker
 
 ```bash
-# Demos 1-3 (X11 for the visualizer)
+# Demos 1-2 (X11 required for the viewer)
 docker run -it --rm \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     slam_zero_to_hero:part2_ch03_06
 
-# Demo 4 needs the KITTI dataset mounted
+# Demo 3 needs the KITTI dataset mounted
 docker run -it --rm \
     -v ~/data/kitti_vo_slam:/kitti:ro \
     slam_zero_to_hero:part2_ch03_06 \
@@ -190,7 +196,7 @@ docker run -it --rm \
 
 ## Getting the KITTI odometry data
 
-Demo 4 needs the velodyne laser data and, for the ground-truth comparison, the
+The odometry demo needs the velodyne laser data and, for the ground-truth comparison, the
 poses and calibration from the
 [KITTI odometry benchmark](https://www.cvlibs.net/datasets/kitti/eval_odometry.php):
 

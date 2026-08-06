@@ -20,7 +20,6 @@
  *
  * Usage: ./lidar_odometry <kitti_sequence_dir> [--max-frames N]
  *        ./lidar_odometry /path/to/velodyne/    [--max-frames N]
- *        ./lidar_odometry --generate
  */
 
 #include <iostream>
@@ -93,23 +92,10 @@ public:
                   << "\n";
     }
 
-    /** @brief Keep only points within [min_range, max_range] of the sensor */
-    void setRangeCrop(double min_range, double max_range)
-    {
-        min_range_ = min_range;
-        max_range_ = max_range;
-    }
-
     /** @brief Use the previous frame-to-frame motion as the ICP initial guess */
     void setPredictMotion(bool enable)
     {
         predict_motion_ = enable;
-    }
-
-    /** @brief Print one progress line every n frames (0 disables) */
-    void setProgressInterval(int n)
-    {
-        progress_interval_ = n;
     }
 
     /**
@@ -657,121 +643,6 @@ bool saveReferenceTrajectory(const std::vector<Eigen::Matrix4f>& poses,
     return true;
 }
 
-// ============================================================================
-// Synthetic fallback
-// ============================================================================
-
-/**
- * @brief Generate synthetic LiDAR scans for testing
- *
- * Two parallel walls and a flat floor are a degenerate target for ICP: sliding
- * along the corridor leaves the scan unchanged, so forward motion is
- * unobservable and the estimate under-shoots. Pillars along the walls break
- * that symmetry and give the demo a trajectory worth checking.
- */
-std::vector<PointCloudT::Ptr> generateSyntheticScans(int num_scans,
-                                                     std::vector<Eigen::Matrix4f>& gt_poses)
-{
-    std::vector<PointCloudT::Ptr> scans;
-    gt_poses.clear();
-
-    // Simulate a corridor environment
-    auto generateCorridorScan = [](float sensor_x, float sensor_y, float sensor_yaw) {
-        PointCloudT::Ptr scan(new PointCloudT);
-
-        // Express a world point in the sensor frame
-        auto addPoint = [&](float world_x, float world_y, float z, float noise) {
-            const float dx = world_x - sensor_x;
-            const float dy = world_y - sensor_y;
-
-            PointT p;
-            p.x = dx * cos(-sensor_yaw) - dy * sin(-sensor_yaw);
-            p.y = dx * sin(-sensor_yaw) + dy * cos(-sensor_yaw);
-            p.z = z;
-            p.x += noise * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-            p.y += noise * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-            scan->points.push_back(p);
-        };
-
-        // Corridor walls at y = +/- 2m, length from x = -10 to x = 20
-        const int points_per_wall = 200;
-
-        for (int i = 0; i < points_per_wall; ++i)
-        {
-            const float x = -10.0f + 30.0f * static_cast<float>(i) / points_per_wall;
-
-            for (float wall_side : {2.0f, -2.0f})
-            {
-                addPoint(x, wall_side,
-                         static_cast<float>(rand()) / RAND_MAX * 2.0f, 0.02f);
-            }
-        }
-
-        // Pillars every 5 m, alternating sides, to make along-corridor motion observable
-        for (int k = 0; k <= 6; ++k)
-        {
-            const float pillar_x = -10.0f + 5.0f * static_cast<float>(k);
-            const float pillar_y = (k % 2 == 0) ? 1.6f : -1.6f;
-
-            for (int i = 0; i < 40; ++i)
-            {
-                const float angle = static_cast<float>(rand()) / RAND_MAX * 2.0f * M_PI;
-                addPoint(pillar_x + 0.15f * cos(angle),
-                         pillar_y + 0.15f * sin(angle),
-                         static_cast<float>(rand()) / RAND_MAX * 2.5f, 0.01f);
-            }
-        }
-
-        // Floor points, sampled around the sensor as a real scanner would.
-        // A flat floor cannot constrain in-plane motion at all: the patch looks
-        // the same wherever the sensor is, so these points only ever pull the
-        // estimate towards zero motion. They are kept because that bias is real
-        // - it is why the KITTI path below crops the close range - but the
-        // count is deliberately low so the pillars dominate the solution.
-        for (int i = 0; i < 100; ++i)
-        {
-            const float floor_x = sensor_x + (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 8.0f;
-            const float floor_y = sensor_y + (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 4.0f;
-            addPoint(floor_x, floor_y,
-                     0.02f * (static_cast<float>(rand()) / RAND_MAX - 0.5f), 0.0f);
-        }
-
-        scan->width = scan->points.size();
-        scan->height = 1;
-        scan->is_dense = true;
-
-        return scan;
-    };
-
-    // Generate scans along a trajectory
-    float x = 0.0f, y = 0.0f, yaw = 0.0f;
-    const float dx = 0.5f;     // Move 0.5 m per scan
-    const float dyaw = 0.02f;  // Small rotation per scan
-
-    for (int i = 0; i < num_scans; ++i)
-    {
-        scans.push_back(generateCorridorScan(x, y, yaw));
-
-        // The scans are built in the sensor frame, so the pose of scan i
-        // relative to scan 0 is the sensor motion since the start
-        gt_poses.push_back(demo::makeTransform(x, y, 0.0f, 0.0f, 0.0f, yaw));
-
-        // Update pose (simulate forward motion with slight curve)
-        x += dx * cos(yaw);
-        y += dx * sin(yaw);
-        yaw += dyaw;
-    }
-
-    // Referenced to the first scan, which the odometry takes as the origin
-    const Eigen::Matrix4f first_inv = gt_poses.front().inverse();
-    for (auto& pose : gt_poses)
-    {
-        pose = first_inv * pose;
-    }
-
-    return scans;
-}
-
 /**
  * @brief List the .bin / .pcd scans in a directory, sorted by filename
  */
@@ -800,7 +671,6 @@ void printUsage(const char* program)
 {
     std::cout << "Usage: " << program << " <kitti_sequence_dir> [--max-frames N]\n";
     std::cout << "       " << program << " /path/to/velodyne/    [--max-frames N]\n";
-    std::cout << "       " << program << " --generate\n";
     std::cout << "\nOptions:\n";
     std::cout << "  <kitti_sequence_dir>  KITTI odometry sequence, e.g.\n";
     std::cout << "                        .../dataset/sequences/04\n";
@@ -812,14 +682,12 @@ void printUsage(const char* program)
     std::cout << "                        0.2 m drifts ~1 %, 0.5 m drifts ~4 %\n";
     std::cout << "  --no-prediction       Start each ICP from identity instead of\n";
     std::cout << "                        the previous frame-to-frame motion\n";
-    std::cout << "  --generate, -g        Run on synthetic corridor scans\n";
 }
 
 int main(int argc, char** argv)
 {
     std::cout << "=== LiDAR Odometry using ICP ===\n\n";
 
-    bool generate_mode = false;
     bool predict_motion = true;
     int max_frames = -1;
     // Voxel size dominates the accuracy of scan-to-scan ICP on KITTI: on
@@ -834,11 +702,7 @@ int main(int argc, char** argv)
     {
         const std::string arg(argv[i]);
 
-        if (arg == "--generate" || arg == "-g")
-        {
-            generate_mode = true;
-        }
-        else if (arg == "--no-prediction")
+        if (arg == "--no-prediction")
         {
             predict_motion = false;
         }
@@ -861,7 +725,7 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!generate_mode && input_dir.empty())
+    if (input_dir.empty())
     {
         printUsage(argv[0]);
         return 0;
@@ -879,96 +743,75 @@ int main(int argc, char** argv)
     std::vector<Eigen::Matrix4f> gt_poses;
     std::vector<double> timestamps;
 
-    if (generate_mode)
+    const KittiSequence seq = resolveKittiSequence(input_dir);
+
+    if (!fs::is_directory(seq.velodyne_dir))
     {
-        std::cout << "\n--- Generating Synthetic LiDAR Scans ---\n";
-
-        // The synthetic corridor is a few meters wide, so the KITTI-scale range
-        // crop would discard all of it
-        odometry.setRangeCrop(0.0, 1000.0);
-        odometry.setProgressInterval(1);
-
-        const std::vector<PointCloudT::Ptr> scans = generateSyntheticScans(30, gt_poses);
-
-        std::cout << "Generated " << scans.size() << " synthetic scans\n";
-        std::cout << "\n--- Processing Scans ---\n";
-
-        for (const auto& scan : scans)
-        {
-            odometry.processCloud(scan);
-        }
+        std::cerr << "Error: Not a directory: " << seq.velodyne_dir << "\n";
+        return -1;
     }
-    else
+
+    std::vector<std::string> files = getPointCloudFiles(seq.velodyne_dir);
+
+    if (files.empty())
     {
-        const KittiSequence seq = resolveKittiSequence(input_dir);
+        std::cerr << "Error: No .bin or .pcd scans found in " << seq.velodyne_dir << "\n";
+        return -1;
+    }
 
-        if (!fs::is_directory(seq.velodyne_dir))
+    std::cout << "--- KITTI Sequence " << seq.name << " ---\n";
+    std::cout << "Scans:  " << files.size() << " in " << seq.velodyne_dir << "\n";
+
+    if (max_frames > 0 && static_cast<size_t>(max_frames) < files.size())
+    {
+        files.resize(max_frames);
+        std::cout << "Limited to first " << files.size() << " scans (--max-frames)\n";
+    }
+
+    // Ground truth, mapped from the camera frame into the velodyne frame
+    if (!seq.poses_file.empty())
+    {
+        const std::vector<Eigen::Matrix4f> cam_poses = loadKittiPoses(seq.poses_file);
+
+        Eigen::Matrix4f Tr = Eigen::Matrix4f::Identity();
+        if (!seq.calib_file.empty())
         {
-            std::cerr << "Error: Not a directory: " << seq.velodyne_dir << "\n";
-            return -1;
-        }
-
-        std::vector<std::string> files = getPointCloudFiles(seq.velodyne_dir);
-
-        if (files.empty())
-        {
-            std::cerr << "Error: No .bin or .pcd scans found in " << seq.velodyne_dir << "\n";
-            return -1;
-        }
-
-        std::cout << "--- KITTI Sequence " << seq.name << " ---\n";
-        std::cout << "Scans:  " << files.size() << " in " << seq.velodyne_dir << "\n";
-
-        if (max_frames > 0 && static_cast<size_t>(max_frames) < files.size())
-        {
-            files.resize(max_frames);
-            std::cout << "Limited to first " << files.size() << " scans (--max-frames)\n";
-        }
-
-        // Ground truth, mapped from the camera frame into the velodyne frame
-        if (!seq.poses_file.empty())
-        {
-            const std::vector<Eigen::Matrix4f> cam_poses = loadKittiPoses(seq.poses_file);
-
-            Eigen::Matrix4f Tr = Eigen::Matrix4f::Identity();
-            if (!seq.calib_file.empty())
-            {
-                Tr = loadVelodyneToCamera(seq.calib_file);
-                std::cout << "Calib:  " << seq.calib_file << " (Tr loaded)\n";
-            }
-            else
-            {
-                std::cout << "Calib:  not found - comparing in the camera frame\n";
-            }
-
-            gt_poses = posesToLidarFrame(cam_poses, Tr);
-            std::cout << "Poses:  " << gt_poses.size() << " from " << seq.poses_file << "\n";
+            Tr = loadVelodyneToCamera(seq.calib_file);
+            std::cout << "Calib:  " << seq.calib_file << " (Tr loaded)\n";
         }
         else
         {
-            std::cout << "Poses:  none (sequences 11-21 have no public ground truth)\n";
+            std::cout << "Calib:  not found - comparing in the camera frame\n";
         }
 
-        if (!seq.times_file.empty())
-        {
-            timestamps = loadKittiTimes(seq.times_file);
-        }
-
-        std::cout << "\n--- Processing Scans ---\n";
-
-        for (const auto& file : files)
-        {
-            PointCloudT::Ptr cloud = demo::loadCloud(file);
-
-            if (!cloud || cloud->empty())
-            {
-                std::cerr << "Warning: Could not load " << file << "\n";
-                continue;
-            }
-
-            odometry.processCloud(cloud);
-        }
+        gt_poses = posesToLidarFrame(cam_poses, Tr);
+        std::cout << "Poses:  " << gt_poses.size() << " from " << seq.poses_file << "\n";
     }
+    else
+    {
+        std::cout << "Poses:  none (sequences 11-21 have no public ground truth)\n";
+    }
+
+    if (!seq.times_file.empty())
+    {
+        timestamps = loadKittiTimes(seq.times_file);
+    }
+
+    std::cout << "\n--- Processing Scans ---\n";
+
+    for (const auto& file : files)
+    {
+        PointCloudT::Ptr cloud = demo::loadCloud(file);
+
+        if (!cloud || cloud->empty())
+        {
+            std::cerr << "Warning: Could not load " << file << "\n";
+            continue;
+        }
+
+        odometry.processCloud(cloud);
+    }
+
 
     // Print summary
     std::cout << "\n=== Odometry Summary ===\n";

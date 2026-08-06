@@ -6,18 +6,20 @@
  * - Normal estimation using pcl::NormalEstimationOMP
  * - Point-to-plane ICP using pcl::IterativeClosestPointWithNormals
  * - Comparison between point-to-point and point-to-plane ICP
+ * - Stepping both methods side by side, one iteration per keystroke
  *
- * Point-to-plane ICP minimizes the distance to the tangent plane at each point,
- * which typically converges faster than point-to-point ICP, especially for
- * planar surfaces.
+ * Point-to-plane ICP minimizes the distance to the tangent plane at each point.
+ * That lets correspondences slide along the surface rather than being pinned
+ * point to point, so it converges in markedly fewer iterations wherever the
+ * surface is locally smooth - which includes the bunny, even though the model is
+ * nowhere near planar overall.
  *
- * By default the Stanford bunny (data/bun_zipper_res3.ply) is used as the
- * target, and the source is the same model displaced by a known transform, so
- * both methods can be scored against the exact answer.
+ * The Stanford bunny (data/bun_zipper_res3.ply) is the target, and the source is
+ * the same model displaced by a known transform, so both methods are scored
+ * against the exact answer. The demo takes no arguments and always opens the
+ * viewer; an X display is required.
  *
- * Usage: ./icp_point_to_plane                       # Stanford bunny (default)
- *        ./icp_point_to_plane source.pcd target.pcd # your own pair
- *        ./icp_point_to_plane --generate            # synthetic indoor box
+ * Usage: ./icp_point_to_plane
  */
 
 #include <iostream>
@@ -35,80 +37,13 @@
 #include <Eigen/Dense>
 
 #include "demo_common.hpp"
+#include "demo_viz.hpp"
 
 using PointT = demo::PointT;
 using PointNT = pcl::PointNormal;
 using PointCloudT = demo::CloudT;
 using PointCloudNT = pcl::PointCloud<PointNT>;
 using NormalCloud = pcl::PointCloud<pcl::Normal>;
-
-/**
- * @brief Generate a sample point cloud with planar regions
- */
-PointCloudT::Ptr generatePlanarCloud(int num_points = 5000)
-{
-    PointCloudT::Ptr cloud(new PointCloudT);
-    cloud->points.reserve(num_points);
-
-    // Generate points on multiple planes (simulating indoor environment)
-    int points_per_plane = num_points / 5;
-
-    // Floor (z = 0)
-    for (int i = 0; i < points_per_plane; ++i)
-    {
-        PointT p;
-        p.x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-        p.y = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-        p.z = 0.0f + 0.01f * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-        cloud->points.push_back(p);
-    }
-
-    // Left wall (x = -2)
-    for (int i = 0; i < points_per_plane; ++i)
-    {
-        PointT p;
-        p.x = -2.0f + 0.01f * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-        p.y = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-        p.z = static_cast<float>(rand()) / RAND_MAX * 2.0f;
-        cloud->points.push_back(p);
-    }
-
-    // Right wall (x = 2)
-    for (int i = 0; i < points_per_plane; ++i)
-    {
-        PointT p;
-        p.x = 2.0f + 0.01f * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-        p.y = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-        p.z = static_cast<float>(rand()) / RAND_MAX * 2.0f;
-        cloud->points.push_back(p);
-    }
-
-    // Back wall (y = -2)
-    for (int i = 0; i < points_per_plane; ++i)
-    {
-        PointT p;
-        p.x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-        p.y = -2.0f + 0.01f * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-        p.z = static_cast<float>(rand()) / RAND_MAX * 2.0f;
-        cloud->points.push_back(p);
-    }
-
-    // Front wall (y = 2)
-    for (int i = 0; i < points_per_plane; ++i)
-    {
-        PointT p;
-        p.x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-        p.y = 2.0f + 0.01f * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-        p.z = static_cast<float>(rand()) / RAND_MAX * 2.0f;
-        cloud->points.push_back(p);
-    }
-
-    cloud->width = cloud->points.size();
-    cloud->height = 1;
-    cloud->is_dense = true;
-
-    return cloud;
-}
 
 /**
  * @brief Compute normals for a point cloud
@@ -221,99 +156,31 @@ double runPointToPlaneICP(const PointCloudNT::Ptr& source_with_normals,
     return icp.getFitnessScore();
 }
 
-int main(int argc, char** argv)
+int main()
 {
     std::cout << "=== Point-to-Plane ICP Example ===\n\n";
 
-    PointCloudT::Ptr source_cloud(new PointCloudT);
-    PointCloudT::Ptr target_cloud(new PointCloudT);
+    // The demo takes no arguments: it always registers the Stanford bunny
+    // against a displaced copy of itself.
+    const std::string model = demo::findDataFile(demo::kBunnyFile);
 
-    bool generate_mode = false;
-    bool help_mode = false;
-    std::vector<std::string> files;
-
-    for (int i = 1; i < argc; ++i)
+    if (model.empty())
     {
-        std::string arg(argv[i]);
-        if (arg == "--generate" || arg == "-g")
-        {
-            generate_mode = true;
-        }
-        else if (arg == "--help" || arg == "-h")
-        {
-            help_mode = true;
-        }
-        else if (arg[0] != '-')
-        {
-            files.push_back(arg);
-        }
+        std::cerr << "Error: Could not find data/" << demo::kBunnyFile << ".\n";
+        std::cerr << "Run from the project root or from the build/ directory.\n";
+        return -1;
     }
 
-    if (help_mode)
+    PointCloudT::Ptr target_cloud = demo::loadCloud(model);
+    if (!target_cloud)
     {
-        std::cout << "Usage: " << argv[0] << "                        (Stanford bunny)\n";
-        std::cout << "       " << argv[0] << " source.pcd target.pcd\n";
-        std::cout << "       " << argv[0] << " --generate\n";
-        std::cout << "\nOptions:\n";
-        std::cout << "  (no arguments)          Use data/" << demo::kBunnyFile
-                  << " with a known transform\n";
-        std::cout << "  source, target          Input clouds (.ply, .pcd, or KITTI .bin)\n";
-        std::cout << "  --generate, -g          Generate a synthetic indoor box instead\n";
-        return 0;
+        std::cerr << "Error: Could not load " << model << "\n";
+        return -1;
     }
+    std::cout << "Loaded " << target_cloud->size() << " points from " << model << "\n";
 
-    Eigen::Matrix4f ground_truth = Eigen::Matrix4f::Identity();
-    bool have_ground_truth = false;
-
-    if (generate_mode)
-    {
-        std::cout << "Generating planar point clouds (simulating indoor environment)...\n";
-
-        target_cloud = generatePlanarCloud(10000);
-        std::cout << "Target cloud: " << target_cloud->size() << " points\n";
-    }
-    else if (files.size() >= 2)
-    {
-        std::cout << "Loading point clouds...\n";
-
-        source_cloud = demo::loadCloud(files[0]);
-        if (!source_cloud)
-        {
-            std::cerr << "Error: Could not load source cloud: " << files[0] << "\n";
-            return -1;
-        }
-        std::cout << "Source: " << source_cloud->size() << " points from " << files[0] << "\n";
-
-        target_cloud = demo::loadCloud(files[1]);
-        if (!target_cloud)
-        {
-            std::cerr << "Error: Could not load target cloud: " << files[1] << "\n";
-            return -1;
-        }
-        std::cout << "Target: " << target_cloud->size() << " points from " << files[1] << "\n";
-    }
-    else
-    {
-        const std::string model = files.empty() ? demo::findDataFile(demo::kBunnyFile) : files[0];
-
-        if (model.empty())
-        {
-            std::cerr << "Error: Could not find data/" << demo::kBunnyFile << ".\n";
-            std::cerr << "Run from the project root or build/ directory, "
-                         "or pass a cloud file explicitly.\n";
-            return -1;
-        }
-
-        target_cloud = demo::loadCloud(model);
-        if (!target_cloud)
-        {
-            std::cerr << "Error: Could not load " << model << "\n";
-            return -1;
-        }
-        std::cout << "Loaded " << target_cloud->size() << " points from " << model << "\n";
-
-        target_cloud = demo::centerCloud(*target_cloud);
-    }
+    // Centre the model so the injected rotation turns it about its own axis
+    target_cloud = demo::centerCloud(*target_cloud);
 
     // ============================================
     // Model scale
@@ -325,21 +192,20 @@ int main(int argc, char** argv)
     std::cout << "\nModel scale (bbox diagonal): " << std::fixed << std::setprecision(4)
               << scale << " m\n";
 
-    if (source_cloud->empty())
-    {
-        const float shift = static_cast<float>(scale * 0.04);
-        const float angle = 5.0f * M_PI / 180.0f;
+    // Build the source cloud by displacing the target with a known transform,
+    // so both methods can be scored against the exact answer
+    const float shift = static_cast<float>(scale * 0.04);
+    const float angle = 5.0f * M_PI / 180.0f;
 
-        ground_truth = demo::makeTransform(shift, shift * 0.5f, shift * 0.2f,
-                                           0.01f, 0.02f, angle);
-        have_ground_truth = true;
+    const Eigen::Matrix4f ground_truth =
+        demo::makeTransform(shift, shift * 0.5f, shift * 0.2f, 0.01f, 0.02f, angle);
 
-        pcl::transformPointCloud(*target_cloud, *source_cloud, ground_truth);
+    PointCloudT::Ptr source_cloud(new PointCloudT);
+    pcl::transformPointCloud(*target_cloud, *source_cloud, ground_truth);
 
-        std::cout << "Source cloud: " << source_cloud->size() << " points\n";
-        std::cout << "Applied transformation: t=(" << std::setprecision(4) << shift << ", "
-                  << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=5deg\n";
-    }
+    std::cout << "Source cloud: " << source_cloud->size() << " points\n";
+    std::cout << "Applied transformation: t=(" << std::setprecision(4) << shift << ", "
+              << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=5deg\n";
 
     // Downsample
     std::cout << "\nDownsampling clouds with voxel size " << std::setprecision(4)
@@ -422,32 +288,75 @@ int main(int argc, char** argv)
               << std::setw(20) << "Not needed"
               << std::setw(20) << (std::to_string(normal_time.count()) + " ms") << "\n";
 
-    if (have_ground_truth)
-    {
-        const Eigen::Matrix4f gt = ground_truth.inverse();
-        const demo::PoseError err_p2p = demo::poseError(transform_p2p, gt);
-        const demo::PoseError err_p2plane = demo::poseError(transform_p2plane, gt);
+    const Eigen::Matrix4f gt = ground_truth.inverse();
+    const demo::PoseError err_p2p = demo::poseError(transform_p2p, gt);
+    const demo::PoseError err_p2plane = demo::poseError(transform_p2plane, gt);
 
-        std::cout << std::left << std::setw(25) << "Rotation Error (deg)"
-                  << std::setw(20) << std::fixed << std::setprecision(4) << err_p2p.rotation_deg
-                  << std::setw(20) << err_p2plane.rotation_deg << "\n";
-        std::cout << std::left << std::setw(25) << "Translation Error (m)"
-                  << std::setw(20) << std::setprecision(6) << err_p2p.translation_m
-                  << std::setw(20) << err_p2plane.translation_m << "\n";
-    }
+    std::cout << std::left << std::setw(25) << "Rotation Error (deg)"
+              << std::setw(20) << std::fixed << std::setprecision(4) << err_p2p.rotation_deg
+              << std::setw(20) << err_p2plane.rotation_deg << "\n";
+    std::cout << std::left << std::setw(25) << "Translation Error (m)"
+              << std::setw(20) << std::setprecision(6) << err_p2p.translation_m
+              << std::setw(20) << err_p2plane.translation_m << "\n";
+
+    // On clean data both methods reach the same answer once they are given
+    // enough iterations, so the final errors above are identical and say
+    // nothing. The number that separates the two methods is how many iterations
+    // each one needed to get there. Counted on throwaway copies, because the
+    // steppers rewrite the clouds they are handed.
+    PointCloudT::Ptr scratch_p2p(new PointCloudT(*source_filtered));
+    PointCloudT::Ptr scratch_display(new PointCloudT(*source_filtered));
+    PointCloudNT::Ptr scratch_p2plane(new PointCloudNT(*source_with_normals));
+
+    const int iters_p2p = demo::countIterationsToConverge(
+        demo::makePointToPointStep(target_filtered, scratch_p2p,
+                                   max_correspondence_distance, scale));
+    const int iters_p2plane = demo::countIterationsToConverge(
+        demo::makePointToPlaneStep(target_with_normals, scratch_p2plane,
+                                   scratch_display, max_correspondence_distance, scale));
+
+    std::cout << std::left << std::setw(25) << "Iterations to converge"
+              << std::setw(20) << iters_p2p
+              << std::setw(20) << iters_p2plane << "\n";
 
     std::cout << "\nConclusion:\n";
-    if (fitness_p2plane < fitness_p2p)
+    std::cout << "  Point-to-plane converged in " << iters_p2plane
+              << " iterations against " << iters_p2p << " for point-to-point,\n";
+    std::cout << "  on a model that is nowhere near planar. The advantage does not come\n";
+    std::cout << "  from the surface being flat overall, but from each normal's\n";
+    std::cout << "  neighbourhood being locally smooth: minimising distance to the tangent\n";
+    std::cout << "  plane lets correspondences slide along the surface instead of being\n";
+    std::cout << "  pinned point to point, which is what costs point-to-point its\n";
+    std::cout << "  iterations. The price is estimating normals up front.\n";
+
+    // ============================================
+    // Step both methods interactively, side by side
+    // ============================================
+    if (!demo::hasDisplay())
     {
-        std::cout << "  Point-to-plane ICP achieved better alignment (lower fitness score).\n";
-    }
-    else
-    {
-        std::cout << "  Point-to-point ICP achieved comparable or better alignment.\n";
+        demo::reportMissingDisplay();
+        return 0;
     }
 
-    std::cout << "  Point-to-plane ICP typically converges faster for planar surfaces,\n";
-    std::cout << "  but requires additional time for normal estimation.\n";
+    // Both tracks start from the same displaced source and advance together, so
+    // the difference in convergence rate is visible directly
+    PointCloudT::Ptr step_p2p(new PointCloudT(*source_filtered));
+    PointCloudT::Ptr step_p2plane(new PointCloudT(*source_filtered));
+    PointCloudNT::Ptr step_p2plane_n(new PointCloudNT(*source_with_normals));
+
+    std::vector<demo::Track> tracks;
+    tracks.push_back({"point-to-point", "p2point", 255, 255, 0, step_p2p,
+                      demo::makePointToPointStep(target_filtered, step_p2p,
+                                                 max_correspondence_distance, scale),
+                      0, -1, 0.0, Eigen::Matrix4f::Identity()});
+    tracks.push_back({"point-to-plane", "p2plane", 255, 0, 255, step_p2plane,
+                      demo::makePointToPlaneStep(target_with_normals, step_p2plane_n,
+                                                 step_p2plane, max_correspondence_distance,
+                                                 scale),
+                      0, -1, 0.0, Eigen::Matrix4f::Identity()});
+
+    demo::runStepViewer("Point-to-Point vs Point-to-Plane ICP - press any key to step",
+                        target_filtered, tracks, scale);
 
     std::cout << "\n=== Done ===\n";
     return 0;
