@@ -72,9 +72,19 @@ def curve_model(abc: Sequence[float], x: np.ndarray | float):
     return np.exp(a * np.asarray(x) ** 2 + b * np.asarray(x) + c)
 
 
-def _curve_strip(abc: Sequence[float], x_min: float, x_max: float, samples: int = 200):
-    xs = np.linspace(x_min, x_max, samples)
-    return np.column_stack([xs, curve_model(abc, xs)])
+def _curve_strip(abc: Sequence[float], x_min: float, x_max: float, x_span: float,
+                 samples: int = 200):
+    """Sample the curve densely enough to look smooth.
+
+    The horizontal axis is the sample index, not x. A Spatial2DView keeps a 1:1
+    aspect ratio, and this exercise has x in [0, 1] against y reaching ~390 at
+    the initial guess, so plotting against x collapses the figure into an
+    unreadable vertical sliver. The sample index is a linear rescale of x
+    (x_i = i/N), so the curve's shape is unchanged - only the axis labels are.
+    """
+    t = np.linspace(0.0, 1.0, samples)
+    xs = x_min + (x_max - x_min) * t
+    return np.column_stack([t * x_span, curve_model(abc, xs)])
 
 
 class Viz:
@@ -89,6 +99,7 @@ class Viz:
         self.connected = False
         self._x_min = 0.0
         self._x_max = 1.0
+        self._x_span = 1.0
         url = viewer_url()
         if not viewer_reachable(url):
             print(
@@ -126,29 +137,30 @@ class Viz:
         if not self.connected or len(xs) == 0:
             return
         self._x_min, self._x_max = float(np.min(xs)), float(np.max(xs))
+        # Horizontal axis is the sample index - see _curve_strip.
+        self._x_span = float(len(xs) - 1)
         self._log(
             "curve/observations",
-            rr.Points2D(np.column_stack([xs, ys]), colors=DATA_COLOR, radii=rr.Radius.ui_points(2.0)),
+            rr.Points2D(np.column_stack([np.arange(len(xs)), ys]), colors=DATA_COLOR,
+                        radii=rr.Radius.ui_points(2.0)),
             static=True,
         )
         self._log(
             "curve/ground_truth",
             rr.LineStrips2D(
-                [_curve_strip(gt, self._x_min, self._x_max)],
+                [_curve_strip(gt, self._x_min, self._x_max, self._x_span)],
                 colors=GT_COLOR,
                 radii=rr.Radius.ui_points(2.0),
             ),
             static=True,
         )
-        self._log(
-            f"curve/{self.lib}/initial",
-            rr.LineStrips2D(
-                [_curve_strip(init, self._x_min, self._x_max)],
-                colors=INIT_COLOR,
-                radii=rr.Radius.ui_points(1.5),
-            ),
-            static=True,
-        )
+        # The initial guess is deliberately NOT drawn here. At (2, -1, 5) it
+        # reaches y = 391 against data spanning only y = 2.7 .. 52.5, and a
+        # Spatial2DView keeps a 1:1 aspect ratio and re-fits to its content, so
+        # including it squeezes the figure into an unreadable sliver. Nothing is
+        # lost: the starting point shows up in the params plot (a, b, c begin at
+        # 2, -1, 5) and the cost plot (chi^2 starts at 8e7).
+        del init
         self._log(
             f"cost/{self.lib}",
             rr.SeriesLines(names=[self.lib], colors=[OPT_COLOR], widths=[1.5]),
@@ -163,7 +175,7 @@ class Viz:
         self._log(
             f"curve/{self.lib}/fitted",
             rr.LineStrips2D(
-                [_curve_strip(abc, self._x_min, self._x_max)],
+                [_curve_strip(abc, self._x_min, self._x_max, self._x_span)],
                 colors=OPT_COLOR,
                 radii=rr.Radius.ui_points(2.5),
             ),

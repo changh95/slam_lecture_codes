@@ -20,6 +20,7 @@
  */
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -176,13 +177,29 @@ inline std::vector<rerun::Vec3D> xyz(const std::vector<Vec3>& pts) {
 }
 
 /// Sample the fitted curve densely enough to look smooth.
+///
+/// The horizontal axis is the sample index, not x. A Spatial2DView keeps a 1:1
+/// aspect ratio, and this exercise has x in [0, 1] against y reaching ~390 at
+/// the initial guess, so plotting against x collapses the whole figure into an
+/// unreadable vertical sliver. The sample index is a linear rescale of x
+/// (x_i = i/N), so the curve's shape is exactly the same - only the axis
+/// labels change.
+/// `y_ceiling` clips the curve the way a plot's axis limit does. It matters: at
+/// the initial guess (2, -1, 5) the model reaches y = 391 against data spanning
+/// y = 2.7 .. 52.5, and a Spatial2DView sizes itself to the full extent of
+/// everything ever logged - including iteration 0, which *is* that initial
+/// guess. Unclipped, the whole figure collapses into a one-pixel-wide sliver.
 inline rerun::components::LineStrip2D curveStrip(const Abc& abc, double x_min,
-                                                 double x_max, int samples = 200) {
+                                                 double x_max, double x_span,
+                                                 double y_ceiling,
+                                                 int samples = 200) {
     std::vector<rerun::Vec2D> pts;
     pts.reserve(static_cast<std::size_t>(samples));
     for (int i = 0; i < samples; ++i) {
-        const double x = x_min + (x_max - x_min) * i / (samples - 1);
-        pts.push_back({static_cast<float>(x), static_cast<float>(curveModel(abc, x))});
+        const double t = static_cast<double>(i) / (samples - 1);
+        const double x = x_min + (x_max - x_min) * t;
+        const double y = std::min(curveModel(abc, x), y_ceiling);
+        pts.push_back({static_cast<float>(t * x_span), static_cast<float>(y)});
     }
     return rerun::components::LineStrip2D(pts);
 }
@@ -227,27 +244,37 @@ public:
     void curveSetup(const std::vector<double>& xs, const std::vector<double>& ys,
                     const Abc& gt, const Abc& init) {
         if (!connected_ || xs.empty()) return;
-        std::vector<rerun::Vec2D> pts;
-        pts.reserve(xs.size());
         double x_min = xs.front(), x_max = xs.front();
-        for (std::size_t i = 0; i < xs.size(); ++i) {
-            pts.push_back({static_cast<float>(xs[i]), static_cast<float>(ys[i])});
-            x_min = std::min(x_min, xs[i]);
-            x_max = std::max(x_max, xs[i]);
+        for (const double x : xs) {
+            x_min = std::min(x_min, x);
+            x_max = std::max(x_max, x);
         }
         x_min_ = x_min;
         x_max_ = x_max;
+        // Horizontal axis is the sample index - see detail::curveStrip.
+        x_span_ = static_cast<double>(xs.size() - 1);
+        double y_max = ys.empty() ? 1.0 : ys.front();
+        for (const double y : ys) y_max = std::max(y_max, y);
+        y_ceil_ = 1.2 * y_max;
+
+        std::vector<rerun::Vec2D> pts;
+        pts.reserve(xs.size());
+        for (std::size_t i = 0; i < xs.size(); ++i) {
+            pts.push_back({static_cast<float>(i), static_cast<float>(ys[i])});
+        }
 
         rec_->log_static("curve/observations",
                          rerun::Points2D(pts)
                              .with_colors({detail::kDataColor})
                              .with_radii({rerun::Radius::ui_points(2.0f)}));
-        rec_->log_static("curve/ground_truth",
-                         rerun::LineStrips2D({detail::curveStrip(gt, x_min, x_max)})
-                             .with_colors({detail::kGtColor})
-                             .with_radii({rerun::Radius::ui_points(2.0f)}));
+        rec_->log_static(
+            "curve/ground_truth",
+            rerun::LineStrips2D({detail::curveStrip(gt, x_min, x_max, x_span_, y_ceil_)})
+                .with_colors({detail::kGtColor})
+                .with_radii({rerun::Radius::ui_points(2.0f)}));
         rec_->log_static("curve/" + lib_ + "/initial",
-                         rerun::LineStrips2D({detail::curveStrip(init, x_min, x_max)})
+                         rerun::LineStrips2D({detail::curveStrip(
+                                                 init, x_min, x_max, x_span_, y_ceil_)})
                              .with_colors({detail::kInitColor})
                              .with_radii({rerun::Radius::ui_points(1.5f)}));
 
@@ -262,7 +289,7 @@ public:
         if (!connected_) return;
         rec_->set_time_sequence("iteration", iter);
         rec_->log("curve/" + lib_ + "/fitted",
-                  rerun::LineStrips2D({detail::curveStrip(abc, x_min_, x_max_)})
+                  rerun::LineStrips2D({detail::curveStrip(abc, x_min_, x_max_, x_span_, y_ceil_)})
                       .with_colors({detail::kOptColor})
                       .with_radii({rerun::Radius::ui_points(2.5f)}));
         rec_->log("cost/" + lib_, rerun::Scalars(cost));
@@ -313,6 +340,11 @@ public:
                      const std::vector<Edge>& edges, const Color3& rgb,
                      bool is_static = false) {
         if (!connected_ || positions.empty()) return;
+        // Establish the up-axis on the view's origin, exactly as baSetup does
+        // for "world". Without it a 3D view will not frame these graphs: they
+        // are perfectly planar (every pose at z = 0), so their bounding box is
+        // degenerate and the default camera ends up looking at nothing.
+        rec_->log_static("graph3d", rerun::ViewCoordinates::RIGHT_HAND_Z_UP);
         const std::string base = "graph3d/" + lib_ + "/" + name;
         const auto pts = detail::xyz(positions);
         const rerun::Color color(rgb[0], rgb[1], rgb[2]);
@@ -498,6 +530,8 @@ private:
     bool connected_ = false;
     double x_min_ = 0.0;
     double x_max_ = 1.0;
+    double x_span_ = 1.0;
+    double y_ceil_ = 1e9;
 };
 
 #else  // !HAVE_RERUN
