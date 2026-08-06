@@ -144,22 +144,6 @@ correspondences.
 The views below are the rerun viewer. Override its address with `RERUN_URL` if it
 is not at `rerun+http://127.0.0.1:9876/proxy`.
 
-Alongside the 3D views there are two graphs, `translation_error` and
-`rotation_error`, scoring every optimization step against the ground truth. All
-methods are drawn in the same graph on a shared axis, so the convergence rates
-compare directly. Point 0 is the initial guess, and the graphs share the
-`iteration` timeline with the 3D playback, so scrubbing moves the clouds and the
-curves together.
-
-Getting those curves out of the newer backends takes some care, and the failure
-mode is silent. Both small_gicp and fast_gicp derive from `pcl::Registration`, so
-`registerVisualizationCallback()` compiles and returns true — but neither library
-ever invokes `update_visualizer_`, so the curve would come back holding only the
-seeded initial guess: one point, no error, no warning. The demos instead override
-fast_gicp's protected virtual `linearize()`, which both `step_gn()` and
-`step_lm()` call exactly once per outer iteration, and inject a recording
-optimizer into small_gicp's `Registration<>` template. See `demo_common.hpp`.
-
 ### All four GICP backends on one scan pair
 
 The target is coloured by height, the un-registered source is red, and each
@@ -173,6 +157,18 @@ descending at iteration 10 in `translation_error`, and the one whose
 three have converged and flattened by then.
 
 ![](./images/gicp_demo.png)
+
+### CPU NDT against CUDA NDT
+
+The same overlay for experiment 2 — PCL NDT blue, NDTCuda D2D magenta, NDTCuda P2D
+cyan, against the red starting position.
+
+In `translation_error` the three settle in the order the table reports: PCL NDT
+lowest, then P2D, with D2D highest. `rotation_error` is the more interesting one —
+both CUDA curves climb above where they started before coming back down, so the
+GPU version gets its heading worse before it gets it better.
+
+![](./images/ndt_demo.png)
 
 ### TEASER++ on a KITTI loop closure
 
