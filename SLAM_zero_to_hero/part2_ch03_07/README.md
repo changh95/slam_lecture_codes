@@ -79,7 +79,9 @@ Each demo takes two KITTI scans, or none at all to use the bundled pair.
 
 ```bash
 ./build/gicp_demo                             # experiment 1
-./build/ndt_demo                              # experiment 2, optional 3rd arg: cell size (m)
+./build/ndt_demo                              # experiment 2; a 3rd arg forces one
+                                              # cell size on both backends, which
+                                              # otherwise use their own best
 ./build/teaser_demo                           # experiment 3
 ```
 
@@ -118,13 +120,47 @@ docker run --rm \
 
 ### Experiment 2 — NDT
 
-| Method | Trans err | Rot err | Iters | Prep | Align | **Total** |
-|---|---|---|---|---|---|---|
-| PCL NDT | 0.0103 m | 0.0252° | 6 | 2.2 ms | 283.5 ms | **285.7 ms** |
-| NDTCuda (D2D) | 0.0676 m | 0.0457° | 12 | 0.2 ms | 5.3 ms | **5.5 ms** |
-| NDTCuda (P2D) | 0.0344 m | 0.0465° | 12 | 0.2 ms | 5.2 ms | **5.3 ms** |
+Each backend runs at its own best cell size, because they do not peak at the same
+one — PCL at 1.0 m, NDTCuda at 0.75 m. A shared value just handicaps whichever it
+does not suit.
 
-At a shared 1.0 m resolution the GPU is 52× faster and 3–7× less accurate.
+| Method | Cell | Trans err | Rot err | Iters | Prep | Align | **Total** |
+|---|---|---|---|---|---|---|---|
+| PCL NDT | 1.0 m | 0.0103 m | 0.0252° | 6 | 2.2 ms | 303.2 ms | **305.5 ms** |
+| NDTCuda (D2D) | 0.75 m | 0.0336 m | 0.0650° | 13 | 0.5 ms | 7.6 ms | **8.2 ms** |
+| NDTCuda (P2D) | 0.75 m | 0.0172 m | 0.0505° | 14 | 0.2 ms | 14.1 ms | **14.3 ms** |
+
+So P2D is **21× faster and 1.7× less accurate** — a far better trade than it looks
+at a shared 1.0 m cell, where the same comparison reads 3.3×. D2D wanders a little
+between runs (0.029–0.034 m) because its CUDA accumulation sums in
+non-deterministic order; P2D is stable.
+
+#### Cell size
+
+The two backends want different cell sizes, and both have a cliff:
+
+| Cell | PCL NDT | NDTCuda D2D | NDTCuda P2D |
+|---|---|---|---|
+| 0.25 m | 1.3109 *(0 iters)* | 1.3109 *(never moves)* | 1.3109 *(never moves)* |
+| 0.50 m | 1.3115 *(1 iter)* | 0.0154 *(**not converged**)* | 1.2271 |
+| **0.75 m** | 1.2592 *(1 iter)* | **0.0289** | **0.0172** |
+| 1.00 m | 0.0103 | 0.0672 | 0.0343 |
+| 2.00 m | **0.0076** | 0.1528 | 0.0572 |
+| 3.00 m | 0.0154 | 0.3748 | 0.4768 *(not converged)* |
+| 5.00 m | 0.0122 | 0.6707 | 1.7465 *(not converged)* |
+
+They run in opposite directions: PCL improves as cells grow, peaking at 2.0 m, and
+stalls after a single iteration below 1.0 m. Both CUDA modes improve as cells
+shrink, peak at 0.75 m, and collapse at 0.5 m. Note the GPU's best value sits one
+step from that cliff — D2D at 0.50 m is nominally its most accurate row but does
+not report convergence, so it is not a defensible default. PCL's 2.0 m optimum sits
+comfortably mid-range, with everything from 1.0 to 5.0 m working.
+
+The residual accuracy gap is not a tuning artifact. PCL implements Magnusson's
+Gaussian-plus-uniform NDT score (`outlier_ratio_ = 0.55`), while fast_gicp uses the
+plainer Biber MLE with a robust kernel, says so in `ndt_compute_derivatives.cu`,
+and gathers neighbours with a 7-voxel cross where PCL does an isotropic radius
+search. Different objective, different optimum — no parameter closes it.
 
 ### Experiment 3 — TEASER++
 
@@ -176,13 +212,14 @@ the step axis and cost on this one.
 
 ### CPU NDT against CUDA NDT
 
-The same overlay for experiment 2 — PCL NDT blue, NDTCuda D2D magenta, NDTCuda P2D
-cyan, against the red starting position.
+The same overlay for experiment 2 — PCL NDT blue at 1.0 m, NDTCuda D2D magenta and
+P2D cyan at 0.75 m, against the red starting position.
 
 In `translation_error` the three settle in the order the table reports: PCL NDT
 lowest, then P2D, with D2D highest. `rotation_error` is the more interesting one —
-both CUDA curves climb above where they started before coming back down, so the
-GPU version gets its heading worse before it gets it better.
+both CUDA curves climb to roughly 0.25°, nearly three times their starting error,
+before coming back down. The GPU modes buy their translation by getting the
+heading badly wrong first, which is not visible anywhere in the summary table.
 
 ![](./images/ndt_demo.png)
 

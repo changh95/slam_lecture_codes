@@ -1,31 +1,17 @@
 /**
  * NDT experiment: PCL's CPU NDT against fast_gicp's CUDA NDT
  *
- * The Normal Distributions Transform represents the target as a grid of
- * Gaussians instead of a set of points, so there are no explicit
- * correspondences to search for - which is exactly the shape of problem a GPU
- * likes. This demo puts the two implementations side by side.
+ * Only these two exist to compare: NDTCuda is the only NDT in fast_gicp and is
+ * CUDA-gated, and small_gicp has no NDT at all - its VGICP is GICP against a
+ * voxel map, a different cost function, not NDT renamed.
  *
- * Why these two and not others: NDTCuda is the ONLY NDT in fast_gicp and it is
- * unconditionally CUDA-gated, and small_gicp has no NDT at all - its VGICP is
- * GICP against a voxel map, a different cost function, not NDT by another name.
- * So a CPU-vs-GPU NDT comparison means PCL against fast_gicp, and there is no
- * third option to add.
- *
- * The GPU is much faster here. It is also, on this data, less accurate - which
- * is the more useful lesson, and the reason both columns are reported rather
- * than just the timings.
- *
- * fast_gicp's NDT offers two distance modes:
+ * fast_gicp's two distance modes:
  *   P2D  source points against the target's voxel distributions (classic NDT)
- *   D2D  the source is voxelized too, and distributions are matched against
- *        distributions. This is fast_gicp's default.
+ *   D2D  source voxelized too, distribution against distribution. The default.
  *
- * Runs on two KITTI velodyne scans and scores everything against the KITTI
- * ground-truth poses. With no arguments it uses the pair bundled with this
- * chapter (sequence 04, frames 0 and 1, 1.31 m apart).
+ * The GPU is much faster and, on this data, less accurate - hence both columns.
  *
- * Usage: ./ndt_demo [source.bin target.bin [resolution]]
+ * Usage: ./ndt_demo [source.bin target.bin [resolution]]   (no args: bundled pair)
  *
  * Reference: Biber & Strasser, "The Normal Distributions Transform", IROS 2003
  */
@@ -51,7 +37,13 @@ using PointT = pcl::PointXYZ;
 using CloudT = pcl::PointCloud<PointT>;
 
 constexpr float kVoxelLeaf = 0.3f;
+
+/// The two backends do not peak at the same cell size, so each runs at its own -
+/// a shared value only handicaps whichever it does not suit. See the resolution
+/// study: PCL is best at 2.0 m and stalls below 1.0 m, while both CUDA modes peak
+/// at 0.75 m and fall apart at 0.5 m.
 constexpr float kNdtResolution = 1.0f;
+constexpr float kCudaNdtResolution = 0.75f;
 
 /// More-Thuente maximum step length, for PCL's NDT. 0.1 m - the value indoor
 /// NDT examples use - is shorter than TransformationEpsilon at KITTI's 1.3-1.5 m
@@ -110,7 +102,7 @@ std::unique_ptr<CudaNdt> makeCudaNdt(float resolution,
 }
 
 void warmUpGpu(const demo::KittiPair& pair) {
-    auto reg = makeCudaNdt(kNdtResolution, fast_gicp::NDTDistanceMode::D2D);
+    auto reg = makeCudaNdt(kCudaNdtResolution, fast_gicp::NDTDistanceMode::D2D);
     reg->setMaximumIterations(2);
     reg->setInputTarget(pair.target);
     reg->setInputSource(pair.source);
@@ -118,17 +110,21 @@ void warmUpGpu(const demo::KittiPair& pair) {
     reg->align(aligned);
 }
 
-void compareBackends(const demo::KittiPair& pair, float resolution,
-                     demo::RegistrationViz* viz) {
+void compareBackends(const demo::KittiPair& pair, float pcl_resolution,
+                     float cuda_resolution, demo::RegistrationViz* viz) {
     std::cout << "\n=== Experiment 2: CPU NDT vs CUDA NDT ===" << std::endl;
-    std::cout << "Identity initial guess, resolution " << resolution << " m.\n"
+    std::cout << "Identity initial guess. Each backend runs at its own best cell"
               << std::endl;
+    std::cout << "size - PCL " << std::fixed << std::setprecision(2) << pcl_resolution
+              << " m, CUDA " << cuda_resolution << " m - since they do not peak at"
+              << std::endl;
+    std::cout << "the same value. See the resolution study below.\n" << std::endl;
 
     std::vector<demo::RunResult> results;
     std::vector<demo::ErrorTrace> traces;
 
     demo::ErrorTrace pcl_trace;
-    auto pcl_result = runPclNdt(pair, resolution, kNdtStepSize,
+    auto pcl_result = runPclNdt(pair, pcl_resolution, kNdtStepSize,
                                 Eigen::Matrix4f::Identity(), viz, &pcl_trace);
     results.push_back(pcl_result);
     traces.push_back(pcl_trace);
@@ -144,7 +140,7 @@ void compareBackends(const demo::KittiPair& pair, float resolution,
         const auto& color = (i == 0) ? kD2dColor : kP2dColor;
 
         std::vector<demo::TracedStep> poses;
-        auto reg = makeCudaNdt(resolution, mode);
+        auto reg = makeCudaNdt(cuda_resolution, mode);
         auto r = demo::runFastGicp(name, *reg, pair.source, pair.target,
                                    pair.ground_truth, Eigen::Matrix4f::Identity(),
                                    &poses);
@@ -190,19 +186,32 @@ void testResolution(const demo::KittiPair& pair) {
               << std::setw(13) << "Total (ms)" << std::endl;
     std::cout << std::string(104, '-') << std::endl;
 
+    // The sweep runs below the 0.5 m the two CUDA modes prefer, so their optimum
+    // is located rather than assumed to sit at the edge of the range.
+    const std::vector<float> resolutions{0.25f, 0.5f, 0.75f, 1.0f, 2.0f, 3.0f, 5.0f};
+
+    const auto label = [](const char* backend, float resolution) {
+        std::ostringstream out;
+        out << backend << " " << std::fixed << std::setprecision(2) << resolution << " m";
+        return out.str();
+    };
+
     std::vector<demo::RunResult> results;
-    for (float resolution : {0.5f, 1.0f, 2.0f, 3.0f, 5.0f}) {
-        std::ostringstream label;
-        label << "PCL " << std::fixed << std::setprecision(1) << resolution << " m";
+    for (float resolution : resolutions) {
         results.push_back(runPclNdt(pair, resolution, kNdtStepSize,
                                     Eigen::Matrix4f::Identity(), nullptr, nullptr,
-                                    label.str()));
+                                    label("PCL", resolution)));
     }
-    for (float resolution : {0.5f, 1.0f, 2.0f, 3.0f, 5.0f}) {
-        std::ostringstream label;
-        label << "CUDA D2D " << std::fixed << std::setprecision(1) << resolution << " m";
+    for (float resolution : resolutions) {
         auto reg = makeCudaNdt(resolution, fast_gicp::NDTDistanceMode::D2D);
-        results.push_back(demo::runFastGicp(label.str(), *reg, pair.source, pair.target,
+        results.push_back(demo::runFastGicp(label("CUDA D2D", resolution), *reg,
+                                            pair.source, pair.target,
+                                            pair.ground_truth));
+    }
+    for (float resolution : resolutions) {
+        auto reg = makeCudaNdt(resolution, fast_gicp::NDTDistanceMode::P2D);
+        results.push_back(demo::runFastGicp(label("CUDA P2D", resolution), *reg,
+                                            pair.source, pair.target,
                                             pair.ground_truth));
     }
 
@@ -293,7 +302,7 @@ void testInitialGuess(const demo::KittiPair& pair) {
         std::vector<demo::RunResult> results;
         results.push_back(runPclNdt(pair, kNdtResolution, kNdtStepSize, guess));
         {
-            auto reg = makeCudaNdt(kNdtResolution, fast_gicp::NDTDistanceMode::D2D);
+            auto reg = makeCudaNdt(kCudaNdtResolution, fast_gicp::NDTDistanceMode::D2D);
             results.push_back(demo::runFastGicp("NDTCuda (D2D)", *reg, pair.source,
                                                 pair.target, gt, guess));
         }
@@ -320,7 +329,8 @@ void printUsage(const char* prog_name) {
     std::cout << "  source target     - Use the given KITTI velodyne .bin (or .pcd) scans"
               << std::endl;
     std::cout << "  resolution        - NDT cell size in meters (default "
-              << kNdtResolution << ")" << std::endl;
+              << kNdtResolution << " PCL / " << kCudaNdtResolution
+              << " CUDA; giving one applies it to both)" << std::endl;
 }
 
 }  // namespace
@@ -340,11 +350,16 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    const float resolution = (argc == 4) ? std::stof(argv[3]) : kNdtResolution;
+    // An explicit cell size on the command line applies to both backends, since
+    // asking for one value means wanting them compared at it. Without it each
+    // takes its own tuned default.
+    const bool shared = (argc == 4);
+    const float pcl_resolution = shared ? std::stof(argv[3]) : kNdtResolution;
+    const float cuda_resolution = shared ? std::stof(argv[3]) : kCudaNdtResolution;
 
     demo::printKittiPair(pair);
-    std::cout << "  NDT resolution: " << std::fixed << std::setprecision(3) << resolution
-              << " m" << std::endl;
+    std::cout << "  NDT resolution: PCL " << std::fixed << std::setprecision(2)
+              << pcl_resolution << " m, CUDA " << cuda_resolution << " m" << std::endl;
 
     std::cout << "\nVoxel-downsampling to " << kVoxelLeaf << " m..." << std::endl;
     const std::size_t source_raw = pair.source->size();
@@ -362,7 +377,7 @@ int main(int argc, char** argv) {
               << std::endl;
     warmUpGpu(pair);
 
-    compareBackends(pair, resolution, &viz);
+    compareBackends(pair, pcl_resolution, cuda_resolution, &viz);
     testResolution(pair);
     testStepSize(pair);
     testInitialGuess(pair);
