@@ -1,31 +1,15 @@
 /**
- * GICP experiment: the algorithm, and then the implementation
+ * GICP experiment: the algorithm, then the implementation
  *
- * Two questions get asked here, and they are deliberately separated because
- * conflating them is the usual way this comparison goes wrong:
+ * Rows 1-2 (PCL ICP vs PCL GICP) isolate the algorithm - same library, only the
+ * cost function differs. Rows 2-4 (PCL GICP vs small_gicp vs fast_gicp CUDA)
+ * isolate the implementation. Collapsed into one comparison you cannot tell which
+ * of the two effects you are looking at.
  *
- *   1. Does GICP beat plain ICP?  PCL ICP vs PCL GICP - same library, same
- *      correspondence machinery, only the cost function differs. Any difference
- *      is the algorithm.
+ * fast_gicp's CUDA offering is FastVGICPCuda, which is *voxelized* GICP, so it is
+ * labelled VGICP throughout; there is no point-to-point GICP on its GPU path.
  *
- *   2. Does the implementation matter?  PCL GICP vs small_gicp GICP vs
- *      fast_gicp's CUDA VGICP - broadly the same algorithm, three very different
- *      implementations. Any difference is engineering, not mathematics.
- *
- * Read the table down the first two rows for question 1 and down the last three
- * for question 2. If the four rows were collapsed into "ICP vs a fast GICP" the
- * reader could not tell which of the two effects they were looking at.
- *
- * A note on the third row: fast_gicp's CUDA offering is FastVGICPCuda, which is
- * *voxelized* GICP - it matches against per-voxel distributions rather than
- * per-point ones. It is labelled VGICP rather than GICP throughout for that
- * reason. There is no plain point-to-point GICP on the GPU in fast_gicp.
- *
- * Runs on two KITTI velodyne scans and scores every method against the KITTI
- * ground-truth poses. With no arguments it uses the pair bundled with this
- * chapter (sequence 04, frames 0 and 1, 1.31 m apart).
- *
- * Usage: ./gicp_demo [source.bin target.bin]
+ * Usage: ./gicp_demo [source.bin target.bin]   (no args: bundled seq 04 pair)
  *
  * Reference: Segal et al., "Generalized-ICP", RSS 2009
  */
@@ -229,17 +213,11 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
     }
 }
 
-/**
- * How much wrongness in the initial guess each backend survives
- *
- * This is also where ICP's error shows its true nature. Hand ICP the ground
- * truth itself and it does not stay there - it walks back out to the same ~5.7 cm
- * it reaches from identity. That is a bias, not a convergence failure: point-to-
- * point matching pairs points across the Velodyne's scan rings, and on a road
- * surface those pairings are systematically offset, so the fixed point ICP is
- * pulled to is stable, repeatable and wrong. GICP's surface model is what removes
- * it, which is the clearest single argument for the algorithm.
- */
+/// How much wrongness in the initial guess each backend survives
+///
+/// Also where ICP's error shows its nature: handed the ground truth it walks back
+/// out to the same ~5.7 cm it reaches from identity, so that is a bias, not a
+/// convergence failure.
 void testInitialGuess(const demo::KittiPair& pair) {
     if (!pair.has_ground_truth) return;
 
@@ -296,13 +274,8 @@ void testInitialGuess(const demo::KittiPair& pair) {
     }
 }
 
-/**
- * Where small_gicp's speed actually comes from
- *
- * This replaces the old correspondence-randomness sweep, which moved the error
- * by less than the run-to-run noise and taught nothing. Thread count is the knob
- * that matters for these libraries, and it is the one PCL's GICP does not have.
- */
+/// Where small_gicp's speed comes from. Thread count is the knob that matters for
+/// these libraries, and the one PCL's GICP does not have.
 void testThreadScaling(const demo::KittiPair& pair) {
     std::cout << "\n=== Thread scaling (small_gicp GICP) ===" << std::endl;
     std::cout << "Same points, same iteration budget - only the thread count moves.\n"
@@ -342,13 +315,8 @@ void testThreadScaling(const demo::KittiPair& pair) {
               << std::endl;
 }
 
-/**
- * CPU / GPU crossover against cloud size
- *
- * A GPU has to earn its fixed overheads back. Sweeping the voxel leaf changes
- * how many points there are to work on, which is exactly the axis that decides
- * whether offloading pays.
- */
+/// CPU / GPU crossover against cloud size. A GPU has to earn its fixed overheads
+/// back, and point count is the axis that decides whether offloading pays.
 void testCpuGpuCrossover(const demo::KittiPair& raw_pair) {
     std::cout << "\n=== CPU / GPU crossover vs cloud size ===" << std::endl;
     std::cout << "Voxelizing the same scan pair at decreasing leaf sizes.\n" << std::endl;

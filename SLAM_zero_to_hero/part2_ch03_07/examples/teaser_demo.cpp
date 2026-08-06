@@ -1,28 +1,13 @@
 /**
- * TEASER++ Demo
+ * TEASER++ experiment: global registration, no initial guess
  *
- * This example demonstrates the TEASER++ (Truncated least squares Estimation
- * And SEmidefinite Relaxation) algorithm for robust global point cloud
- * registration on KITTI velodyne scans.
+ * Certifiably robust registration that tolerates >95% outlier correspondences,
+ * which is what makes it usable for loop closure and relocalization where no
+ * motion model can bridge the gap. Links the real library - there is no fallback,
+ * so these numbers are TEASER++ itself.
  *
- * TEASER++ is a globally optimal, certifiably robust registration method that:
- * - Works with >95% outliers in correspondences
- * - Provides optimality guarantees
- * - Does not require an initial guess (global registration)
- *
- * Key concepts covered:
- * - Global registration vs local registration
- * - Outlier-robust registration
- * - Using TEASER++ for loop closure and relocalization
- *
- * This demo links the real TEASER++ library - there is no fallback
- * implementation, so what the numbers below describe is TEASER++ itself. The
- * CMake target is only built when teaserpp is found.
- *
- * The interesting case for global registration is two scans that no motion
- * model can bridge. Consecutive KITTI scans are only ~1.5 m apart, so also try
- * a real loop closure - see the README for frame pairs in sequence 00 where the
- * vehicle revisits a street from the opposite direction.
+ * Consecutive KITTI scans are only ~1.5 m apart, so the interesting case is a
+ * real revisit - see the README for sequence 00 frame pairs.
  *
  * Usage: ./teaser_demo [source.bin target.bin]
  *
@@ -132,9 +117,7 @@ struct GlobalResult {
     double time_ms = 0.0;
 };
 
-/**
- * Compute normals for a point cloud
- */
+/// Compute normals for a point cloud
 NormalCloudT::Ptr computeNormals(const CloudT::Ptr& cloud, float radius) {
     pcl::NormalEstimationOMP<PointT, NormalT> ne;
     ne.setInputCloud(cloud);
@@ -149,9 +132,7 @@ NormalCloudT::Ptr computeNormals(const CloudT::Ptr& cloud, float radius) {
     return normals;
 }
 
-/**
- * Compute FPFH features
- */
+/// Compute FPFH features
 FPFHCloudT::Ptr computeFPFH(const CloudT::Ptr& cloud, const NormalCloudT::Ptr& normals,
                             float radius) {
     pcl::FPFHEstimationOMP<PointT, NormalT, FPFHT> fpfh;
@@ -198,9 +179,7 @@ std::vector<std::pair<int, int>> matchFeatures(const FPFHCloudT::Ptr& source_fea
     return pairs;
 }
 
-/**
- * Run TEASER++ on a correspondence set
- */
+/// Run TEASER++ on a correspondence set
 GlobalResult runTeaser(const CloudT& source, const CloudT& target,
                        const std::vector<std::pair<int, int>>& correspondences,
                        teaser::RobustRegistrationSolver::INLIER_SELECTION_MODE mode) {
@@ -317,9 +296,7 @@ void printErrorDirections(const Eigen::Matrix4f& estimated,
               << std::endl;
 }
 
-/**
- * Which correspondences the ground truth confirms
- */
+/// Which correspondences the ground truth confirms
 std::vector<std::pair<int, int>> trueInliers(
     const CloudT& source, const CloudT& target,
     const std::vector<std::pair<int, int>>& correspondences,

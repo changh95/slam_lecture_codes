@@ -1,24 +1,19 @@
 /**
- * Shared helpers for the part2_ch03_07 demos:
- *  - KITTI velodyne scan loading and ground-truth pose handling
- *  - one CLI + data-loading path shared by all four pairwise demos
- *  - optional live streaming to a rerun viewer on the host
+ * Shared helpers for the part2_ch03_07 demos: KITTI scan loading, ground-truth
+ * pose handling, timing, and optional live streaming to a rerun viewer.
  *
- * Every demo in this chapter runs on KITTI odometry data. That buys a real
- * ground truth: KITTI ships per-frame poses, so the relative transform between
- * two scans is known and each method can be scored against it instead of only
- * reporting its own fitness score. KITTI poses are given in the left-camera
- * frame, so they are mapped into the velodyne frame with the calib Tr matrix
- * before use (see posesToLidarFrame).
+ * KITTI ships per-frame poses, so the relative transform between two scans is
+ * known and every method can be scored against it rather than only reporting its
+ * own fitness score. Those poses are in the left-camera frame and are mapped into
+ * the velodyne frame with the calib Tr matrix (see posesToLidarFrame).
  *
- * The rerun parts are built when CMake finds the rerun C++ SDK and defines
- * HAVE_RERUN; without it RegistrationViz compiles to a no-op, so every demo
- * builds and runs unchanged.
+ * The rerun parts need HAVE_RERUN; without it RegistrationViz is a no-op.
  */
 
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -86,9 +81,7 @@ using CloudT = pcl::PointCloud<PointT>;
 inline const char* kSampleSourceScan = "sample_sequences/000000.bin";
 inline const char* kSampleTargetScan = "sample_sequences/000001.bin";
 
-/**
- * Load a KITTI velodyne scan (.bin): raw float32 records of x, y, z, intensity
- */
+/// Load a KITTI velodyne scan (.bin): raw float32 records of x, y, z, intensity
 inline CloudT::Ptr loadKittiBin(const std::string& file) {
     std::ifstream input(file, std::ios::binary);
     if (!input) {
@@ -108,9 +101,7 @@ inline CloudT::Ptr loadKittiBin(const std::string& file) {
     return cloud;
 }
 
-/**
- * Voxel-downsample a cloud (leaf size in meters)
- */
+/// Voxel-downsample a cloud (leaf size in meters)
 inline CloudT::Ptr voxelDownsample(const CloudT& cloud, float leaf) {
     CloudT::Ptr out(new CloudT);
     pcl::VoxelGrid<PointT> voxel;
@@ -120,9 +111,7 @@ inline CloudT::Ptr voxelDownsample(const CloudT& cloud, float leaf) {
     return out;
 }
 
-/**
- * Load a point cloud from a KITTI .bin or a .pcd file; nullptr on failure
- */
+/// Load a point cloud from a KITTI .bin or a .pcd file; nullptr on failure
 inline CloudT::Ptr loadCloud(const std::string& file) {
     if (fs::path(file).extension() == ".bin") {
         CloudT::Ptr cloud = loadKittiBin(file);
@@ -158,9 +147,7 @@ inline std::string findDataFile(const std::string& filename) {
     return {};
 }
 
-/**
- * Build a rigid transform from a translation and XYZ rotation (radians)
- */
+/// Build a rigid transform from a translation and XYZ rotation (radians)
 inline Eigen::Matrix4f makeTransform(float tx, float ty, float tz,
                                      float rx, float ry, float rz) {
     Eigen::Affine3f transform = Eigen::Affine3f::Identity();
@@ -234,9 +221,7 @@ inline KittiSequence resolveKittiSequence(const std::string& path) {
     return seq;
 }
 
-/**
- * Read KITTI ground-truth poses: one 3x4 row-major matrix per line
- */
+/// Read KITTI ground-truth poses: one 3x4 row-major matrix per line
 inline std::vector<Eigen::Matrix4f> loadKittiPoses(const std::string& filename) {
     std::vector<Eigen::Matrix4f> poses;
 
@@ -338,18 +323,14 @@ inline int kittiFrameIndex(const std::string& scan_file) {
     }
 }
 
-/**
- * Path of a KITTI scan by frame index: six zero-padded digits plus .bin
- */
+/// Path of a KITTI scan by frame index: six zero-padded digits plus .bin
 inline std::string kittiScanPath(const std::string& velodyne_dir, int frame) {
     std::ostringstream name;
     name << std::setw(6) << std::setfill('0') << frame << ".bin";
     return (fs::path(velodyne_dir) / name.str()).string();
 }
 
-/**
- * Rotation and translation error of an estimate against ground truth
- */
+/// Rotation and translation error of an estimate against ground truth
 struct PoseError {
     double rotation_deg;
     double translation_m;
@@ -389,23 +370,14 @@ struct ErrorTrace {
     std::vector<PoseError> steps;
 
     /// Wall-clock offset of each step from the start of align(), parallel to
-    /// `steps`.
-    ///
-    /// Recorded because a step is not a unit of time, and the two axes rank the
-    /// methods differently. On the bundled pair PCL GICP converges in 10 steps
-    /// and the CUDA VGICP in 8, so against iteration count they look like much
-    /// the same method - while a PCL GICP step costs about 32 ms and a CUDA step
-    /// about 0.5 ms. The step axis answers "how many iterations", which is a
-    /// question about the optimizer; the elapsed axis answers "how long", which
-    /// is the one a pipeline actually pays. Both go into the viewer, and the
-    /// timeline picker switches between them - see logErrorCurves.
+    /// `steps`. A step is not a unit of time and the two axes rank the methods
+    /// differently: PCL GICP converges in 10 steps and the CUDA VGICP in 8, but a
+    /// PCL GICP step costs ~32 ms against the CUDA step's ~0.5 ms.
     std::vector<double> elapsed_ms;
 
-    /// Clock origin, set immediately before align() so that preprocessing -
-    /// which the backends divide up very differently - stays out of the curve.
+    /// Clock origin, set just before align() to keep preprocessing out of the curve
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
 
-    /// Seconds from t0 to now
     double sinceStart() const {
         return std::chrono::duration<double, std::milli>(
                    std::chrono::steady_clock::now() - t0)
@@ -413,7 +385,6 @@ struct ErrorTrace {
     }
 };
 
-/// One recorded optimization step: where the method was, and when it got there
 struct TracedStep {
     Eigen::Isometry3d pose;
     double elapsed_ms;
@@ -422,12 +393,10 @@ struct TracedStep {
 /**
  * Recover the rigid transform that maps `source` onto `transformed`
  *
- * PCL's per-iteration visualization callback hands over the source cloud as it
- * currently stands, not the transform behind it. The two clouds hold the same
- * points in the same order, though, so one SVD fit recovers that transform
- * exactly - and exactly is the word: the fit is over a rigid motion of identical
- * points, so it is not an approximation. A strided subsample is enough to pin it
- * down and keeps the cost off the registration timings being reported.
+ * PCL's callback hands over the moved cloud, not the transform behind it. Both
+ * hold the same points in the same order, so one SVD fit recovers it exactly -
+ * not an approximation, since the motion is rigid over identical points. A
+ * strided subsample pins it down and keeps the cost out of the timings.
  */
 inline Eigen::Matrix4f recoverTransform(const CloudT& source, const CloudT& transformed) {
     Eigen::Matrix4f estimate = Eigen::Matrix4f::Identity();
@@ -451,9 +420,7 @@ inline Eigen::Matrix4f recoverTransform(const CloudT& source, const CloudT& tran
     return estimate;
 }
 
-/**
- * One KITTI scan pair to register, with the known relative pose
- */
+/// One KITTI scan pair to register, with the known relative pose
 struct KittiPair {
     CloudT::Ptr source;
     CloudT::Ptr target;
@@ -533,9 +500,7 @@ inline KittiPair loadKittiPair(const std::string& source_path = {},
     return pair;
 }
 
-/**
- * Report what was loaded, and warn when there is no ground truth to score against
- */
+/// Report what was loaded, and warn when there is no ground truth to score against
 inline void printKittiPair(const KittiPair& pair) {
     std::cout << "KITTI scans" << (pair.sequence.empty() ? "" : " (sequence " + pair.sequence + ")")
               << ":\n";
@@ -621,7 +586,6 @@ inline bool viewerReachable(const std::string& url) {
     return ok;
 }
 
-/// Viewer address: RERUN_URL env var, or the default local viewer
 inline std::string viewerUrl() {
     const char* env_url = std::getenv("RERUN_URL");
     return env_url ? env_url : "rerun+http://127.0.0.1:9876/proxy";
@@ -684,7 +648,6 @@ public:
 
     bool active() const { return connected_; }
 
-    /// Log a cloud under registration/<name> with a fixed color
     void logCloud(const std::string& name, const CloudT& cloud,
                   uint8_t r, uint8_t g, uint8_t b) {
         if (!connected_ || cloud.empty()) return;
@@ -694,7 +657,7 @@ public:
                             .with_radii({rerun::Radius::ui_points(1.5f)}));
     }
 
-    /// Log a cloud colored by height, so a street scene stays readable
+    /// Height colouring keeps a street scene readable
     void logCloudByHeight(const std::string& name, const CloudT& cloud) {
         if (!connected_ || cloud.empty()) return;
         rec_->log_static("registration/" + name,
@@ -703,9 +666,8 @@ public:
                             .with_radii({rerun::Radius::ui_points(1.0f)}));
     }
 
-    /// Log one optimization step of a method on the "iteration" timeline
-    /// Pass `elapsed_ms` as well and the step also lands on the elapsed
-    /// timeline, so scrubbing either axis animates the clouds.
+    /// With `elapsed_ms` the step also lands on the elapsed timeline, so either
+    /// axis animates the clouds.
     void logIteration(const std::string& method, int iteration, const CloudT& cloud,
                       uint8_t r, uint8_t g, uint8_t b, double elapsed_ms = -1.0) {
         if (!connected_ || cloud.empty()) return;
@@ -713,7 +675,7 @@ public:
         if (elapsed_ms >= 0.0) {
             rec_->set_time_duration_secs("elapsed", elapsed_ms / 1000.0);
         }
-        rec_->log("registration/steps/" + method,
+        rec_->log("registration/steps/" + pathToken(method),
                  rerun::Points3D(toVecs(cloud))
                      .with_colors({rerun::Color(r, g, b)})
                      .with_radii({rerun::Radius::ui_points(1.5f)}));
@@ -722,13 +684,7 @@ public:
     /// Plot every method's error curve, all methods on one pair of graphs
     ///
     /// The methods run one after another, so their curves are collected during
-    /// align() and sent here afterwards. They go into a single entity per metric,
-    /// carrying one scalar per method at each step: that is what puts them in the
-    /// same graph with a shared axis, which is the whole point - a curve per view
-    /// would leave the reader comparing across separate y-scales.
-    ///
-    /// A method that converged early holds its final value for the remaining
-    /// steps, since that is where it actually ended up.
+    /// align() and sent here afterwards.
     void logErrorCurves(const std::vector<ErrorTrace>& traces) {
         if (!connected_ || traces.empty()) return;
 
@@ -742,11 +698,9 @@ public:
         }
         if (longest == 0) return;
 
-        // One entity per plot carrying every method as a series, NOT an entity
-        // per method. Splitting them would put each method in its own graph in
-        // the viewer's default layout - which defeats the whole point, since the
-        // comparison needs a shared axis - and only looks right if the reader
-        // happens to load a blueprint that regroups them.
+        // One entity per plot carrying every method as a series, NOT an entity per
+        // method: splitting them gives each method its own graph in the viewer's
+        // default layout, which loses the shared axis the comparison needs.
         for (const char* plot : {"translation_error", "rotation_error"}) {
             rec_->log_static(plot, rerun::SeriesLines()
                                        .with_names(names)
@@ -774,8 +728,7 @@ public:
         }
 
         // Against wall-clock time. Step k of each method lands at a different
-        // millisecond, so a shared entity needs a shared set of time points:
-        // merge every method's timestamps and sample all of them at each one.
+        // millisecond, so a shared entity needs a shared set of time points.
         std::vector<double> times;
         for (const auto& t : traces) {
             times.insert(times.end(), t.elapsed_ms.begin(), t.elapsed_ms.end());
@@ -783,8 +736,8 @@ public:
         std::sort(times.begin(), times.end());
         times.erase(std::unique(times.begin(), times.end()), times.end());
 
-        // reset_time() so these rows carry only "elapsed" and do not also land on
-        // the iteration timeline at whatever index it was left at.
+        // reset_time() so these rows carry only "elapsed", rather than also landing
+        // on the iteration timeline at whatever index it was left at
         rec_->reset_time();
         for (double ms : times) {
             std::vector<double> translation, rotation;
@@ -801,7 +754,6 @@ public:
         }
     }
 
-    /// Log the source cloud moved by an estimated transform
     void logAligned(const std::string& name, const CloudT& source,
                     const Eigen::Matrix4f& transform,
                     uint8_t r, uint8_t g, uint8_t b) {
@@ -811,7 +763,6 @@ public:
         logCloud(name, aligned, r, g, b);
     }
 
-    /// Log FPFH correspondences as line segments between the two clouds
     void logCorrespondences(const std::string& name, const CloudT& source,
                             const CloudT& target,
                             const std::vector<std::pair<int, int>>& pairs,
@@ -833,18 +784,26 @@ public:
     }
 
 private:
+    /// Method names carry spaces and parentheses; entity paths should not, or
+    /// rerun warns and escapes them on every log call
+    static std::string pathToken(const std::string& name) {
+        std::string token;
+        token.reserve(name.size());
+        for (char c : name) {
+            token.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+        }
+        return token;
+    }
+
     /// A trace's error at an arbitrary elapsed time, linearly interpolated
-    /// between its own samples
+    /// between its own samples.
     ///
-    /// Interpolating rather than holding the previous value is what keeps the
-    /// drawn curve honest: every extra point lands exactly on a segment the
-    /// method's own samples already define, so sampling all methods at a merged
-    /// set of times draws the same polyline as plotting each one alone. Holding
-    /// instead would introduce staircases that no method actually traced.
-    ///
-    /// Outside a trace's range the endpoints are clamped, which is also right:
-    /// before it started it was at its initial guess, and once it converged and
-    /// stopped it stayed where it finished.
+    /// Interpolating rather than holding the last value keeps the curve honest:
+    /// every added point lands on a segment the method's own samples already
+    /// define, so sampling all methods at a merged set of times draws the same
+    /// polyline as plotting each alone. Holding would draw staircases no method
+    /// traced. Outside the range the ends clamp - before it started it sat at the
+    /// initial guess, and once converged it stayed put.
     static PoseError interpolateAt(const ErrorTrace& trace, double ms) {
         const std::size_t n = std::min(trace.steps.size(), trace.elapsed_ms.size());
         if (n == 0) return {0.0, 0.0};
@@ -888,19 +847,14 @@ public:
 #endif  // HAVE_RERUN
 
 /**
- * Stream every optimization iteration of a PCL registration object: PCL
- * invokes the visualization callback once per iteration with the current
- * intermediate source cloud, which lands on the viewer's "iteration"
- * timeline. Call before align(); no-op when the viz is not connected.
+ * Stream every optimization iteration of a PCL registration object
  *
- * Pass `source`, `ground_truth` and a `trace` as well and each step is
- * additionally scored against the true transform. The scores accumulate in the
- * trace rather than going straight to the viewer, so several methods can later be
- * drawn on one graph by RegistrationViz::logErrorCurves(). That turns "it
- * converged" into something you can read off: how fast each method approaches the
- * answer, whether it is still improving when the iteration limit stops it, and
- * whether it converged to the wrong place.
- * `source` must be the very cloud handed to setInputSource().
+ * PCL invokes its visualization callback once per iteration with the current
+ * intermediate cloud. Call before align(); no-op without a viewer.
+ *
+ * With `source`, `ground_truth` and `trace`, each step is also scored against the
+ * true transform and accumulated for logErrorCurves(). `source` must be the very
+ * cloud handed to setInputSource().
  */
 template <typename Registration>
 void attachIterationLogging(Registration& reg, RegistrationViz* viz,
@@ -968,17 +922,12 @@ void attachIterationLogging(Registration& reg, RegistrationViz* viz,
 /**
  * One registration run, from any backend
  *
- * Preprocessing and alignment are timed separately on purpose. PCL builds its
- * correspondence structures inside align(), while small_gicp and fast_gicp build
- * KdTrees, covariances and voxel maps when the clouds are handed over. Reporting
- * only align() would therefore flatter them: the optimizer loop really is far
- * faster, but a pipeline pays for the setup too. Two numbers keep both facts
- * visible.
- *
- * The split is not perfectly clean for one backend: NDTCuda builds its voxel
- * maps at the top of its computeTransformation(), so that cost lands in
- * align_ms rather than preprocess_ms. total_ms is the number to trust when
- * comparing across backends.
+ * Preprocessing and alignment are timed separately because the backends divide
+ * the work differently: PCL builds its correspondence structures inside align(),
+ * while small_gicp and fast_gicp build trees, covariances and voxel maps when the
+ * clouds are handed over. Quoting align() alone would flatter them by roughly 2x.
+ * NDTCuda is the exception the other way, building its voxel maps at the top of
+ * its own align(). Compare on total_ms.
  */
 struct RunResult {
     std::string method;
@@ -1030,17 +979,10 @@ struct HasFinalNumIteration<
     T, std::void_t<decltype(std::declval<const T&>().getFinalNumIteration())>>
     : std::true_type {};
 
-/**
- * Run a PCL registration and time setup separately from the solve
- *
- * PCL's split looks lopsided next to the other backends, and that is the point:
- * setInputTarget() only builds a search tree, while GICP's per-point covariances
- * and NDT's voxel grid are computed inside align(). So nearly all of PCL's cost
- * lands in align_ms, whereas small_gicp and fast_gicp have already paid part of
- * theirs by the time align() is called. Compare on total_ms.
- *
- * Call attachIterationLogging() on `reg` beforehand to also collect a curve.
- */
+/// Run a PCL registration and time setup separately from the solve. PCL's split
+/// looks lopsided on purpose: setInputTarget() only builds a search tree, so
+/// nearly all its cost lands in align_ms. Call attachIterationLogging() on `reg`
+/// beforehand to also collect a curve.
 template <typename Reg>
 RunResult runPcl(const std::string& method, Reg& reg,
                  const CloudT::Ptr& source, const CloudT::Ptr& target,
@@ -1099,20 +1041,11 @@ inline ErrorTrace traceFromPoses(const std::string& method,
     return trace;
 }
 
-/**
- * Replay a recorded pose sequence as per-step clouds in the 3D view
- *
- * PCL hands the demos a per-iteration callback, so its methods stream their
- * intermediate clouds for free. small_gicp and fast_gicp have no callback of any
- * kind, so without this they contribute a curve and a final result but never
- * move - two of the four methods would sit still while the other two animate,
- * which reads as nothing being recorded at all.
- *
- * What they do give us is the pose at every step, already collected by
- * RecordingGaussNewton and Traced. Transforming the source cloud by each of
- * those poses reconstructs exactly what PCL's callback would have handed over,
- * so every backend animates on the same footing.
- */
+/// Replay a recorded pose sequence as per-step clouds
+///
+/// PCL streams its intermediate clouds through its own callback; small_gicp and
+/// fast_gicp have none, so without this they would contribute a curve and a final
+/// result but never move.
 inline void logTracedSteps(RegistrationViz* viz, const std::string& method,
                            uint8_t r, uint8_t g, uint8_t b, const CloudT& source,
                            const std::vector<TracedStep>& recorded) {
@@ -1133,34 +1066,24 @@ inline void logTracedSteps(RegistrationViz* viz, const std::string& method,
 /**
  * A fast_gicp registration class that records the pose at every outer iteration
  *
- * Do NOT reach for registerVisualizationCallback() here. fast_gicp's classes do
- * derive from pcl::Registration, so the call compiles and even returns true -
- * but `update_visualizer_` appears nowhere in fast_gicp, so it is never invoked
- * during optimization. PCL 1.14 fires the callback once at registration time,
- * and attachIterationLogging() deliberately drops exactly that call, so the
- * trace would come back holding only the seeded initial guess: one point on the
- * graph, no compile error, no warning. Silent data loss.
+ * Do NOT reach for registerVisualizationCallback(). fast_gicp derives from
+ * pcl::Registration so the call compiles and returns true, but nothing in
+ * fast_gicp ever invokes update_visualizer_ - the trace would come back holding
+ * only the seeded initial guess, with no compile error and no warning.
  *
- * linearize() is the hook that does work. It is protected virtual, every leaf
- * class overrides it, and step_gn() and step_lm() each call it exactly once per
- * OUTER iteration with the currently accepted pose. So recording there yields
- * the pose before each update - the initial guess, then the result of iteration
- * 1, of iteration 2, and so on - and appending align()'s final transformation
- * completes the sequence. Step k then means "after iteration k", which is what
- * the PCL demos plot, so the curves are directly comparable.
+ * linearize() is the only seam: step_gn() and step_lm() each call it once per
+ * outer iteration with the accepted pose, while step_optimize()/step_gn()/
+ * step_lm() are protected but not virtual. It hands over the pose *before* each
+ * update, so runFastGicp() appends the final transformation to complete the
+ * sequence and make step k mean "after iteration k", as the PCL curves do.
  *
- * step_optimize()/step_gn()/step_lm() are protected but NOT virtual, so
- * linearize() really is the only available seam.
- *
- * Caveat: evaluateCost() is public and also calls linearize(). Set the sink
- * immediately before align() and do not call evaluateCost() while it is set, or
- * the trace picks up samples that are not optimization steps.
+ * evaluateCost() also calls linearize(), so do not call it while a sink is set.
  */
 template <typename Base>
 class Traced : public Base {
 public:
-    /// Start recording. Call immediately before align() - the elapsed clock
-    /// starts here, so setInputSource/setInputTarget stay out of the curve.
+    /// Call immediately before align() - the elapsed clock starts here, keeping
+    /// setInputSource/setInputTarget out of the curve.
     void traceInto(std::vector<TracedStep>* sink) {
         sink_ = sink;
         t0_ = std::chrono::steady_clock::now();
@@ -1241,26 +1164,16 @@ RunResult runFastGicp(const std::string& method, Reg& reg,
 /**
  * small_gicp's Gauss-Newton optimizer, with the accepted pose recorded per step
  *
- * small_gicp has no callback of any kind in its registration path - the only
- * introspection is a `verbose` flag that prints scalars, including only the
- * NORMS of the update, so a trajectory cannot be reconstructed from it. What it
- * does have is a duck-typed Optimizer template parameter, which is the seam
- * used here: this mirrors small_gicp::GaussNewtonOptimizer and additionally
- * appends each post-update pose to an external vector.
+ * small_gicp has no callback at all; its `verbose` flag prints only the norms of
+ * each update, from which no trajectory can be reconstructed. The seam is the
+ * duck-typed Optimizer template parameter, so this mirrors
+ * small_gicp::GaussNewtonOptimizer and appends each post-update pose to an
+ * external vector. The sink is a raw pointer because align() is const.
  *
- * Recording after the update (rather than before, as the fast_gicp hook must)
- * means step k is "after iteration k" directly, matching the PCL demos.
- *
- * The sink is a raw pointer to storage the caller owns because Registration's
- * align() is const, so the optimizer member is const inside optimize() and
- * cannot hold a vector it appends to.
- *
- * Note the alternative that looks equivalent and is not: calling align()
- * repeatedly with max_iterations=1. That is bit-identical for Gauss-Newton, but
- * NOT for small_gicp's default Levenberg-Marquardt optimizer, whose damping
- * `lambda` is a function-local reset on every call - so the annealing is thrown
- * away and the reported convergence rate becomes an artifact. It also rebuilds
- * the per-point factor vector once per recorded step.
+ * The alternative that looks equivalent and is not: repeated align() with
+ * max_iterations=1. Bit-identical for Gauss-Newton, but small_gicp's default
+ * Levenberg-Marquardt resets its damping on every call, so the annealing is lost
+ * and the reported convergence rate becomes an artifact.
  */
 struct RecordingGaussNewton {
     template <typename TargetPointCloud, typename SourcePointCloud, typename TargetTree,
