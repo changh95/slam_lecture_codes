@@ -19,6 +19,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -387,6 +388,36 @@ struct ErrorTrace {
     std::string method;
     uint8_t r = 255, g = 255, b = 255;
     std::vector<PoseError> steps;
+
+    /// Wall-clock offset of each step from the start of align(), parallel to
+    /// `steps`.
+    ///
+    /// Recorded because a step is not a unit of time, and the two axes rank the
+    /// methods differently. On the bundled pair PCL GICP converges in 10 steps
+    /// and the CUDA VGICP in 8, so against iteration count they look like much
+    /// the same method - while a PCL GICP step costs about 32 ms and a CUDA step
+    /// about 0.5 ms. The step axis answers "how many iterations", which is a
+    /// question about the optimizer; the elapsed axis answers "how long", which
+    /// is the one a pipeline actually pays. Both go into the viewer, and the
+    /// timeline picker switches between them - see logErrorCurves.
+    std::vector<double> elapsed_ms;
+
+    /// Clock origin, set immediately before align() so that preprocessing -
+    /// which the backends divide up very differently - stays out of the curve.
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+
+    /// Seconds from t0 to now
+    double sinceStart() const {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - t0)
+            .count();
+    }
+};
+
+/// One recorded optimization step: where the method was, and when it got there
+struct TracedStep {
+    Eigen::Isometry3d pose;
+    double elapsed_ms;
 };
 
 /**
@@ -697,40 +728,38 @@ public:
     void logErrorCurves(const std::vector<ErrorTrace>& traces) {
         if (!connected_ || traces.empty()) return;
 
-        std::vector<std::string> names;
-        std::vector<rerun::Color> colors;
-        std::size_t longest = 0;
         for (const auto& t : traces) {
-            names.push_back(t.method);
-            colors.push_back(rerun::Color(t.r, t.g, t.b));
-            longest = std::max(longest, t.steps.size());
-        }
-        if (longest == 0) return;
+            if (t.steps.empty()) continue;
 
-        for (const char* plot : {"translation_error", "rotation_error"}) {
-            rec_->log_static(plot, rerun::SeriesLines()
-                                       .with_names(names)
-                                       .with_colors(colors)
-                                       .with_widths({1.5f}));
-        }
+            // One entity per method, rather than one multi-valued scalar shared by
+            // all of them. The elapsed timeline forces it: step k of each method
+            // happens at a different millisecond, so they cannot be written at a
+            // common time point. They still share a plot, because the view's
+            // origin is the parent path and picks up every child series.
+            const std::string token = pathToken(t.method);
+            const std::string translation_path = "translation_error/" + token;
+            const std::string rotation_path = "rotation_error/" + token;
 
-        for (std::size_t step = 0; step < longest; ++step) {
-            std::vector<double> translation, rotation;
-            translation.reserve(traces.size());
-            rotation.reserve(traces.size());
-            for (const auto& t : traces) {
-                if (t.steps.empty()) {
-                    translation.push_back(0.0);
-                    rotation.push_back(0.0);
-                    continue;
-                }
-                const PoseError& e = t.steps[std::min(step, t.steps.size() - 1)];
-                translation.push_back(e.translation_m);
-                rotation.push_back(e.rotation_deg);
+            for (const auto& path : {translation_path, rotation_path}) {
+                rec_->log_static(path, rerun::SeriesLines()
+                                           .with_names({t.method})
+                                           .with_colors({rerun::Color(t.r, t.g, t.b)})
+                                           .with_widths({1.5f}));
             }
-            rec_->set_time_sequence("iteration", static_cast<int64_t>(step));
-            rec_->log("translation_error", rerun::Scalars(translation));
-            rec_->log("rotation_error", rerun::Scalars(rotation));
+
+            for (std::size_t step = 0; step < t.steps.size(); ++step) {
+                // Every sample goes on both timelines, so the viewer's timeline
+                // picker switches the whole plot between "how many iterations"
+                // and "how long" without anything being logged twice.
+                rec_->set_time_sequence("iteration", static_cast<int64_t>(step));
+                if (step < t.elapsed_ms.size()) {
+                    rec_->set_time_duration_secs("elapsed",
+                                                 t.elapsed_ms[step] / 1000.0);
+                }
+                rec_->log(translation_path,
+                          rerun::Scalars(t.steps[step].translation_m));
+                rec_->log(rotation_path, rerun::Scalars(t.steps[step].rotation_deg));
+            }
         }
     }
 
@@ -766,6 +795,16 @@ public:
     }
 
 private:
+    /// Method names carry spaces and parentheses; entity paths should not
+    static std::string pathToken(const std::string& name) {
+        std::string token;
+        token.reserve(name.size());
+        for (char c : name) {
+            token.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+        }
+        return token;
+    }
+
     std::optional<rerun::RecordingStream> rec_;
     bool connected_ = false;
 };
@@ -835,6 +874,11 @@ void attachIterationLogging(Registration& reg, RegistrationViz* viz,
         // wrong when it is not (a refinement seeded by global registration would
         // appear to start from the full displacement it was handed the answer to).
         trace->steps.assign(1, poseError(guess, gt));
+        // Step 0 is the starting point, so it sits at t = 0 by definition. The
+        // clock itself is restarted by runPcl() just before align(), which is
+        // what makes the elapsed axis measure the solve rather than the setup.
+        trace->elapsed_ms.assign(1, 0.0);
+        trace->t0 = std::chrono::steady_clock::now();
     }
 
     std::function<void(const CloudT&, const pcl::Indices&, const CloudT&,
@@ -848,8 +892,12 @@ void attachIterationLogging(Registration& reg, RegistrationViz* viz,
 
             viz->logIteration(method, callbacks - 1, intermediate, r, g, b);
             if (score) {
+                // Stamp before the SVD fit below, so the cost of recovering the
+                // transform for the trace is not charged to the method's curve
+                const double elapsed = trace->sinceStart();
                 trace->steps.push_back(
                     poseError(recoverTransform(*source, intermediate), gt));
+                trace->elapsed_ms.push_back(elapsed);
             }
         };
     reg.registerVisualizationCallback(callback);
@@ -939,7 +987,8 @@ template <typename Reg>
 RunResult runPcl(const std::string& method, Reg& reg,
                  const CloudT::Ptr& source, const CloudT::Ptr& target,
                  const Eigen::Matrix4f& ground_truth,
-                 const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity()) {
+                 const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
+                 ErrorTrace* trace = nullptr) {
     using clock = std::chrono::high_resolution_clock;
     RunResult result;
     result.method = method;
@@ -948,6 +997,11 @@ RunResult runPcl(const std::string& method, Reg& reg,
     reg.setInputSource(source);
     reg.setInputTarget(target);
     const auto t1 = clock::now();
+
+    // Restart the trace clock here, so its elapsed axis starts where align()
+    // does. attachIterationLogging() runs before the clouds are even handed
+    // over, so without this the curve would carry PCL's setup as well.
+    if (trace) trace->t0 = std::chrono::steady_clock::now();
 
     CloudT aligned;
     reg.align(aligned, initial_guess);
@@ -971,16 +1025,18 @@ RunResult runPcl(const std::string& method, Reg& reg,
 /// Score a recorded pose sequence against ground truth, ready for logErrorCurves()
 inline ErrorTrace traceFromPoses(const std::string& method,
                                  uint8_t r, uint8_t g, uint8_t b,
-                                 const std::vector<Eigen::Isometry3d>& poses,
+                                 const std::vector<TracedStep>& recorded,
                                  const Eigen::Matrix4f& ground_truth) {
     ErrorTrace trace;
     trace.method = method;
     trace.r = r;
     trace.g = g;
     trace.b = b;
-    trace.steps.reserve(poses.size());
-    for (const auto& T : poses) {
-        trace.steps.push_back(poseError(T.matrix().cast<float>(), ground_truth));
+    trace.steps.reserve(recorded.size());
+    trace.elapsed_ms.reserve(recorded.size());
+    for (const auto& step : recorded) {
+        trace.steps.push_back(poseError(step.pose.matrix().cast<float>(), ground_truth));
+        trace.elapsed_ms.push_back(step.elapsed_ms);
     }
     return trace;
 }
@@ -1018,18 +1074,28 @@ inline ErrorTrace traceFromPoses(const std::string& method,
 template <typename Base>
 class Traced : public Base {
 public:
-    void traceInto(std::vector<Eigen::Isometry3d>* sink) { sink_ = sink; }
+    /// Start recording. Call immediately before align() - the elapsed clock
+    /// starts here, so setInputSource/setInputTarget stay out of the curve.
+    void traceInto(std::vector<TracedStep>* sink) {
+        sink_ = sink;
+        t0_ = std::chrono::steady_clock::now();
+    }
 
 protected:
     double linearize(const Eigen::Isometry3d& trans,
                      Eigen::Matrix<double, 6, 6>* H = nullptr,
                      Eigen::Matrix<double, 6, 1>* b = nullptr) override {
-        if (sink_) sink_->push_back(trans);
+        if (sink_) {
+            sink_->push_back({trans, std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - t0_)
+                                         .count()});
+        }
         return Base::linearize(trans, H, b);
     }
 
 private:
-    std::vector<Eigen::Isometry3d>* sink_ = nullptr;
+    std::vector<TracedStep>* sink_ = nullptr;
+    std::chrono::steady_clock::time_point t0_{};
 };
 
 /**
@@ -1042,7 +1108,7 @@ RunResult runFastGicp(const std::string& method, Reg& reg,
                       const CloudT::Ptr& source, const CloudT::Ptr& target,
                       const Eigen::Matrix4f& ground_truth,
                       const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
-                      std::vector<Eigen::Isometry3d>* poses = nullptr) {
+                      std::vector<TracedStep>* poses = nullptr) {
     using clock = std::chrono::high_resolution_clock;
     RunResult result;
     result.method = method;
@@ -1066,9 +1132,11 @@ RunResult runFastGicp(const std::string& method, Reg& reg,
         // linearize() hands over pre-update poses, so the last accepted pose is
         // still missing
         // `reg` is a template parameter, so cast<> is a dependent member template
-        // and needs the `template` keyword to parse as one
+        // and needs the `template` keyword to parse as one. The last accepted
+        // pose lands at the moment align() returned.
         poses->push_back(
-            Eigen::Isometry3d(reg.getFinalTransformation().template cast<double>()));
+            {Eigen::Isometry3d(reg.getFinalTransformation().template cast<double>()),
+             std::chrono::duration<double, std::milli>(t2 - t1).count()});
     }
 
     result.converged = reg.hasConverged();
@@ -1121,9 +1189,18 @@ struct RecordingGaussNewton {
         GeneralFactor& general_factor) const {
         small_gicp::RegistrationResult result(init_T);
 
+        // Clock starts inside optimize(), which is where the solve begins - the
+        // KdTrees and covariances were already built before align() was called.
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto elapsed = [&t0] {
+            return std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - t0)
+                .count();
+        };
+
         if (sink) {
             sink->clear();
-            sink->push_back(init_T);  // step 0 is where the method starts
+            sink->push_back({init_T, 0.0});  // step 0 is where the method starts
         }
 
         for (int i = 0; i < max_iterations && !result.converged; i++) {
@@ -1142,7 +1219,7 @@ struct RecordingGaussNewton {
             result.b = b;
             result.error = e;
 
-            if (sink) sink->push_back(result.T_target_source);
+            if (sink) sink->push_back({result.T_target_source, elapsed()});
         }
 
         result.num_inliers = std::count_if(factors.begin(), factors.end(),
@@ -1152,7 +1229,7 @@ struct RecordingGaussNewton {
 
     int max_iterations = 50;
     double lambda = 1e-6;
-    std::vector<Eigen::Isometry3d>* sink = nullptr;
+    std::vector<TracedStep>* sink = nullptr;
 };
 
 /// Copy a PCL cloud into small_gicp's own container
@@ -1183,7 +1260,7 @@ inline RunResult runSmallGicpGICP(const std::string& method,
                                   const Eigen::Matrix4f& ground_truth,
                                   const Eigen::Matrix4f& initial_guess,
                                   const SmallGicpConfig& cfg,
-                                  std::vector<Eigen::Isometry3d>* poses = nullptr) {
+                                  std::vector<TracedStep>* poses = nullptr) {
     using clock = std::chrono::high_resolution_clock;
     RunResult result;
     result.method = method;

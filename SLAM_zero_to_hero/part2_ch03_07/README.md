@@ -158,6 +158,22 @@ three have converged and flattened by then.
 
 ![](./images/gicp_demo.png)
 
+### The same curves against wall-clock time
+
+Both graphs are logged on two timelines, `iteration` and `elapsed`, so the
+viewer's timeline picker switches the x axis between them — nothing is logged
+twice. This is the same run as above, re-plotted against milliseconds:
+
+![](./images/gicp_demo_elapsed.png)
+
+The two axes rank the methods differently, which is why both are there. By
+iteration count PCL GICP converges in 10 steps and the CUDA VGICP in 8, so they
+look like much the same method. By the clock, a PCL GICP step costs about 32 ms
+and a CUDA step about 0.5 ms: the two PCL curves stretch out across 300–400 ms
+while small_gicp and the CUDA VGICP collapse into the vertical stripe at the left
+edge, finished before PCL has taken its second step. Read convergence behaviour on
+the step axis and cost on this one.
+
 ### CPU NDT against CUDA NDT
 
 The same overlay for experiment 2 — PCL NDT blue, NDTCuda D2D magenta, NDTCuda P2D

@@ -91,7 +91,8 @@ demo::RunResult runPclNdt(const demo::KittiPair& pair, float resolution,
                                  pair.has_ground_truth ? &pair.ground_truth : nullptr,
                                  trace, &guess);
 
-    return demo::runPcl(label, ndt, pair.source, pair.target, pair.ground_truth, guess);
+    return demo::runPcl(label, ndt, pair.source, pair.target, pair.ground_truth, guess,
+                        trace);
 }
 
 using CudaNdt = demo::Traced<fast_gicp::NDTCuda<PointT, PointT>>;
@@ -142,7 +143,7 @@ void compareBackends(const demo::KittiPair& pair, float resolution,
         const auto& [name, mode] = modes[i];
         const auto& color = (i == 0) ? kD2dColor : kP2dColor;
 
-        std::vector<Eigen::Isometry3d> poses;
+        std::vector<demo::TracedStep> poses;
         auto reg = makeCudaNdt(resolution, mode);
         auto r = demo::runFastGicp(name, *reg, pair.source, pair.target,
                                    pair.ground_truth, Eigen::Matrix4f::Identity(),

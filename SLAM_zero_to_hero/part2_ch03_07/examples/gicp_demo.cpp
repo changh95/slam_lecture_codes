@@ -93,7 +93,8 @@ demo::RunResult runPclIcp(const demo::KittiPair& pair, demo::RegistrationViz* vi
                                  pair.has_ground_truth ? &pair.ground_truth : nullptr,
                                  trace);
 
-    return demo::runPcl("PCL ICP", icp, pair.source, pair.target, pair.ground_truth);
+    return demo::runPcl("PCL ICP", icp, pair.source, pair.target, pair.ground_truth,
+                        Eigen::Matrix4f::Identity(), trace);
 }
 
 demo::RunResult runPclGicp(const demo::KittiPair& pair, demo::RegistrationViz* viz,
@@ -111,7 +112,8 @@ demo::RunResult runPclGicp(const demo::KittiPair& pair, demo::RegistrationViz* v
                                  pair.has_ground_truth ? &pair.ground_truth : nullptr,
                                  trace);
 
-    return demo::runPcl("PCL GICP", gicp, pair.source, pair.target, pair.ground_truth);
+    return demo::runPcl("PCL GICP", gicp, pair.source, pair.target, pair.ground_truth,
+                        Eigen::Matrix4f::Identity(), trace);
 }
 
 demo::SmallGicpConfig smallGicpConfig(int num_threads = kNumThreads) {
@@ -164,7 +166,7 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
     traces.push_back(gicp_trace);
 
     {
-        std::vector<Eigen::Isometry3d> poses;
+        std::vector<demo::TracedStep> poses;
         auto r = demo::runSmallGicpGICP("small_gicp GICP (cpu)", *pair.source,
                                         *pair.target, pair.ground_truth,
                                         Eigen::Matrix4f::Identity(),
@@ -178,7 +180,7 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
     }
 
     {
-        std::vector<Eigen::Isometry3d> poses;
+        std::vector<demo::TracedStep> poses;
         auto reg = makeCudaVgicp();
         auto r = demo::runFastGicp("fast_gicp VGICP (cuda)", *reg, pair.source,
                                    pair.target, pair.ground_truth,
