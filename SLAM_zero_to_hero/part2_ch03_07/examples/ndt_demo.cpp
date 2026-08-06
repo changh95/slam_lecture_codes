@@ -70,7 +70,8 @@ NDTResult runNDT(const demo::KittiPair& pair,
                  float resolution,
                  float step_size,
                  const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
-                 demo::RegistrationViz* viz = nullptr) {
+                 demo::RegistrationViz* viz = nullptr,
+                 demo::ErrorTrace* trace = nullptr) {
 
     pcl::NormalDistributionsTransform<PointT, PointT> ndt;
 
@@ -88,7 +89,9 @@ NDTResult runNDT(const demo::KittiPair& pair,
     ndt.setInputSource(pair.source);
     ndt.setInputTarget(pair.target);
 
-    demo::attachIterationLogging(ndt, viz, "ndt", 60, 220, 100);
+    demo::attachIterationLogging(ndt, viz, "NDT", 60, 220, 100, pair.source,
+                                 pair.has_ground_truth ? &pair.ground_truth : nullptr,
+                                 trace, &initial_guess);
 
     CloudT::Ptr aligned(new CloudT);
 
@@ -304,8 +307,10 @@ int main(int argc, char** argv) {
     viz.logCloudByHeight("target", *pair.target);
     viz.logCloud("source_initial", *pair.source, 235, 80, 80);
 
-    const NDTResult basic_result =
-        runNDT(pair, resolution, kDefaultStepSize, Eigen::Matrix4f::Identity(), &viz);
+    demo::ErrorTrace ndt_trace;
+    const NDTResult basic_result = runNDT(pair, resolution, kDefaultStepSize,
+                                          Eigen::Matrix4f::Identity(), &viz, &ndt_trace);
+    viz.logErrorCurves({ndt_trace});
 
     std::cout << "  Converged: " << (basic_result.converged ? "YES" : "NO") << std::endl;
     std::cout << "  Iterations: " << basic_result.iterations << std::endl;

@@ -66,7 +66,8 @@ struct RegistrationResult {
 RegistrationResult runICP(const CloudT::Ptr& source, const CloudT::Ptr& target,
                           const Eigen::Matrix4f& ground_truth,
                           const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
-                          demo::RegistrationViz* viz = nullptr) {
+                          demo::RegistrationViz* viz = nullptr,
+                          demo::ErrorTrace* trace = nullptr) {
     RegistrationResult result;
     result.method_name = "ICP";
 
@@ -78,7 +79,8 @@ RegistrationResult runICP(const CloudT::Ptr& source, const CloudT::Ptr& target,
     icp.setMaxCorrespondenceDistance(kMaxCorrespondenceDistance);
     icp.setEuclideanFitnessEpsilon(1e-6);
 
-    demo::attachIterationLogging(icp, viz, "ICP", 255, 170, 60);
+    demo::attachIterationLogging(icp, viz, "ICP", 255, 170, 60, source, &ground_truth,
+                                 trace, &initial_guess);
 
     CloudT::Ptr aligned(new CloudT);
 
@@ -101,7 +103,8 @@ RegistrationResult runICP(const CloudT::Ptr& source, const CloudT::Ptr& target,
 RegistrationResult runGICP(const CloudT::Ptr& source, const CloudT::Ptr& target,
                            const Eigen::Matrix4f& ground_truth,
                            const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
-                           demo::RegistrationViz* viz = nullptr) {
+                           demo::RegistrationViz* viz = nullptr,
+                           demo::ErrorTrace* trace = nullptr) {
     RegistrationResult result;
     result.method_name = "GICP";
 
@@ -115,7 +118,8 @@ RegistrationResult runGICP(const CloudT::Ptr& source, const CloudT::Ptr& target,
     gicp.setCorrespondenceRandomness(20);
     gicp.setMaximumOptimizerIterations(20);
 
-    demo::attachIterationLogging(gicp, viz, "GICP", 60, 220, 100);
+    demo::attachIterationLogging(gicp, viz, "GICP", 60, 220, 100, source, &ground_truth,
+                                 trace, &initial_guess);
 
     CloudT::Ptr aligned(new CloudT);
 
@@ -139,7 +143,8 @@ RegistrationResult runNDT(const CloudT::Ptr& source, const CloudT::Ptr& target,
                           const Eigen::Matrix4f& ground_truth,
                           float resolution = kNdtResolution,
                           const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
-                          demo::RegistrationViz* viz = nullptr) {
+                          demo::RegistrationViz* viz = nullptr,
+                          demo::ErrorTrace* trace = nullptr) {
     RegistrationResult result;
     result.method_name = "NDT";
 
@@ -158,7 +163,8 @@ RegistrationResult runNDT(const CloudT::Ptr& source, const CloudT::Ptr& target,
     ndt.setInputSource(source);
     ndt.setInputTarget(target);
 
-    demo::attachIterationLogging(ndt, viz, "NDT", 80, 140, 255);
+    demo::attachIterationLogging(ndt, viz, "NDT", 80, 140, 255, source, &ground_truth,
+                                 trace, &initial_guess);
 
     CloudT::Ptr aligned(new CloudT);
 
@@ -208,15 +214,20 @@ void testBasicAccuracy(const demo::KittiPair& pair, demo::RegistrationViz* viz) 
               << std::endl;
     std::cout << "registration to recover\n" << std::endl;
 
+    demo::ErrorTrace icp_trace, gicp_trace, ndt_trace;
+
     std::vector<RegistrationResult> results;
     results.push_back(runICP(pair.source, pair.target, pair.ground_truth,
-                             Eigen::Matrix4f::Identity(), viz));
+                             Eigen::Matrix4f::Identity(), viz, &icp_trace));
     results.push_back(runGICP(pair.source, pair.target, pair.ground_truth,
-                              Eigen::Matrix4f::Identity(), viz));
+                              Eigen::Matrix4f::Identity(), viz, &gicp_trace));
     results.push_back(runNDT(pair.source, pair.target, pair.ground_truth, kNdtResolution,
-                             Eigen::Matrix4f::Identity(), viz));
+                             Eigen::Matrix4f::Identity(), viz, &ndt_trace));
 
     printResults(results);
+
+    // All three convergence curves on one pair of graphs
+    viz->logErrorCurves({icp_trace, gicp_trace, ndt_trace});
 
     const std::array<std::array<uint8_t, 3>, 3> method_colors{
         {{255, 170, 60}, {60, 220, 100}, {80, 140, 255}}};

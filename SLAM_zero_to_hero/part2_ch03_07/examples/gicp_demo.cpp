@@ -51,7 +51,8 @@ constexpr double kMaxCorrespondenceDistance = 2.0;
 void runStandardICP(const demo::KittiPair& pair,
                     Eigen::Matrix4f& result,
                     double& time_ms,
-                    demo::RegistrationViz* viz = nullptr) {
+                    demo::RegistrationViz* viz = nullptr,
+                    demo::ErrorTrace* trace = nullptr) {
     pcl::IterativeClosestPoint<PointT, PointT> icp;
     icp.setInputSource(pair.source);
     icp.setInputTarget(pair.target);
@@ -62,7 +63,9 @@ void runStandardICP(const demo::KittiPair& pair,
     icp.setMaxCorrespondenceDistance(kMaxCorrespondenceDistance);
     icp.setEuclideanFitnessEpsilon(1e-6);
 
-    demo::attachIterationLogging(icp, viz, "icp", 255, 170, 60);
+    demo::attachIterationLogging(icp, viz, "ICP", 255, 170, 60, pair.source,
+                                 pair.has_ground_truth ? &pair.ground_truth : nullptr,
+                                 trace);
 
     CloudT::Ptr aligned(new CloudT);
 
@@ -92,7 +95,8 @@ void runStandardICP(const demo::KittiPair& pair,
 void runGICP(const demo::KittiPair& pair,
              Eigen::Matrix4f& result,
              double& time_ms,
-             demo::RegistrationViz* viz = nullptr) {
+             demo::RegistrationViz* viz = nullptr,
+             demo::ErrorTrace* trace = nullptr) {
     pcl::GeneralizedIterativeClosestPoint<PointT, PointT> gicp;
     gicp.setInputSource(pair.source);
     gicp.setInputTarget(pair.target);
@@ -107,7 +111,9 @@ void runGICP(const demo::KittiPair& pair,
     gicp.setCorrespondenceRandomness(20);      // Number of neighbors for covariance
     gicp.setMaximumOptimizerIterations(20);    // Inner loop iterations
 
-    demo::attachIterationLogging(gicp, viz, "gicp", 60, 220, 100);
+    demo::attachIterationLogging(gicp, viz, "GICP", 60, 220, 100, pair.source,
+                                 pair.has_ground_truth ? &pair.ground_truth : nullptr,
+                                 trace);
 
     CloudT::Ptr aligned(new CloudT);
 
@@ -230,8 +236,12 @@ int main(int argc, char** argv) {
     Eigen::Matrix4f icp_result, gicp_result;
     double icp_time, gicp_time;
 
-    runStandardICP(pair, icp_result, icp_time, &viz);
-    runGICP(pair, gicp_result, gicp_time, &viz);
+    demo::ErrorTrace icp_trace, gicp_trace;
+    runStandardICP(pair, icp_result, icp_time, &viz, &icp_trace);
+    runGICP(pair, gicp_result, gicp_time, &viz, &gicp_trace);
+
+    // Both curves on one pair of graphs, so the convergence rates compare directly
+    viz.logErrorCurves({icp_trace, gicp_trace});
 
     viz.logAligned("aligned_icp", *pair.source, icp_result, 255, 170, 60);
     viz.logAligned("aligned_gicp", *pair.source, gicp_result, 60, 220, 100);

@@ -35,6 +35,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/registration/transformation_estimation_svd.h>
 
 #include <Eigen/Dense>
 
@@ -355,6 +356,51 @@ inline PoseError poseError(const Eigen::Matrix4f& estimated,
 }
 
 /**
+ * One method's error curve, collected step by step during align()
+ *
+ * Filled in by attachIterationLogging() and handed to
+ * RegistrationViz::logErrorCurves() once every method has run, so that all of
+ * them can be drawn on one pair of graphs.
+ */
+struct ErrorTrace {
+    std::string method;
+    uint8_t r = 255, g = 255, b = 255;
+    std::vector<PoseError> steps;
+};
+
+/**
+ * Recover the rigid transform that maps `source` onto `transformed`
+ *
+ * PCL's per-iteration visualization callback hands over the source cloud as it
+ * currently stands, not the transform behind it. The two clouds hold the same
+ * points in the same order, though, so one SVD fit recovers that transform
+ * exactly - and exactly is the word: the fit is over a rigid motion of identical
+ * points, so it is not an approximation. A strided subsample is enough to pin it
+ * down and keeps the cost off the registration timings being reported.
+ */
+inline Eigen::Matrix4f recoverTransform(const CloudT& source, const CloudT& transformed) {
+    Eigen::Matrix4f estimate = Eigen::Matrix4f::Identity();
+    if (source.size() != transformed.size() || source.size() < 3) {
+        return estimate;
+    }
+
+    constexpr std::size_t kMaxSamples = 2000;
+    const std::size_t stride = std::max<std::size_t>(1, source.size() / kMaxSamples);
+
+    CloudT from, to;
+    from.reserve(source.size() / stride + 1);
+    to.reserve(source.size() / stride + 1);
+    for (std::size_t i = 0; i < source.size(); i += stride) {
+        from.push_back(source[i]);
+        to.push_back(transformed[i]);
+    }
+
+    pcl::registration::TransformationEstimationSVD<PointT, PointT> svd;
+    svd.estimateRigidTransformation(from, to, estimate);
+    return estimate;
+}
+
+/**
  * One KITTI scan pair to register, with the known relative pose
  */
 struct KittiPair {
@@ -617,6 +663,56 @@ public:
                      .with_radii({rerun::Radius::ui_points(1.5f)}));
     }
 
+    /// Plot every method's error curve, all methods on one pair of graphs
+    ///
+    /// The methods run one after another, so their curves are collected during
+    /// align() and sent here afterwards. They go into a single entity per metric,
+    /// carrying one scalar per method at each step: that is what puts them in the
+    /// same graph with a shared axis, which is the whole point - a curve per view
+    /// would leave the reader comparing across separate y-scales.
+    ///
+    /// A method that converged early holds its final value for the remaining
+    /// steps, since that is where it actually ended up.
+    void logErrorCurves(const std::vector<ErrorTrace>& traces) {
+        if (!connected_ || traces.empty()) return;
+
+        std::vector<std::string> names;
+        std::vector<rerun::Color> colors;
+        std::size_t longest = 0;
+        for (const auto& t : traces) {
+            names.push_back(t.method);
+            colors.push_back(rerun::Color(t.r, t.g, t.b));
+            longest = std::max(longest, t.steps.size());
+        }
+        if (longest == 0) return;
+
+        for (const char* plot : {"translation_error", "rotation_error"}) {
+            rec_->log_static(plot, rerun::SeriesLines()
+                                       .with_names(names)
+                                       .with_colors(colors)
+                                       .with_widths({1.5f}));
+        }
+
+        for (std::size_t step = 0; step < longest; ++step) {
+            std::vector<double> translation, rotation;
+            translation.reserve(traces.size());
+            rotation.reserve(traces.size());
+            for (const auto& t : traces) {
+                if (t.steps.empty()) {
+                    translation.push_back(0.0);
+                    rotation.push_back(0.0);
+                    continue;
+                }
+                const PoseError& e = t.steps[std::min(step, t.steps.size() - 1)];
+                translation.push_back(e.translation_m);
+                rotation.push_back(e.rotation_deg);
+            }
+            rec_->set_time_sequence("iteration", static_cast<int64_t>(step));
+            rec_->log("translation_error", rerun::Scalars(translation));
+            rec_->log("rotation_error", rerun::Scalars(rotation));
+        }
+    }
+
     /// Log the source cloud moved by an estimated transform
     void logAligned(const std::string& name, const CloudT& source,
                     const Eigen::Matrix4f& transform,
@@ -663,6 +759,7 @@ public:
     void logCloudByHeight(const std::string&, const CloudT&) {}
     void logIteration(const std::string&, int, const CloudT&, uint8_t, uint8_t,
                       uint8_t) {}
+    void logErrorCurves(const std::vector<ErrorTrace>&) {}
     void logAligned(const std::string&, const CloudT&, const Eigen::Matrix4f&,
                     uint8_t, uint8_t, uint8_t) {}
     void logCorrespondences(const std::string&, const CloudT&, const CloudT&,
@@ -677,18 +774,62 @@ public:
  * invokes the visualization callback once per iteration with the current
  * intermediate source cloud, which lands on the viewer's "iteration"
  * timeline. Call before align(); no-op when the viz is not connected.
+ *
+ * Pass `source`, `ground_truth` and a `trace` as well and each step is
+ * additionally scored against the true transform. The scores accumulate in the
+ * trace rather than going straight to the viewer, so several methods can later be
+ * drawn on one graph by RegistrationViz::logErrorCurves(). That turns "it
+ * converged" into something you can read off: how fast each method approaches the
+ * answer, whether it is still improving when the iteration limit stops it, and
+ * whether it converged to the wrong place.
+ * `source` must be the very cloud handed to setInputSource().
  */
 template <typename Registration>
 void attachIterationLogging(Registration& reg, RegistrationViz* viz,
                             const std::string& method,
-                            uint8_t r, uint8_t g, uint8_t b) {
+                            uint8_t r, uint8_t g, uint8_t b,
+                            const CloudT::ConstPtr& source = nullptr,
+                            const Eigen::Matrix4f* ground_truth = nullptr,
+                            ErrorTrace* trace = nullptr,
+                            const Eigen::Matrix4f* initial_guess = nullptr) {
     if (!viz || !viz->active()) return;
+
+    // The callbacks outlive this scope, so both matrices are copied in rather
+    // than captured by pointer
+    const Eigen::Matrix4f gt = ground_truth ? *ground_truth : Eigen::Matrix4f::Identity();
+    const Eigen::Matrix4f guess =
+        initial_guess ? *initial_guess : Eigen::Matrix4f::Identity();
+
+    const bool score = source && ground_truth && trace;
+    if (score) {
+        trace->method = method;
+        trace->r = r;
+        trace->g = g;
+        trace->b = b;
+        // Step 0 is where the method starts, which is the initial guess. It has
+        // to be seeded here rather than read off the first callback: PCL fires
+        // one callback before the first update whose cloud does not carry the
+        // guess, so taking it at face value would claim every run started from
+        // the identity - harmless when the guess IS the identity, and wildly
+        // wrong when it is not (a refinement seeded by global registration would
+        // appear to start from the full displacement it was handed the answer to).
+        trace->steps.assign(1, poseError(guess, gt));
+    }
+
     std::function<void(const CloudT&, const pcl::Indices&, const CloudT&,
                        const pcl::Indices&)>
-        callback = [viz, method, r, g, b, iteration = 0](
+        callback = [viz, method, r, g, b, source, gt, score, trace, callbacks = 0](
                        const CloudT& intermediate, const pcl::Indices&,
                        const CloudT&, const pcl::Indices&) mutable {
-            viz->logIteration(method, iteration++, intermediate, r, g, b);
+            // Drop that same pre-update callback here, so 3D step k and curve
+            // point k both mean "after iteration k"
+            if (callbacks++ == 0) return;
+
+            viz->logIteration(method, callbacks - 1, intermediate, r, g, b);
+            if (score) {
+                trace->steps.push_back(
+                    poseError(recoverTransform(*source, intermediate), gt));
+            }
         };
     reg.registerVisualizationCallback(callback);
 }

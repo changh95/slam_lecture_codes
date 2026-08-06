@@ -134,6 +134,15 @@ ground truth is reachable, not just the `velodyne` folder.
 All three views below are the rerun viewer. Override its address with `RERUN_URL`
 if it is not at `rerun+http://127.0.0.1:9876/proxy`.
 
+Alongside the 3D views there are two graphs, `translation_error` and
+`rotation_error`, scoring every optimization step against the ground truth. All
+methods are drawn in the same graph on a shared axis, so the convergence rates
+compare directly: in `method_comparison` you can see GICP reach the answer in
+about three iterations and NDT in five, while ICP is still crawling towards it at
+fifteen — and that ICP's rotation error climbs again before it settles. Point 0 is
+the initial guess, and the graphs share the `iteration` timeline with the 3D
+playback, so scrubbing moves the clouds and the curves together.
+
 ### GICP vs ICP on one scan pair
 
 The target is coloured by height, the un-registered source is red, and the two

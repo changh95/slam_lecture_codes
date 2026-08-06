@@ -31,6 +31,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -98,6 +99,10 @@ constexpr double kInlierThreshold = 1.0;
 /// Keep the solver from disappearing into an exact max-clique search
 /// (TEASER's own default time limit is one hour)
 constexpr double kMaxCliqueTimeLimit = 60.0;
+
+/// One shade per coarse-to-fine refinement pass, so their curves stay apart
+const std::array<std::array<uint8_t, 3>, 3> kRefineColors{
+    {{255, 120, 40}, {255, 180, 80}, {255, 225, 140}}};
 
 /**
  * Swallows stdout for the duration of a scope
@@ -574,6 +579,8 @@ int main(int argc, char** argv) {
     const std::vector<double> refine_distances = {8.0, 3.0, 1.0};
 
     Eigen::Matrix4f refined = global.transform;
+    std::vector<demo::ErrorTrace> refine_traces(refine_distances.size());
+    std::size_t pass_index = 0;
     const auto refine_start = std::chrono::high_resolution_clock::now();
 
     for (double max_distance : refine_distances) {
@@ -583,7 +590,18 @@ int main(int argc, char** argv) {
         gicp.setMaximumIterations(50);
         gicp.setMaxCorrespondenceDistance(max_distance);
         gicp.setCorrespondenceRandomness(20);
-        demo::attachIterationLogging(gicp, &viz, "gicp_refine", 255, 170, 60);
+
+        // One series per pass: all three restart the iteration counter, so a
+        // shared name would draw them over each other
+        std::ostringstream pass;
+        pass << "GICP " << std::fixed << std::setprecision(0) << max_distance << " m";
+        // Each pass restarts the iteration counter, so each gets its own curve
+        const std::array<uint8_t, 3> shade = kRefineColors[pass_index % kRefineColors.size()];
+        demo::attachIterationLogging(gicp, &viz, pass.str(), shade[0], shade[1], shade[2],
+                                     pair.source,
+                                     pair.has_ground_truth ? &pair.ground_truth : nullptr,
+                                     &refine_traces[pass_index], &refined);
+        ++pass_index;
 
         CloudT::Ptr refined_cloud(new CloudT);
         gicp.align(*refined_cloud, refined);
@@ -596,6 +614,8 @@ int main(int argc, char** argv) {
                   << std::endl;
     }
     const auto refine_end = std::chrono::high_resolution_clock::now();
+
+    viz.logErrorCurves(refine_traces);
 
     const demo::PoseError refined_err = demo::poseError(refined, pair.ground_truth);
 
