@@ -19,7 +19,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -728,38 +727,72 @@ public:
     void logErrorCurves(const std::vector<ErrorTrace>& traces) {
         if (!connected_ || traces.empty()) return;
 
+        std::vector<std::string> names;
+        std::vector<rerun::Color> colors;
+        std::size_t longest = 0;
         for (const auto& t : traces) {
-            if (t.steps.empty()) continue;
+            names.push_back(t.method);
+            colors.push_back(rerun::Color(t.r, t.g, t.b));
+            longest = std::max(longest, t.steps.size());
+        }
+        if (longest == 0) return;
 
-            // One entity per method, rather than one multi-valued scalar shared by
-            // all of them. The elapsed timeline forces it: step k of each method
-            // happens at a different millisecond, so they cannot be written at a
-            // common time point. They still share a plot, because the view's
-            // origin is the parent path and picks up every child series.
-            const std::string token = pathToken(t.method);
-            const std::string translation_path = "translation_error/" + token;
-            const std::string rotation_path = "rotation_error/" + token;
+        // One entity per plot carrying every method as a series, NOT an entity
+        // per method. Splitting them would put each method in its own graph in
+        // the viewer's default layout - which defeats the whole point, since the
+        // comparison needs a shared axis - and only looks right if the reader
+        // happens to load a blueprint that regroups them.
+        for (const char* plot : {"translation_error", "rotation_error"}) {
+            rec_->log_static(plot, rerun::SeriesLines()
+                                       .with_names(names)
+                                       .with_colors(colors)
+                                       .with_widths({1.5f}));
+        }
 
-            for (const auto& path : {translation_path, rotation_path}) {
-                rec_->log_static(path, rerun::SeriesLines()
-                                           .with_names({t.method})
-                                           .with_colors({rerun::Color(t.r, t.g, t.b)})
-                                           .with_widths({1.5f}));
+        // Against iteration count. A method that converged early holds its final
+        // value for the remaining steps, since that is where it ended up.
+        rec_->reset_time();
+        for (std::size_t step = 0; step < longest; ++step) {
+            std::vector<double> translation, rotation;
+            translation.reserve(traces.size());
+            rotation.reserve(traces.size());
+            for (const auto& t : traces) {
+                const PoseError e = t.steps.empty()
+                                        ? PoseError{0.0, 0.0}
+                                        : t.steps[std::min(step, t.steps.size() - 1)];
+                translation.push_back(e.translation_m);
+                rotation.push_back(e.rotation_deg);
             }
+            rec_->set_time_sequence("iteration", static_cast<int64_t>(step));
+            rec_->log("translation_error", rerun::Scalars(translation));
+            rec_->log("rotation_error", rerun::Scalars(rotation));
+        }
 
-            for (std::size_t step = 0; step < t.steps.size(); ++step) {
-                // Every sample goes on both timelines, so the viewer's timeline
-                // picker switches the whole plot between "how many iterations"
-                // and "how long" without anything being logged twice.
-                rec_->set_time_sequence("iteration", static_cast<int64_t>(step));
-                if (step < t.elapsed_ms.size()) {
-                    rec_->set_time_duration_secs("elapsed",
-                                                 t.elapsed_ms[step] / 1000.0);
-                }
-                rec_->log(translation_path,
-                          rerun::Scalars(t.steps[step].translation_m));
-                rec_->log(rotation_path, rerun::Scalars(t.steps[step].rotation_deg));
+        // Against wall-clock time. Step k of each method lands at a different
+        // millisecond, so a shared entity needs a shared set of time points:
+        // merge every method's timestamps and sample all of them at each one.
+        std::vector<double> times;
+        for (const auto& t : traces) {
+            times.insert(times.end(), t.elapsed_ms.begin(), t.elapsed_ms.end());
+        }
+        std::sort(times.begin(), times.end());
+        times.erase(std::unique(times.begin(), times.end()), times.end());
+
+        // reset_time() so these rows carry only "elapsed" and do not also land on
+        // the iteration timeline at whatever index it was left at.
+        rec_->reset_time();
+        for (double ms : times) {
+            std::vector<double> translation, rotation;
+            translation.reserve(traces.size());
+            rotation.reserve(traces.size());
+            for (const auto& t : traces) {
+                const PoseError e = interpolateAt(t, ms);
+                translation.push_back(e.translation_m);
+                rotation.push_back(e.rotation_deg);
             }
+            rec_->set_time_duration_secs("elapsed", ms / 1000.0);
+            rec_->log("translation_error", rerun::Scalars(translation));
+            rec_->log("rotation_error", rerun::Scalars(rotation));
         }
     }
 
@@ -795,14 +828,34 @@ public:
     }
 
 private:
-    /// Method names carry spaces and parentheses; entity paths should not
-    static std::string pathToken(const std::string& name) {
-        std::string token;
-        token.reserve(name.size());
-        for (char c : name) {
-            token.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-        }
-        return token;
+    /// A trace's error at an arbitrary elapsed time, linearly interpolated
+    /// between its own samples
+    ///
+    /// Interpolating rather than holding the previous value is what keeps the
+    /// drawn curve honest: every extra point lands exactly on a segment the
+    /// method's own samples already define, so sampling all methods at a merged
+    /// set of times draws the same polyline as plotting each one alone. Holding
+    /// instead would introduce staircases that no method actually traced.
+    ///
+    /// Outside a trace's range the endpoints are clamped, which is also right:
+    /// before it started it was at its initial guess, and once it converged and
+    /// stopped it stayed where it finished.
+    static PoseError interpolateAt(const ErrorTrace& trace, double ms) {
+        const std::size_t n = std::min(trace.steps.size(), trace.elapsed_ms.size());
+        if (n == 0) return {0.0, 0.0};
+        if (ms <= trace.elapsed_ms.front()) return trace.steps.front();
+        if (ms >= trace.elapsed_ms[n - 1]) return trace.steps[n - 1];
+
+        const auto it = std::lower_bound(trace.elapsed_ms.begin(),
+                                         trace.elapsed_ms.begin() + n, ms);
+        const std::size_t hi = static_cast<std::size_t>(it - trace.elapsed_ms.begin());
+        const std::size_t lo = hi - 1;
+        const double span = trace.elapsed_ms[hi] - trace.elapsed_ms[lo];
+        const double f = span > 0.0 ? (ms - trace.elapsed_ms[lo]) / span : 0.0;
+        return {trace.steps[lo].rotation_deg +
+                    f * (trace.steps[hi].rotation_deg - trace.steps[lo].rotation_deg),
+                trace.steps[lo].translation_m +
+                    f * (trace.steps[hi].translation_m - trace.steps[lo].translation_m)};
     }
 
     std::optional<rerun::RecordingStream> rec_;
