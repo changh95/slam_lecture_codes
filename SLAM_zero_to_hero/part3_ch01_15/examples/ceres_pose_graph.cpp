@@ -1,131 +1,214 @@
 /**
  * Ceres-Solver Tutorial: 2D Pose-Graph Optimization (PGO)
  *
- * A robot drives a square loop. We synthesize *consistent* odometry from the
- * ground-truth poses (relative transform in the local frame) plus one loop
- * closure (x4 -> x0), corrupt the initial estimate with noise, then let Ceres
- * pull the trajectory back onto the ground truth. Dumps `pose_graph.txt` for
- * viz/plot_pose_graph.py.
+ * A robot drives a square loop. The odometry and the single loop closure
+ * (x4 -> x0) are the *exact* relative transforms taken from the ground truth -
+ * only the initial estimate is corrupted with noise - so the optimum is the
+ * ground truth itself and the demo shows purely how the solver gets there.
+ * Every iteration is streamed to a rerun viewer.
+ *
+ * This is the shared 2D pose-graph exercise of part3 chapter 1: same poses,
+ * same edges, same seed, same noise model and same chi-squared definition as
+ * the g2o / GTSAM / SymForce / Kimera-RPGO chapters.
  */
 
 #include <array>
 #include <cmath>
-#include <fstream>
+#include <cstdio>
 #include <iostream>
 #include <random>
-#include <tuple>
+#include <string>
 #include <vector>
 
 #include <ceres/ceres.h>
+#include <glog/logging.h>
+
+#include "rerun_viz.hpp"
 
 using namespace std;
-using Pose = array<double, 3>;  // [x, y, theta]
+using Pose = part3viz::Pose2;  // [x, y, theta]
+
+// Shared problem definition (identical in all chapters of this series).
+static constexpr int kNumPoses = 5;
+static constexpr int kMaxIterations = 30;
+// Noise model sigma = (0.1, 0.1, 0.05) -> information diag(100, 100, 400).
+// Ceres has no explicit information matrix: the residual is pre-multiplied by
+// the square root of the information, i.e. by 1/sigma.
+static constexpr double kWeightXY = 10.0;   // 1 / 0.1
+static constexpr double kWeightTheta = 20.0;  // 1 / 0.05
 
 template <typename T>
 T NormalizeAngle(const T& a) {
-    T two_pi = T(2.0 * M_PI);
+    const T two_pi = T(2.0 * M_PI);
     return a - two_pi * floor((a + T(M_PI)) / two_pi);
 }
 
 // Relative transform b expressed in a's local frame: a^{-1} * b.
-Pose Relative(const Pose& a, const Pose& b) {
-    double c = cos(a[2]), s = sin(a[2]);
-    double dx = b[0] - a[0], dy = b[1] - a[1];
+static Pose Relative(const Pose& a, const Pose& b) {
+    const double c = cos(a[2]), s = sin(a[2]);
+    const double dx = b[0] - a[0], dy = b[1] - a[1];
     return {c * dx + s * dy, -s * dx + c * dy, NormalizeAngle(b[2] - a[2])};
 }
 
 // Odometry / loop constraint between two 2D poses.
 struct RelativeMotion {
-    RelativeMotion(double dx, double dy, double dth, double w_xy, double w_th)
-        : dx_(dx), dy_(dy), dth_(dth), w_xy_(w_xy), w_th_(w_th) {}
+    RelativeMotion(double dx, double dy, double dth) : dx_(dx), dy_(dy), dth_(dth) {}
 
     template <typename T>
     bool operator()(const T* const pi, const T* const pj, T* r) const {
-        T c = cos(pi[2]), s = sin(pi[2]);
-        T dx = pj[0] - pi[0], dy = pj[1] - pi[1];
-        r[0] = w_xy_ * (c * dx + s * dy - T(dx_));
-        r[1] = w_xy_ * (-s * dx + c * dy - T(dy_));
-        r[2] = w_th_ * NormalizeAngle(NormalizeAngle(pj[2] - pi[2]) - T(dth_));
+        const T c = cos(pi[2]), s = sin(pi[2]);
+        const T dx = pj[0] - pi[0], dy = pj[1] - pi[1];
+        r[0] = T(kWeightXY) * (c * dx + s * dy - T(dx_));
+        r[1] = T(kWeightXY) * (-s * dx + c * dy - T(dy_));
+        r[2] = T(kWeightTheta) *
+               NormalizeAngle(NormalizeAngle(pj[2] - pi[2]) - T(dth_));
         return true;
     }
 
-    static ceres::CostFunction* Create(double dx, double dy, double dth,
-                                       double w_xy, double w_th) {
+    static ceres::CostFunction* Create(double dx, double dy, double dth) {
         return new ceres::AutoDiffCostFunction<RelativeMotion, 3, 3, 3>(
-            new RelativeMotion(dx, dy, dth, w_xy, w_th));
+            new RelativeMotion(dx, dy, dth));
     }
 
 private:
-    const double dx_, dy_, dth_, w_xy_, w_th_;
+    const double dx_, dy_, dth_;
 };
 
-int main() {
+// The one shared chi-squared formula: per edge, the tangent-space residual
+// between the measured and the current relative pose (angle wrapped to
+// (-pi, pi]), weighted by information diag(100, 100, 400), summed over edges.
+// Computed here rather than read from the solver so the number means exactly
+// the same thing in every chapter of the series.
+static double Chi2(const vector<Pose>& poses, const vector<part3viz::Edge>& edges,
+                   const vector<Pose>& measurements) {
+    double chi2 = 0.0;
+    for (size_t e = 0; e < edges.size(); ++e) {
+        const Pose cur = Relative(poses[edges[e].i], poses[edges[e].j]);
+        const double rx = cur[0] - measurements[e][0];
+        const double ry = cur[1] - measurements[e][1];
+        const double rt = NormalizeAngle(cur[2] - measurements[e][2]);
+        chi2 += kWeightXY * kWeightXY * (rx * rx + ry * ry) +
+                kWeightTheta * kWeightTheta * rt * rt;
+    }
+    return chi2;
+}
+
+// Streams the trajectory after every accepted step. Ceres calls this once with
+// iteration 0 for the initial state, then once per iteration.
+struct IterationStreamer : public ceres::IterationCallback {
+    IterationStreamer(part3viz::Viz& viz, const vector<Pose>& poses,
+                      const vector<part3viz::Edge>& edges,
+                      const vector<Pose>& measurements)
+        : viz_(viz), poses_(poses), edges_(edges), measurements_(measurements) {}
+
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary& s) override {
+        const double chi2 = Chi2(poses_, edges_, measurements_);
+        viz_.poseGraphIteration(s.iteration, poses_, chi2, edges_);
+        steps_ = s.iteration;
+        return ceres::SOLVER_CONTINUE;
+    }
+
+    part3viz::Viz& viz_;
+    const vector<Pose>& poses_;
+    const vector<part3viz::Edge>& edges_;
+    const vector<Pose>& measurements_;
+    int steps_ = 0;
+};
+
+int main(int /*argc*/, char** argv) {
+    google::InitGoogleLogging(argv[0]);
     cout << "=== Ceres Tutorial: 2D Pose-Graph Optimization ===\n" << endl;
 
+    part3viz::Viz viz(part3viz::kPoseGraphRecording, "ceres");
+
     // Ground-truth square trajectory.
-    const int N = 5;
-    array<Pose, N> gt = {{
+    vector<Pose> gt = {
         {0.0, 0.0, 0.0},
         {1.0, 0.0, 0.0},
         {1.0, 1.0, M_PI / 2},
         {0.0, 1.0, M_PI},
         {0.0, 0.0, -M_PI / 2},
-    }};
+    };
 
-    // Edges: 4 odometry + 1 loop closure, measurements derived from GT.
-    vector<tuple<int, int, int>> edges = {
-        {0, 1, 0}, {1, 2, 0}, {2, 3, 0}, {3, 4, 0}, {4, 0, 1}};  // type 1 = loop
+    // 4 odometry edges + 1 loop closure, measurements derived from ground truth.
+    vector<part3viz::Edge> edges = {
+        {0, 1, part3viz::EdgeKind::Odometry},
+        {1, 2, part3viz::EdgeKind::Odometry},
+        {2, 3, part3viz::EdgeKind::Odometry},
+        {3, 4, part3viz::EdgeKind::Odometry},
+        {4, 0, part3viz::EdgeKind::Loop},
+    };
+    vector<Pose> measurements;
+    measurements.reserve(edges.size());
+    for (const auto& e : edges) measurements.push_back(Relative(gt[e.i], gt[e.j]));
 
-    // Noisy initial estimate (keep a copy for visualization).
+    // Noisy initial estimate, seed 7. Pose 0 is the gauge anchor: it is held at
+    // ground truth by the solver, so it gets no noise draw either - the draws
+    // are made for poses 1..4 only, in the same order as the sibling chapters.
+    //
+    // The three deviates are drawn into named locals, one statement each. That
+    // ordering is the shared convention of this chapter group and it is load
+    // bearing: nxy and nth each cache a spare value internally, so the order in
+    // which they consume the single mt19937(7) stream decides the perturbation.
+    // Drawing them inside a constructor's argument list instead would leave the
+    // order unspecified (GCC evaluates arguments right to left) and silently
+    // produce a different problem from the sibling chapters.
     mt19937 rng(7);
     normal_distribution<double> nxy(0.0, 0.15), nth(0.0, 0.08);
-    array<Pose, N> init, poses;
-    for (int i = 0; i < N; ++i) {
-        init[i] = {gt[i][0] + nxy(rng), gt[i][1] + nxy(rng), gt[i][2] + nth(rng)};
-        poses[i] = init[i];
+    vector<Pose> init(kNumPoses);
+    init[0] = gt[0];
+    for (int i = 1; i < kNumPoses; ++i) {
+        const double dx = nxy(rng);
+        const double dy = nxy(rng);
+        const double dth = nth(rng);
+        init[i] = {gt[i][0] + dx, gt[i][1] + dy, gt[i][2] + dth};
     }
-    poses[0] = gt[0];  // anchor first pose at ground truth
+    vector<Pose> poses = init;
+
+    cout << "Initial chi2 : " << Chi2(init, edges, measurements) << endl;
+    viz.poseGraphSetup(gt, init, edges);
 
     ceres::Problem problem;
-    for (auto& e : edges) {
-        int i = get<0>(e), j = get<1>(e);
-        Pose m = Relative(gt[i], gt[j]);
+    for (size_t e = 0; e < edges.size(); ++e) {
         problem.AddResidualBlock(
-            RelativeMotion::Create(m[0], m[1], m[2], 10.0, 5.0), nullptr,
-            poses[i].data(), poses[j].data());
+            RelativeMotion::Create(measurements[e][0], measurements[e][1],
+                                   measurements[e][2]),
+            nullptr, poses[edges[e].i].data(), poses[edges[e].j].data());
     }
-    problem.SetParameterBlockConstant(poses[0].data());  // fix gauge
+    // Gauge freedom: a pose graph with only relative constraints is invariant
+    // under a global rigid transform. Ceres removes it by declaring the first
+    // pose's parameter block constant - the equivalent of g2o's setFixed(true)
+    // and cheaper than GTSAM's tight prior, because the block leaves the
+    // linear system entirely.
+    problem.SetParameterBlockConstant(poses[0].data());
+
+    IterationStreamer streamer(viz, poses, edges, measurements);
 
     ceres::Solver::Options options;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
     options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
     options.minimizer_progress_to_stdout = true;
-    options.max_num_iterations = 50;
+    options.max_num_iterations = kMaxIterations;
+    options.update_state_every_iteration = true;  // refresh poses before the callback
+    options.callbacks.push_back(&streamer);
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
     cout << "\n" << summary.BriefReport() << endl;
+    cout << "Stopped because: " << summary.message << endl;
 
     cout << "\nPose | ground truth        | optimized           | error" << endl;
     cout << string(63, '-') << endl;
-    for (int i = 0; i < N; ++i) {
-        double err = hypot(poses[i][0] - gt[i][0], poses[i][1] - gt[i][1]);
+    for (int i = 0; i < kNumPoses; ++i) {
+        const double err = hypot(poses[i][0] - gt[i][0], poses[i][1] - gt[i][1]);
         printf("  x%d | (%5.2f,%5.2f,%5.2f) | (%5.2f,%5.2f,%5.2f) | %.4f\n", i,
-               gt[i][0], gt[i][1], gt[i][2], poses[i][0], poses[i][1], poses[i][2], err);
+               gt[i][0], gt[i][1], gt[i][2], poses[i][0], poses[i][1], poses[i][2],
+               err);
     }
 
-    // Dump result for visualization.
-    ofstream out("pose_graph.txt");
-    out << "nodes " << N << "\n";
-    for (int i = 0; i < N; ++i) {
-        out << i << " " << gt[i][0] << " " << gt[i][1] << " " << gt[i][2] << " "
-            << init[i][0] << " " << init[i][1] << " " << init[i][2] << " "
-            << poses[i][0] << " " << poses[i][1] << " " << poses[i][2] << "\n";
-    }
-    out << "edges " << edges.size() << "\n";
-    for (auto& e : edges)
-        out << get<0>(e) << " " << get<1>(e) << " " << get<2>(e) << "\n";
-    out.close();
-    cout << "\nWrote pose_graph.txt -> visualize with viz/plot_pose_graph.py" << endl;
+    cout << "\nFinal chi2   : " << Chi2(poses, edges, measurements) << endl;
+    cout << "Iterations   : " << streamer.steps_ << " (frame 0 is the initial state)"
+         << endl;
 
     return 0;
 }
