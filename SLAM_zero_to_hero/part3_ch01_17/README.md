@@ -9,7 +9,7 @@ work. All three demos **stream live to a rerun viewer** while they run.
 
 | Example | Source | Streams |
 |---|---|---|
-| Pose graph basics (3D square loop, noisy odometry) | `examples/rpgo_basics.cpp` | ground truth / drifted odometry / optimized trajectory in 3D |
+| Pose graph basics (square loop, noisy odometry) | `examples/rpgo_basics.cpp` | ground truth / drifted odometry / optimized trajectory, with per-pose heading |
 | Outlier rejection (no rejection vs PCM vs GNC) | `examples/rpgo_outlier_rejection.cpp` | three solved trajectories, loop closures coloured by kept/rejected |
 | Shared 2D pose graph (5-pose square loop) | `examples/rpgo_pose_graph.cpp` | 2D trajectory + chi-squared plot, into the recording shared with chapters 13-16 |
 
@@ -85,14 +85,17 @@ each demo prints a one-line note and runs normally.
 
 ## Output
 
-Three recordings, all under the entity prefix `graph3d/kimera_rpgo/` or
-`graph/kimera_rpgo/`:
+Three recordings, all under the entity prefix `graph/kimera_rpgo/`. All three
+graphs lie in the z = 0 plane, so each pose is logged as (x, y, yaw) into a 2D
+view: a rerun 3D view will not frame a perfectly planar graph — its bounding box
+is degenerate — and the projection loses nothing.
 
-**`part3_rpgo_basics`** — `graph3d/kimera_rpgo/{ground_truth, initial,
-optimized}`, each with `/poses`, `/odometry` and `/loop_closures` children.
-Green is ground truth, grey the drifted odometry chain, red the optimized
-result. Everything is logged static: Kimera-RPGO optimizes inside `update()` and
-exposes no per-iteration callback, so there is nothing to sweep a timeline over.
+**`part3_rpgo_basics`** — `graph/kimera_rpgo/{ground_truth, initial,
+optimized}`, each with `/poses`, `/path`, `/heading` and `/loop_closures`
+children. Green is ground truth, grey the drifted odometry chain, red the
+optimized result. Everything is logged static: Kimera-RPGO optimizes inside
+`update()` and exposes no per-iteration callback, so there is nothing to sweep a
+timeline over.
 
 ```
    Graph error before: 207.2526          (GTSAM's 0.5 x chi-squared)
@@ -110,7 +113,17 @@ is why the final RMSE settles at 0.089 m rather than zero. What the demo proves
 is that the solver moved: the 0.354 m gap between pose 7 and pose 0 closes to
 0.007 m.
 
-**`part3_rpgo_outliers`** — `graph3d/kimera_rpgo/{ground_truth, initial,
+![](./images/rpgo_basics.png)
+
+Grey is the drifted odometry chain, and the drift is the point: follow it
+anticlockwise from the origin and it misses its own start by 0.354 m at the top
+left. Green is the square it should have been, red the optimized result pulled
+back towards it, and the blue segment with the two round endpoints is the
+`X(7) -> X(0)` loop closure doing the pulling. Red does not land on green because
+it should not — the loop closure is exact but the odometry is not, so the optimum
+is the compromise between them.
+
+**`part3_rpgo_outliers`** — `graph/kimera_rpgo/{ground_truth, initial,
 no_rejection, pcm, gnc}`. Loop closures are split into `/loop_closures` (blue,
 kept) and `/loop_closures_rejected` (red, discarded), one group per solver, so
 toggling them in the viewer shows exactly which measurements each method threw
@@ -146,11 +159,17 @@ recover the trajectory to 3 cm, better than odometry alone. And PCM's graph
 keeps all 31 and drives their weights to zero — the same answer by two
 different mechanisms.
 
-Both 3D demos stream to the viewer, but neither has a screenshot here yet. Their
-graphs are perfectly planar (every pose at z = 0) so a 3D view does not
-auto-frame them, the line strips frequently fail to draw, and three to five
-overlapping solver variants in one 3D view is unreadable — the 3D pose-graph
-rendering still needs work.
+![](./images/rpgo_outlier_rejection.png)
+
+The same three numbers, seen rather than read. Orange is the no-rejection
+solution and it is visibly wrecked — dragged off the square in several
+directions by loop closures it had no business trusting. Cyan (GNC) and magenta
+(PCM) both sit on top of the green ground truth, indistinguishable at this
+scale, which is what 3 cm of RMSE looks like against a 3 m square. The four blue
+segments are the loop closures the robust solvers kept; the three red diagonals
+crossing the middle of the square are the outliers they threw out. Each
+trajectory is its own entity, so the viewer's blueprint tree can isolate any one
+of them.
 
 **`part3_pose_graph`** — the recording shared with chapters 13-16.
 `graph/ground_truth` and `graph/kimera_rpgo/{initial, optimized}` carry

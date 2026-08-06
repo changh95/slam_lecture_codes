@@ -72,7 +72,7 @@ inline double curveModel(const Abc& abc, double x) {
 }
 
 /// Shared palette. These are the public names a chapter should use when it
-/// picks a colour itself (only the 3D pose-graph call takes one). They are
+/// picks a colour itself (poseGraph2D takes one per trajectory). They are
 /// plain RGB rather than rerun::Color so they exist with or without the SDK.
 inline constexpr Color3 kGroundTruth{60, 190, 110};   // green
 inline constexpr Color3 kInitial{150, 150, 150};      // grey
@@ -312,7 +312,8 @@ public:
         if (!connected_ || gt.empty()) return;
         logPoses2D("graph/ground_truth", gt, detail::kGtColor, true);
         logPoses2D("graph/" + lib_ + "/initial", init, detail::kInitColor, true);
-        logLoops2D("graph/ground_truth/loop_closures", gt, edges);
+        logLoops2D("graph/ground_truth/loop_closures", gt, edges,
+                   EdgeKind::Loop, detail::kLoopColor);
         rec_->log_static("cost/" + lib_, rerun::SeriesLines()
                                             .with_names({lib_})
                                             .with_colors({detail::kOptColor})
@@ -327,61 +328,34 @@ public:
         logPoses2D("graph/" + lib_ + "/optimized", poses, detail::kOptColor, false);
         if (!edges.empty()) {
             logLoops2D("graph/" + lib_ + "/optimized/loop_closures", poses, edges,
-                       false);
+                       EdgeKind::Loop, detail::kLoopColor, false);
         }
         rec_->log("cost/" + lib_, rerun::Scalars(cost));
     }
 
-    // -------------------------------------------------------- 3D pose graph
-
-    /// A 3D pose graph, with edges coloured by kind. Used by the robust-PGO
-    /// chapter, where showing which loop closures were rejected is the point.
-    void poseGraph3D(const std::string& name, const std::vector<Vec3>& positions,
+    /// One named 2D pose graph in its own colour, with loop closures split into
+    /// kept (blue) and rejected (red).
+    ///
+    /// Use this for a *planar* pose graph even when the poses are SE(3):
+    /// project each to (x, y, yaw) and log it here. There is deliberately no 3D
+    /// counterpart. A 3D view will not auto-frame a graph whose every pose sits
+    /// at z = 0 - the bounding box is degenerate - and its line strips are
+    /// unreliable, whereas this renders the trajectory, the heading arrows and
+    /// the loop closures legibly. Nothing is lost: a planar graph carries no
+    /// information in z.
+    ///
+    /// Call it once per trajectory you want overlaid (ground truth, initial,
+    /// and one per solver variant).
+    void poseGraph2D(const std::string& name, const std::vector<Pose2>& poses,
                      const std::vector<Edge>& edges, const Color3& rgb,
-                     bool is_static = false) {
-        if (!connected_ || positions.empty()) return;
-        // Establish the up-axis on the view's origin, exactly as baSetup does
-        // for "world". Without it a 3D view will not frame these graphs: they
-        // are perfectly planar (every pose at z = 0), so their bounding box is
-        // degenerate and the default camera ends up looking at nothing.
-        rec_->log_static("graph3d", rerun::ViewCoordinates::RIGHT_HAND_Z_UP);
-        const std::string base = "graph3d/" + lib_ + "/" + name;
-        const auto pts = detail::xyz(positions);
-        const rerun::Color color(rgb[0], rgb[1], rgb[2]);
-
-        auto points = rerun::Points3D(pts).with_colors({color}).with_radii(
-            {rerun::Radius::ui_points(4.0f)});
-        if (is_static) {
-            rec_->log_static(base + "/poses", points);
-        } else {
-            rec_->log(base + "/poses", points);
-        }
-
-        // The trajectory itself, plus one strip group per edge kind so the
-        // viewer can toggle rejected loop closures on their own.
-        std::vector<rerun::components::LineStrip3D> odom, loops, rejected;
-        for (const auto& e : edges) {
-            if (e.i < 0 || e.j < 0 || e.i >= static_cast<int>(pts.size()) ||
-                e.j >= static_cast<int>(pts.size())) {
-                continue;
-            }
-            std::vector<rerun::Vec3D> seg{pts[e.i], pts[e.j]};
-            switch (e.kind) {
-                case EdgeKind::Odometry:
-                    odom.emplace_back(seg);
-                    break;
-                case EdgeKind::Loop:
-                    loops.emplace_back(seg);
-                    break;
-                case EdgeKind::LoopRejected:
-                    rejected.emplace_back(seg);
-                    break;
-            }
-        }
-        logStrips3D(base + "/odometry", odom, color, 2.0f, is_static);
-        logStrips3D(base + "/loop_closures", loops, detail::kLoopColor, 3.0f, is_static);
-        logStrips3D(base + "/loop_closures_rejected", rejected, detail::kRejectColor,
-                    3.0f, is_static);
+                     bool is_static = true) {
+        if (!connected_ || poses.empty()) return;
+        const std::string base = "graph/" + lib_ + "/" + name;
+        logPoses2D(base, poses, detail::rr(rgb), is_static);
+        logLoops2D(base + "/loop_closures", poses, edges, EdgeKind::Loop,
+                   detail::kLoopColor, is_static);
+        logLoops2D(base + "/loop_closures_rejected", poses, edges,
+                   EdgeKind::LoopRejected, detail::kRejectColor, is_static);
     }
 
     // --------------------------------------------------- bundle adjustment
@@ -477,11 +451,12 @@ private:
     }
 
     void logLoops2D(const std::string& path, const std::vector<Pose2>& poses,
-                    const std::vector<Edge>& edges, bool is_static = true) {
+                    const std::vector<Edge>& edges, EdgeKind kind,
+                    const rerun::Color& color, bool is_static = true) {
         std::vector<rerun::components::LineStrip2D> strips;
         std::vector<rerun::Vec2D> markers;
         for (const auto& e : edges) {
-            if (e.kind == EdgeKind::Odometry) continue;
+            if (e.kind != kind) continue;
             if (e.i < 0 || e.j < 0 || e.i >= static_cast<int>(poses.size()) ||
                 e.j >= static_cast<int>(poses.size())) {
                 continue;
@@ -498,10 +473,10 @@ private:
         }
         if (markers.empty()) return;
         auto lines = rerun::LineStrips2D(strips)
-                         .with_colors({detail::kLoopColor})
+                         .with_colors({color})
                          .with_radii({rerun::Radius::ui_points(2.0f)});
         auto dots = rerun::Points2D(markers)
-                        .with_colors({detail::kLoopColor})
+                        .with_colors({color})
                         .with_radii({rerun::Radius::ui_points(7.0f)});
         if (is_static) {
             rec_->log_static(path, lines);
@@ -509,19 +484,6 @@ private:
         } else {
             rec_->log(path, lines);
             rec_->log(path + "/endpoints", dots);
-        }
-    }
-
-    void logStrips3D(const std::string& path,
-                     const std::vector<rerun::components::LineStrip3D>& strips,
-                     const rerun::Color& color, float width, bool is_static) {
-        if (strips.empty()) return;
-        auto lines = rerun::LineStrips3D(strips).with_colors({color}).with_radii(
-            {rerun::Radius::ui_points(width)});
-        if (is_static) {
-            rec_->log_static(path, lines);
-        } else {
-            rec_->log(path, lines);
         }
     }
 
@@ -550,8 +512,8 @@ public:
                         const std::vector<Edge>&) {}
     void poseGraphIteration(int64_t, const std::vector<Pose2>&, double,
                             const std::vector<Edge>& = {}) {}
-    void poseGraph3D(const std::string&, const std::vector<Vec3>&,
-                     const std::vector<Edge>&, const Color3&, bool = false) {}
+    void poseGraph2D(const std::string&, const std::vector<Pose2>&,
+                     const std::vector<Edge>&, const Color3&, bool = true) {}
     void baSetup(const std::vector<Vec3>&) {}
     void baIteration(int64_t, const std::vector<Vec3>&, const std::vector<Vec3>&, double,
                      double, double = -1.0) {}

@@ -58,21 +58,28 @@ std::vector<gtsam::Pose3> chain(const std::vector<gtsam::Pose3>& relative) {
     return poses;
 }
 
-std::vector<part3viz::Vec3> translations(const std::vector<gtsam::Pose3>& poses) {
-    std::vector<part3viz::Vec3> out;
+/// Project a planar SE(3) pose to the (x, y, yaw) the 2D viewer takes.
+///
+/// Both demos in this chapter build graphs that lie entirely in the z = 0
+/// plane, so this projection loses nothing. It matters because a rerun 3D view
+/// will not frame a graph whose every pose sits at z = 0 - the bounding box is
+/// degenerate, so the camera ends up staring past the trajectory - while the 2D
+/// view draws the path, the per-pose heading and the loop closures legibly.
+std::vector<part3viz::Pose2> planar(const std::vector<gtsam::Pose3>& poses) {
+    std::vector<part3viz::Pose2> out;
     out.reserve(poses.size());
     for (const auto& p : poses) {
-        out.push_back({p.translation().x(), p.translation().y(), p.translation().z()});
+        out.push_back({p.translation().x(), p.translation().y(), p.rotation().yaw()});
     }
     return out;
 }
 
-std::vector<part3viz::Vec3> translations(const gtsam::Values& values, int n) {
-    std::vector<part3viz::Vec3> out;
+std::vector<part3viz::Pose2> planar(const gtsam::Values& values, int n) {
+    std::vector<part3viz::Pose2> out;
     out.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
         const gtsam::Pose3 p = values.at<gtsam::Pose3>(X(i));
-        out.push_back({p.translation().x(), p.translation().y(), p.translation().z()});
+        out.push_back({p.translation().x(), p.translation().y(), p.rotation().yaw()});
     }
     return out;
 }
@@ -271,11 +278,11 @@ int main() {
     // logged as static because the solver exposes no per-iteration hook.
     // The colours come from the shared palette, which is plain RGB and defined
     // whether or not the rerun SDK is present, so no #ifdef is needed here.
-    viz.poseGraph3D("ground_truth", translations(gt_poses), edges,
+    viz.poseGraph2D("ground_truth", planar(gt_poses), edges,
                     part3viz::kGroundTruth, true);
-    viz.poseGraph3D("initial", translations(init_poses), edges,
+    viz.poseGraph2D("initial", planar(init_poses), edges,
                     part3viz::kInitial, true);
-    viz.poseGraph3D("optimized", translations(result, kNumPoses), edges,
+    viz.poseGraph2D("optimized", planar(result, kNumPoses), edges,
                     part3viz::kOptimized, true);
 
     std::cout << "\n=== RPGO Basics Complete ===" << std::endl;
