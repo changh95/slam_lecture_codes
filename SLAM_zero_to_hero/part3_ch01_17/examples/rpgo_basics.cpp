@@ -1,160 +1,283 @@
 /**
  * @file rpgo_basics.cpp
- * @brief Kimera-RPGO 기본 사용법 예제
+ * @brief Kimera-RPGO basics: build a 3D pose graph and optimize it robustly.
  *
- * 이 예제에서는:
- * 1. RobustSolver 초기화
- * 2. Prior 및 Odometry factor 추가
- * 3. Loop closure factor 추가
- * 4. Robust 최적화 수행
+ * What this demo shows:
+ *   1. Configuring a RobustSolver (PCM-Simple 3D outlier rejection).
+ *   2. Adding a prior, odometry factors and one loop closure.
+ *   3. That the optimization actually does something: the odometry is
+ *      corrupted with noise (fixed seed 7) so the square does not close, the
+ *      loop closure is exact, and the graph error before/after plus a
+ *      ground-truth / initial / optimized table make the correction visible.
+ *
+ * Kimera-RPGO optimizes inside update() - there is no per-iteration callback -
+ * so the viewer shows the initial guess and the converged result, not an
+ * iteration sweep.
  */
 
+#include <cmath>
+#include <iomanip>
 #include <iostream>
+#include <random>
 #include <vector>
 
 #include <gtsam/geometry/Pose3.h>
-#include <gtsam/slam/PriorFactor.h>
-#include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/inference/Symbol.h>
+#include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 
 #include <KimeraRPGO/RobustSolver.h>
 #include <KimeraRPGO/SolverParams.h>
 
-using gtsam::symbol_shorthand::X;  // Pose keys
+#include "rerun_viz.hpp"
+
+using gtsam::symbol_shorthand::X;  // pose keys X(0), X(1), ...
+
+namespace {
+
+/// Number of poses on the square: 4 sides of 1 m, one turn at every corner.
+constexpr int kNumPoses = 8;
+
+/// Fixed seed so every run of the demo produces the same numbers.
+constexpr unsigned kSeed = 7;
+
+/// Ground-truth odometry of the closed square: drive 1 m, then turn 90 deg at
+/// every second step, so pose 7 sits back on pose 0 rotated by -90 deg.
+std::vector<gtsam::Pose3> groundTruthOdometry() {
+    const gtsam::Pose3 forward(gtsam::Rot3::Identity(), gtsam::Point3(1.0, 0.0, 0.0));
+    const gtsam::Pose3 turn(gtsam::Rot3::Rz(M_PI / 2), gtsam::Point3(0.0, 0.0, 0.0));
+    return {forward, turn, forward, turn, forward, turn, forward};
+}
+
+/// Chain relative measurements into absolute poses starting from the origin.
+std::vector<gtsam::Pose3> chain(const std::vector<gtsam::Pose3>& relative) {
+    std::vector<gtsam::Pose3> poses{gtsam::Pose3::Identity()};
+    for (const auto& r : relative) {
+        poses.push_back(poses.back() * r);
+    }
+    return poses;
+}
+
+std::vector<part3viz::Vec3> translations(const std::vector<gtsam::Pose3>& poses) {
+    std::vector<part3viz::Vec3> out;
+    out.reserve(poses.size());
+    for (const auto& p : poses) {
+        out.push_back({p.translation().x(), p.translation().y(), p.translation().z()});
+    }
+    return out;
+}
+
+std::vector<part3viz::Vec3> translations(const gtsam::Values& values, int n) {
+    std::vector<part3viz::Vec3> out;
+    out.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const gtsam::Pose3 p = values.at<gtsam::Pose3>(X(i));
+        out.push_back({p.translation().x(), p.translation().y(), p.translation().z()});
+    }
+    return out;
+}
+
+/// RMS translation error against ground truth, over all poses.
+double translationRmse(const std::vector<gtsam::Pose3>& gt, const gtsam::Values& values) {
+    double sum = 0.0;
+    for (std::size_t i = 0; i < gt.size(); ++i) {
+        const gtsam::Pose3 p = values.at<gtsam::Pose3>(X(static_cast<int>(i)));
+        sum += (p.translation() - gt[i].translation()).squaredNorm();
+    }
+    return std::sqrt(sum / static_cast<double>(gt.size()));
+}
+
+}  // namespace
 
 int main() {
     std::cout << "=== Kimera-RPGO Basics ===" << std::endl;
 
+    part3viz::Viz viz("part3_rpgo_basics", "kimera_rpgo");
+
     // =========================================
-    // 1. RobustSolver 파라미터 설정
+    // 1. RobustSolver parameters
     // =========================================
     std::cout << "\n1. Setting up RobustSolver parameters..." << std::endl;
 
+    // PCM-Simple 3D thresholds are per-node drift allowances:
+    // - translation_threshold: expected drift in metres per node
+    // - rotation_threshold: expected drift in radians per node
+    const double translation_threshold = 0.5;  // 50 cm per node
+    const double rotation_threshold = 0.1;     // ~6 deg per node
+
     KimeraRPGO::RobustSolverParams params;
+    // Verbosity::UPDATE keeps the solver's own logs and silences PCM's
+    // per-loop-closure diagnostics; Verbosity::VERBOSE turns those on as well
+    // (the outlier-rejection demo uses VERBOSE for exactly that reason).
+    params.setPcmSimple3DParams(translation_threshold, rotation_threshold,
+                                KimeraRPGO::Verbosity::UPDATE);
 
-    // PCM 파라미터 (3D)
-    // - translation_threshold: 위치 일관성 임계값 (미터)
-    // - rotation_threshold: 회전 일관성 임계값 (라디안)
-    double translation_threshold = 0.5;  // 50cm
-    double rotation_threshold = 0.1;     // ~6도
-
-    params.setPcmSimple3DParams(
-        translation_threshold,
-        rotation_threshold,
-        KimeraRPGO::Verbosity::UPDATE  // 업데이트 시 출력
-    );
-
-    // Solver 생성
     KimeraRPGO::RobustSolver solver(params);
 
-    std::cout << "   Translation threshold: " << translation_threshold << " m" << std::endl;
-    std::cout << "   Rotation threshold: " << rotation_threshold << " rad" << std::endl;
+    std::cout << "   Translation threshold: " << translation_threshold << " m per node"
+              << std::endl;
+    std::cout << "   Rotation threshold: " << rotation_threshold << " rad per node"
+              << std::endl;
 
     // =========================================
-    // 2. Noise model 정의
+    // 2. Noise models
     // =========================================
     std::cout << "\n2. Defining noise models..." << std::endl;
 
-    // Prior noise (매우 작은 불확실성)
-    auto prior_noise = gtsam::noiseModel::Diagonal::Sigmas(
-        (gtsam::Vector(6) << 0.001, 0.001, 0.001, 0.001, 0.001, 0.001).finished());
+    // NOTE on the sigma ordering: GTSAM's Pose3 tangent space is
+    // (rotation, translation) - the first three entries are rx, ry, rz in
+    // radians and the last three are tx, ty, tz in metres. That reads
+    // backwards from how the problem is usually described, and getting it
+    // wrong silently swaps the rotation and translation weights.
+    const auto prior_noise = gtsam::noiseModel::Diagonal::Sigmas(
+        (gtsam::Vector(6) << 1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3).finished());
+    const auto odom_noise = gtsam::noiseModel::Diagonal::Sigmas(
+        (gtsam::Vector(6) << 0.02, 0.02, 0.02, 0.05, 0.05, 0.05).finished());
+    const auto loop_noise = gtsam::noiseModel::Diagonal::Sigmas(
+        (gtsam::Vector(6) << 0.01, 0.01, 0.01, 0.02, 0.02, 0.02).finished());
 
-    // Odometry noise
-    auto odom_noise = gtsam::noiseModel::Diagonal::Sigmas(
-        (gtsam::Vector(6) << 0.05, 0.05, 0.05, 0.01, 0.01, 0.01).finished());
-
-    // Loop closure noise
-    auto loop_noise = gtsam::noiseModel::Diagonal::Sigmas(
-        (gtsam::Vector(6) << 0.1, 0.1, 0.1, 0.02, 0.02, 0.02).finished());
+    std::cout << "   Odometry sigma: 0.02 rad (rotation), 0.05 m (translation)"
+              << std::endl;
+    std::cout << "   Loop closure sigma: 0.01 rad (rotation), 0.02 m (translation)"
+              << std::endl;
 
     // =========================================
-    // 3. 초기 Pose Graph 구성
+    // 3. Ground truth and corrupted odometry
     // =========================================
-    std::cout << "\n3. Building initial pose graph..." << std::endl;
+    std::cout << "\n3. Building the pose graph (seed " << kSeed << ")..." << std::endl;
 
-    gtsam::NonlinearFactorGraph factors;
-    gtsam::Values values;
+    const std::vector<gtsam::Pose3> gt_odometry = groundTruthOdometry();
+    const std::vector<gtsam::Pose3> gt_poses = chain(gt_odometry);
 
-    // 첫 번째 pose (원점에 prior)
-    gtsam::Pose3 origin = gtsam::Pose3::Identity();
-    factors.addPrior(X(0), origin, prior_noise);
-    values.insert(X(0), origin);
+    // Corrupt every odometry measurement, so the chained initial guess drifts
+    // and the square does not close.
+    std::mt19937 rng(kSeed);
+    std::normal_distribution<double> trans_noise(0.0, 0.05);  // m
+    std::normal_distribution<double> rot_noise(0.0, 0.02);    // rad
 
-    // Odometry로 trajectory 생성 (사각형 경로)
-    std::vector<gtsam::Pose3> odometry_measurements = {
-        gtsam::Pose3(gtsam::Rot3::Identity(), gtsam::Point3(1.0, 0.0, 0.0)),  // 앞으로
-        gtsam::Pose3(gtsam::Rot3::Rz(M_PI/2), gtsam::Point3(0.0, 0.0, 0.0)),  // 왼쪽 회전
-        gtsam::Pose3(gtsam::Rot3::Identity(), gtsam::Point3(1.0, 0.0, 0.0)),  // 앞으로
-        gtsam::Pose3(gtsam::Rot3::Rz(M_PI/2), gtsam::Point3(0.0, 0.0, 0.0)),  // 왼쪽 회전
-        gtsam::Pose3(gtsam::Rot3::Identity(), gtsam::Point3(1.0, 0.0, 0.0)),  // 앞으로
-        gtsam::Pose3(gtsam::Rot3::Rz(M_PI/2), gtsam::Point3(0.0, 0.0, 0.0)),  // 왼쪽 회전
-        gtsam::Pose3(gtsam::Rot3::Identity(), gtsam::Point3(1.0, 0.0, 0.0)),  // 앞으로 (원점으로)
-    };
-
-    // Odometry factor 추가
-    gtsam::Pose3 current_pose = origin;
-    for (size_t i = 0; i < odometry_measurements.size(); ++i) {
-        factors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(i), X(i+1), odometry_measurements[i], odom_noise);
-
-        current_pose = current_pose * odometry_measurements[i];
-        values.insert(X(i+1), current_pose);
-
-        std::cout << "   Added odometry factor X(" << i << ") -> X(" << i+1 << ")" << std::endl;
+    std::vector<gtsam::Pose3> noisy_odometry;
+    noisy_odometry.reserve(gt_odometry.size());
+    for (const auto& t : gt_odometry) {
+        const gtsam::Vector6 delta =
+            (gtsam::Vector(6) << rot_noise(rng), rot_noise(rng), rot_noise(rng),
+             trans_noise(rng), trans_noise(rng), trans_noise(rng))
+                .finished();
+        noisy_odometry.push_back(t * gtsam::Pose3::Expmap(delta));
     }
 
-    // =========================================
-    // 4. Solver에 factor 추가
-    // =========================================
-    std::cout << "\n4. Adding factors to RobustSolver..." << std::endl;
+    const std::vector<gtsam::Pose3> init_poses = chain(noisy_odometry);
 
-    solver.update(factors, values);
+    gtsam::NonlinearFactorGraph odom_factors;
+    gtsam::Values init_values;
+    odom_factors.addPrior(X(0), gt_poses.front(), prior_noise);
+    init_values.insert(X(0), init_poses.front());
+    for (std::size_t i = 0; i < noisy_odometry.size(); ++i) {
+        odom_factors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(static_cast<int>(i)), X(static_cast<int>(i + 1)), noisy_odometry[i],
+            odom_noise);
+        init_values.insert(X(static_cast<int>(i + 1)), init_poses[i + 1]);
+    }
 
-    std::cout << "   Initial factors added." << std::endl;
+    std::cout << "   Poses: " << init_values.size() << std::endl;
+    std::cout << "   Odometry factors: " << noisy_odometry.size() << std::endl;
+    std::cout << "   Prior factors: 1 (gauge anchor on X(0))" << std::endl;
 
-    // =========================================
-    // 5. Loop closure 추가
-    // =========================================
-    std::cout << "\n5. Adding loop closure factor..." << std::endl;
-
-    // 정상적인 loop closure: X(7)이 X(0) 근처로 돌아옴
-    gtsam::Pose3 loop_measurement = gtsam::Pose3(
-        gtsam::Rot3::Rz(M_PI/2),  // 마지막 회전
-        gtsam::Point3(0.0, 0.0, 0.0)
-    );
-
+    // The loop closure is exact: pose 7 is pose 0 turned by another 90 deg.
+    const gtsam::Pose3 loop_measurement = gt_poses.back().between(gt_poses.front());
     gtsam::NonlinearFactorGraph loop_factors;
     loop_factors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-        X(7), X(0), loop_measurement, loop_noise);
+        X(kNumPoses - 1), X(0), loop_measurement, loop_noise);
+    std::cout << "   Loop closures: 1  (X(" << kNumPoses - 1 << ") -> X(0), exact)"
+              << std::endl;
 
-    gtsam::Values empty_values;
-    solver.update(loop_factors, empty_values);
-
-    std::cout << "   Loop closure X(7) -> X(0) added." << std::endl;
+    // The full graph, used only to score the estimates with one formula.
+    gtsam::NonlinearFactorGraph full_graph = odom_factors;
+    full_graph.add(loop_factors);
 
     // =========================================
-    // 6. 최적화 결과 확인
+    // 4. Optimize
     // =========================================
-    std::cout << "\n6. Getting optimization results..." << std::endl;
+    std::cout << "\n4. Running the RobustSolver..." << std::endl;
 
-    gtsam::Values result = solver.calculateEstimate();
+    // update() runs outlier rejection and then optimizes, so the odometry and
+    // the loop closure are handed over in two calls exactly as an incremental
+    // SLAM front end would.
+    solver.update(odom_factors, init_values);
+    const std::size_t factors_after_odom = solver.getFactorsUnsafe().size();
+    solver.update(loop_factors, gtsam::Values());
 
-    std::cout << "\n   Optimized poses:" << std::endl;
-    for (size_t i = 0; i <= 7; ++i) {
-        gtsam::Pose3 pose = result.at<gtsam::Pose3>(X(i));
-        gtsam::Point3 t = pose.translation();
-        std::cout << "   X(" << i << "): t = [" << t.x() << ", " << t.y() << ", " << t.z() << "]" << std::endl;
+    const gtsam::Values result = solver.calculateEstimate();
+
+    const double error_before = full_graph.error(init_values);
+    const double error_after = full_graph.error(result);
+    const double rmse_before = translationRmse(gt_poses, init_values);
+    const double rmse_after = translationRmse(gt_poses, result);
+
+    std::cout << "   Factors in the solver after odometry: " << factors_after_odom
+              << std::endl;
+    std::cout << "   Factors in the solver after the loop closure: "
+              << solver.getFactorsUnsafe().size() << std::endl;
+    std::cout << "   Loop closures seen: " << solver.getNumLC()
+              << ", kept as inliers: " << solver.getNumLCInliers() << std::endl;
+
+    // =========================================
+    // 5. Results
+    // =========================================
+    std::cout << "\n5. Results (graph error is GTSAM's 0.5 x chi-squared):"
+              << std::endl;
+    std::cout << std::fixed << std::setprecision(4);
+    std::cout << "   Graph error before: " << error_before << std::endl;
+    std::cout << "   Graph error after:  " << error_after << std::endl;
+    std::cout << "   Translation RMSE vs ground truth before: " << rmse_before << " m"
+              << std::endl;
+    std::cout << "   Translation RMSE vs ground truth after:  " << rmse_after << " m"
+              << std::endl;
+
+    std::cout << "\n   pose |        ground truth |       initial guess |"
+                 "           optimized"
+              << std::endl;
+    for (int i = 0; i < kNumPoses; ++i) {
+        const gtsam::Point3 g = gt_poses[i].translation();
+        const gtsam::Point3 n = init_poses[i].translation();
+        const gtsam::Point3 o = result.at<gtsam::Pose3>(X(i)).translation();
+        std::cout << "   X(" << i << ") | " << std::setw(6) << g.x() << " "
+                  << std::setw(6) << g.y() << " " << std::setw(5) << g.z() << " | "
+                  << std::setw(6) << n.x() << " " << std::setw(6) << n.y() << " "
+                  << std::setw(5) << n.z() << " | " << std::setw(6) << o.x() << " "
+                  << std::setw(6) << o.y() << " " << std::setw(5) << o.z() << std::endl;
     }
 
+    // The square closes only if the loop closure was accepted: pose 7 and pose
+    // 0 must end up on the same spot.
+    const double closure_gap = (result.at<gtsam::Pose3>(X(kNumPoses - 1)).translation() -
+                                result.at<gtsam::Pose3>(X(0)).translation())
+                                   .norm();
+    std::cout << "\n   Loop closure gap |t7 - t0| : initial "
+              << (init_poses.back().translation() - init_poses.front().translation())
+                     .norm()
+              << " m -> optimized " << closure_gap << " m" << std::endl;
+
     // =========================================
-    // 7. Graph 통계
+    // 6. Stream to the viewer
     // =========================================
-    std::cout << "\n7. Graph statistics:" << std::endl;
-    std::cout << "   Number of poses: 8" << std::endl;
-    std::cout << "   Number of odometry factors: " << odometry_measurements.size() << std::endl;
-    std::cout << "   Number of loop closures: 1" << std::endl;
+    std::vector<part3viz::Edge> edges;
+    for (int i = 0; i + 1 < kNumPoses; ++i) {
+        edges.push_back({i, i + 1, part3viz::EdgeKind::Odometry});
+    }
+    edges.push_back({kNumPoses - 1, 0, part3viz::EdgeKind::Loop});
+
+    // Three static graphs under graph3d/kimera_rpgo/: the square as it should
+    // be, the drifted odometry chain, and the optimized result. Everything is
+    // logged as static because the solver exposes no per-iteration hook.
+    // The colours come from the shared palette, which is plain RGB and defined
+    // whether or not the rerun SDK is present, so no #ifdef is needed here.
+    viz.poseGraph3D("ground_truth", translations(gt_poses), edges,
+                    part3viz::kGroundTruth, true);
+    viz.poseGraph3D("initial", translations(init_poses), edges,
+                    part3viz::kInitial, true);
+    viz.poseGraph3D("optimized", translations(result, kNumPoses), edges,
+                    part3viz::kOptimized, true);
 
     std::cout << "\n=== RPGO Basics Complete ===" << std::endl;
-
     return 0;
 }
