@@ -17,8 +17,7 @@ part2_ch03_06/
 ├── CMakeLists.txt
 ├── Dockerfile
 ├── data/
-│   ├── bun_zipper_res3.ply    # Stanford bunny - the input to both demos
-│   └── scene.pcd              # not used by either demo
+│   └── bun_zipper_res3.ply    # Stanford bunny - the input to both demos
 ├── images/                     # Demo output, shown under Output below
 └── examples/
     ├── demo_common.hpp           # Cloud loading (.ply/.pcd), scale helpers, pose error
