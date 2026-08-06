@@ -175,6 +175,8 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
         traces.push_back(demo::traceFromPoses("small_gicp GICP (cpu)", kSmallGicpColor[0],
                                               kSmallGicpColor[1], kSmallGicpColor[2],
                                               poses, pair.ground_truth));
+        demo::logTracedSteps(viz, "small_gicp GICP (cpu)", kSmallGicpColor[0],
+                             kSmallGicpColor[1], kSmallGicpColor[2], *pair.source, poses);
         viz->logAligned("aligned_small_gicp", *pair.source, r.transform,
                         kSmallGicpColor[0], kSmallGicpColor[1], kSmallGicpColor[2]);
     }
@@ -189,6 +191,8 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
         traces.push_back(demo::traceFromPoses("fast_gicp VGICP (cuda)", kCudaColor[0],
                                               kCudaColor[1], kCudaColor[2], poses,
                                               pair.ground_truth));
+        demo::logTracedSteps(viz, "fast_gicp VGICP (cuda)", kCudaColor[0], kCudaColor[1],
+                             kCudaColor[2], *pair.source, poses);
         viz->logAligned("aligned_cuda_vgicp", *pair.source, r.transform, kCudaColor[0],
                         kCudaColor[1], kCudaColor[2]);
     }

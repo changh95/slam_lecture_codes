@@ -704,10 +704,15 @@ public:
     }
 
     /// Log one optimization step of a method on the "iteration" timeline
+    /// Pass `elapsed_ms` as well and the step also lands on the elapsed
+    /// timeline, so scrubbing either axis animates the clouds.
     void logIteration(const std::string& method, int iteration, const CloudT& cloud,
-                      uint8_t r, uint8_t g, uint8_t b) {
+                      uint8_t r, uint8_t g, uint8_t b, double elapsed_ms = -1.0) {
         if (!connected_ || cloud.empty()) return;
         rec_->set_time_sequence("iteration", iteration);
+        if (elapsed_ms >= 0.0) {
+            rec_->set_time_duration_secs("elapsed", elapsed_ms / 1000.0);
+        }
         rec_->log("registration/steps/" + method,
                  rerun::Points3D(toVecs(cloud))
                      .with_colors({rerun::Color(r, g, b)})
@@ -943,11 +948,11 @@ void attachIterationLogging(Registration& reg, RegistrationViz* viz,
             // point k both mean "after iteration k"
             if (callbacks++ == 0) return;
 
-            viz->logIteration(method, callbacks - 1, intermediate, r, g, b);
+            // Stamp before anything else here, so neither the SVD fit below nor
+            // the streaming itself is charged to the method's curve
+            const double elapsed = trace ? trace->sinceStart() : -1.0;
+            viz->logIteration(method, callbacks - 1, intermediate, r, g, b, elapsed);
             if (score) {
-                // Stamp before the SVD fit below, so the cost of recovering the
-                // transform for the trace is not charged to the method's curve
-                const double elapsed = trace->sinceStart();
                 trace->steps.push_back(
                     poseError(recoverTransform(*source, intermediate), gt));
                 trace->elapsed_ms.push_back(elapsed);
@@ -1092,6 +1097,33 @@ inline ErrorTrace traceFromPoses(const std::string& method,
         trace.elapsed_ms.push_back(step.elapsed_ms);
     }
     return trace;
+}
+
+/**
+ * Replay a recorded pose sequence as per-step clouds in the 3D view
+ *
+ * PCL hands the demos a per-iteration callback, so its methods stream their
+ * intermediate clouds for free. small_gicp and fast_gicp have no callback of any
+ * kind, so without this they contribute a curve and a final result but never
+ * move - two of the four methods would sit still while the other two animate,
+ * which reads as nothing being recorded at all.
+ *
+ * What they do give us is the pose at every step, already collected by
+ * RecordingGaussNewton and Traced. Transforming the source cloud by each of
+ * those poses reconstructs exactly what PCL's callback would have handed over,
+ * so every backend animates on the same footing.
+ */
+inline void logTracedSteps(RegistrationViz* viz, const std::string& method,
+                           uint8_t r, uint8_t g, uint8_t b, const CloudT& source,
+                           const std::vector<TracedStep>& recorded) {
+    if (!viz || !viz->active()) return;
+    for (std::size_t step = 0; step < recorded.size(); ++step) {
+        CloudT moved;
+        pcl::transformPointCloud(source, moved,
+                                 recorded[step].pose.matrix().cast<float>());
+        viz->logIteration(method, static_cast<int>(step), moved, r, g, b,
+                          recorded[step].elapsed_ms);
+    }
 }
 
 // ===========================================================================

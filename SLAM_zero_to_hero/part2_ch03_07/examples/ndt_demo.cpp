@@ -151,6 +151,8 @@ void compareBackends(const demo::KittiPair& pair, float resolution,
         results.push_back(r);
         traces.push_back(demo::traceFromPoses(name, color[0], color[1], color[2], poses,
                                               pair.ground_truth));
+        demo::logTracedSteps(viz, name, color[0], color[1], color[2], *pair.source,
+                             poses);
         viz->logAligned(std::string("aligned_") + (i == 0 ? "d2d" : "p2d"), *pair.source,
                         r.transform, color[0], color[1], color[2]);
     }
