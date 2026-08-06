@@ -114,7 +114,6 @@ demo::RunResult runPclGicp(const demo::KittiPair& pair, demo::RegistrationViz* v
     return demo::runPcl("PCL GICP", gicp, pair.source, pair.target, pair.ground_truth);
 }
 
-#ifdef HAVE_SMALL_GICP
 demo::SmallGicpConfig smallGicpConfig(int num_threads = kNumThreads) {
     demo::SmallGicpConfig cfg;
     cfg.num_threads = num_threads;
@@ -123,9 +122,7 @@ demo::SmallGicpConfig smallGicpConfig(int num_threads = kNumThreads) {
     cfg.max_iterations = kMaxIterations;
     return cfg;
 }
-#endif
 
-#ifdef HAVE_FAST_GICP_CUDA
 using CudaVgicp = demo::Traced<fast_gicp::FastVGICPCuda<PointT, PointT>>;
 
 std::unique_ptr<CudaVgicp> makeCudaVgicp() {
@@ -148,7 +145,6 @@ void warmUpGpu(const demo::KittiPair& pair) {
     CloudT aligned;
     reg->align(aligned);
 }
-#endif
 
 /// The main table: four backends, identity initial guess, same points, same budget
 void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
@@ -167,7 +163,6 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
     traces.push_back(icp_trace);
     traces.push_back(gicp_trace);
 
-#ifdef HAVE_SMALL_GICP
     {
         std::vector<Eigen::Isometry3d> poses;
         auto r = demo::runSmallGicpGICP("small_gicp GICP (cpu)", *pair.source,
@@ -181,11 +176,7 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
         viz->logAligned("aligned_small_gicp", *pair.source, r.transform,
                         kSmallGicpColor[0], kSmallGicpColor[1], kSmallGicpColor[2]);
     }
-#else
-    std::cout << "(small_gicp not built in - CPU GICP backend missing)" << std::endl;
-#endif
 
-#ifdef HAVE_FAST_GICP_CUDA
     {
         std::vector<Eigen::Isometry3d> poses;
         auto reg = makeCudaVgicp();
@@ -199,9 +190,6 @@ void compareBackends(const demo::KittiPair& pair, demo::RegistrationViz* viz) {
         viz->logAligned("aligned_cuda_vgicp", *pair.source, r.transform, kCudaColor[0],
                         kCudaColor[1], kCudaColor[2]);
     }
-#else
-    std::cout << "(fast_gicp CUDA not built in - GPU backend missing)" << std::endl;
-#endif
 
     demo::printRunResults(results);
 
@@ -290,23 +278,18 @@ void testInitialGuess(const demo::KittiPair& pair) {
             results.push_back(demo::runPcl("PCL GICP", gicp, pair.source, pair.target, gt,
                                            guess));
         }
-#ifdef HAVE_SMALL_GICP
         results.push_back(demo::runSmallGicpGICP("small_gicp GICP (cpu)", *pair.source,
                                                  *pair.target, gt, guess,
                                                  smallGicpConfig()));
-#endif
-#ifdef HAVE_FAST_GICP_CUDA
         {
             auto reg = makeCudaVgicp();
             results.push_back(demo::runFastGicp("fast_gicp VGICP (cuda)", *reg,
                                                 pair.source, pair.target, gt, guess));
         }
-#endif
         demo::printRunResults(results);
     }
 }
 
-#ifdef HAVE_SMALL_GICP
 /**
  * Where small_gicp's speed actually comes from
  *
@@ -352,9 +335,7 @@ void testThreadScaling(const demo::KittiPair& pair) {
     std::cout << "improving is where this cloud is too small to feed more cores."
               << std::endl;
 }
-#endif
 
-#if defined(HAVE_SMALL_GICP) && defined(HAVE_FAST_GICP_CUDA)
 /**
  * CPU / GPU crossover against cloud size
  *
@@ -404,7 +385,6 @@ void testCpuGpuCrossover(const demo::KittiPair& raw_pair) {
     std::cout << "compares what each backend actually offers, not one algorithm twice."
               << std::endl;
 }
-#endif
 
 void printUsage(const char* prog_name) {
     std::cout << "Usage: " << prog_name << " [source.bin target.bin]" << std::endl;
@@ -428,17 +408,6 @@ void printUsage(const char* prog_name) {
 int main(int argc, char** argv) {
     std::cout << "=== GICP experiment ===" << std::endl;
     std::cout << "ICP vs GICP, then PCL vs small_gicp vs CUDA, on KITTI\n" << std::endl;
-
-#ifdef HAVE_SMALL_GICP
-    std::cout << "small_gicp:     linked" << std::endl;
-#else
-    std::cout << "small_gicp:     NOT built in" << std::endl;
-#endif
-#ifdef HAVE_FAST_GICP_CUDA
-    std::cout << "fast_gicp CUDA: linked" << std::endl;
-#else
-    std::cout << "fast_gicp CUDA: NOT built in" << std::endl;
-#endif
 
     if (argc != 1 && argc != 3) {
         printUsage(argv[0]);
@@ -469,25 +438,19 @@ int main(int argc, char** argv) {
     viz.logCloudByHeight("target", *pair.target);
     viz.logCloud("source_initial", *pair.source, 235, 80, 80);
 
-#ifdef HAVE_FAST_GICP_CUDA
     // Creating the CUDA context, allocating on the device and any PTX JIT all
     // happen on the first call. Charging that to the first measured run would
     // report the GPU as hundreds of times slower than it is.
     std::cout << "\nWarming up the GPU (context creation is not part of any timing)..."
               << std::endl;
     warmUpGpu(pair);
-#endif
 
     compareBackends(pair, &viz);
     testInitialGuess(pair);
 
-#ifdef HAVE_SMALL_GICP
     testThreadScaling(pair);
-#endif
 
-#if defined(HAVE_SMALL_GICP) && defined(HAVE_FAST_GICP_CUDA)
     testCpuGpuCrossover(raw_pair);
-#endif
 
     std::cout << "\n=== Summary ===" << std::endl;
     std::cout << "GICP over plain ICP:" << std::endl;

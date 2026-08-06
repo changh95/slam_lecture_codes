@@ -58,7 +58,6 @@
 #include <rerun.hpp>
 #endif
 
-#ifdef HAVE_SMALL_GICP
 #include <memory>
 
 #include <small_gicp/points/point_cloud.hpp>
@@ -69,15 +68,12 @@
 #include <small_gicp/registration/registration.hpp>
 #include <small_gicp/registration/reduction_omp.hpp>
 #include <small_gicp/registration/registration_result.hpp>
-#endif
 
-#ifdef HAVE_FAST_GICP_CUDA
 // These public headers pull only Eigen and PCL - fast_gicp instantiates the
 // templates inside libfast_vgicp_cuda.so - so nothing here needs the CUDA
 // toolkit's include path.
 #include <fast_gicp/gicp/fast_vgicp_cuda.hpp>
 #include <fast_gicp/ndt/ndt_cuda.hpp>
-#endif
 
 namespace demo {
 
@@ -989,7 +985,6 @@ inline ErrorTrace traceFromPoses(const std::string& method,
     return trace;
 }
 
-#ifdef HAVE_FAST_GICP_CUDA
 // ===========================================================================
 // fast_gicp: per-iteration tracing
 // ===========================================================================
@@ -1085,9 +1080,7 @@ RunResult runFastGicp(const std::string& method, Reg& reg,
     if (poses) result.iterations = static_cast<int>(poses->size()) - 1;
     return result;
 }
-#endif  // HAVE_FAST_GICP_CUDA
 
-#ifdef HAVE_SMALL_GICP
 // ===========================================================================
 // small_gicp: per-iteration tracing
 // ===========================================================================
@@ -1238,6 +1231,5 @@ inline RunResult runSmallGicpGICP(const std::string& method,
     result.total_ms = result.preprocess_ms + result.align_ms;
     return result;
 }
-#endif  // HAVE_SMALL_GICP
 
 }  // namespace demo

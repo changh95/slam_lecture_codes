@@ -94,7 +94,6 @@ demo::RunResult runPclNdt(const demo::KittiPair& pair, float resolution,
     return demo::runPcl(label, ndt, pair.source, pair.target, pair.ground_truth, guess);
 }
 
-#ifdef HAVE_FAST_GICP_CUDA
 using CudaNdt = demo::Traced<fast_gicp::NDTCuda<PointT, PointT>>;
 
 std::unique_ptr<CudaNdt> makeCudaNdt(float resolution,
@@ -117,7 +116,6 @@ void warmUpGpu(const demo::KittiPair& pair) {
     CloudT aligned;
     reg->align(aligned);
 }
-#endif
 
 void compareBackends(const demo::KittiPair& pair, float resolution,
                      demo::RegistrationViz* viz) {
@@ -136,7 +134,6 @@ void compareBackends(const demo::KittiPair& pair, float resolution,
     viz->logAligned("aligned_pcl_ndt", *pair.source, pcl_result.transform, kPclColor[0],
                     kPclColor[1], kPclColor[2]);
 
-#ifdef HAVE_FAST_GICP_CUDA
     const std::array<std::pair<const char*, fast_gicp::NDTDistanceMode>, 2> modes{
         {{"NDTCuda (D2D)", fast_gicp::NDTDistanceMode::D2D},
          {"NDTCuda (P2D)", fast_gicp::NDTDistanceMode::P2D}}};
@@ -156,10 +153,6 @@ void compareBackends(const demo::KittiPair& pair, float resolution,
         viz->logAligned(std::string("aligned_") + (i == 0 ? "d2d" : "p2d"), *pair.source,
                         r.transform, color[0], color[1], color[2]);
     }
-#else
-    std::cout << "(fast_gicp CUDA not built in - no GPU NDT to compare against)"
-              << std::endl;
-#endif
 
     demo::printRunResults(results);
 
@@ -179,7 +172,7 @@ void compareBackends(const demo::KittiPair& pair, float resolution,
     }
 }
 
-/// Cell size, swept on every available backend
+/// Cell size, swept on both backends
 void testResolution(const demo::KittiPair& pair) {
     std::cout << "\n=== Resolution study ===" << std::endl;
     std::cout << "Cell size trades precision against the width of the basin of"
@@ -202,7 +195,6 @@ void testResolution(const demo::KittiPair& pair) {
                                     Eigen::Matrix4f::Identity(), nullptr, nullptr,
                                     label.str()));
     }
-#ifdef HAVE_FAST_GICP_CUDA
     for (float resolution : {0.5f, 1.0f, 2.0f, 3.0f, 5.0f}) {
         std::ostringstream label;
         label << "CUDA D2D " << std::fixed << std::setprecision(1) << resolution << " m";
@@ -210,7 +202,6 @@ void testResolution(const demo::KittiPair& pair) {
         results.push_back(demo::runFastGicp(label.str(), *reg, pair.source, pair.target,
                                             pair.ground_truth));
     }
-#endif
 
     for (const auto& r : results) {
         std::cout << std::left << std::setw(22) << r.method << std::right
@@ -298,13 +289,11 @@ void testInitialGuess(const demo::KittiPair& pair) {
         std::cout << "\nInitial guess: " << name << std::endl;
         std::vector<demo::RunResult> results;
         results.push_back(runPclNdt(pair, kNdtResolution, kNdtStepSize, guess));
-#ifdef HAVE_FAST_GICP_CUDA
         {
             auto reg = makeCudaNdt(kNdtResolution, fast_gicp::NDTDistanceMode::D2D);
             results.push_back(demo::runFastGicp("NDTCuda (D2D)", *reg, pair.source,
                                                 pair.target, gt, guess));
         }
-#endif
         demo::printRunResults(results);
     }
 
@@ -337,12 +326,6 @@ int main(int argc, char** argv) {
     std::cout << "=== NDT experiment ===" << std::endl;
     std::cout << "PCL's CPU NDT vs fast_gicp's CUDA NDT, on KITTI\n" << std::endl;
 
-#ifdef HAVE_FAST_GICP_CUDA
-    std::cout << "fast_gicp CUDA: linked" << std::endl;
-#else
-    std::cout << "fast_gicp CUDA: NOT built in - only PCL NDT will run" << std::endl;
-#endif
-
     if (argc != 1 && argc != 3 && argc != 4) {
         printUsage(argv[0]);
         return -1;
@@ -372,11 +355,9 @@ int main(int argc, char** argv) {
     viz.logCloudByHeight("target", *pair.target);
     viz.logCloud("source_initial", *pair.source, 235, 80, 80);
 
-#ifdef HAVE_FAST_GICP_CUDA
     std::cout << "\nWarming up the GPU (context creation is not part of any timing)..."
               << std::endl;
     warmUpGpu(pair);
-#endif
 
     compareBackends(pair, resolution, &viz);
     testResolution(pair);

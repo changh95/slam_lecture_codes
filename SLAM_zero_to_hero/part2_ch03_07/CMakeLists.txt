@@ -85,26 +85,17 @@ set(ALL_TARGETS gicp_demo ndt_demo teaser_demo)
 # ============================================
 # small_gicp (CPU GICP)
 # ============================================
-# Optional in the same spirit as TEASER++: without it the demos still build and
-# still compare PCL's own methods, they just lose the small_gicp column.
-find_package(small_gicp QUIET)
-if(small_gicp_FOUND)
-    message(STATUS "small_gicp found - GICP demo includes the small_gicp CPU backend")
-    foreach(target ${ALL_TARGETS})
-        if(TARGET ${target})
-            target_link_libraries(${target} small_gicp::small_gicp)
-            target_compile_definitions(${target} PRIVATE HAVE_SMALL_GICP)
-            if(OpenMP_CXX_FOUND)
-                target_link_libraries(${target} OpenMP::OpenMP_CXX)
-            endif()
+find_package(small_gicp REQUIRED)
+message(STATUS "small_gicp found: ${small_gicp_DIR}")
+
+foreach(target ${ALL_TARGETS})
+    if(TARGET ${target})
+        target_link_libraries(${target} small_gicp::small_gicp)
+        if(OpenMP_CXX_FOUND)
+            target_link_libraries(${target} OpenMP::OpenMP_CXX)
         endif()
-    endforeach()
-else()
-    message(STATUS "small_gicp not found - demos build without the small_gicp backend")
-    message(STATUS "  git clone https://github.com/koide3/small_gicp.git")
-    message(STATUS "  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF")
-    message(STATUS "  cmake --build build -j8 --target install")
-endif()
+    endif()
+endforeach()
 
 # ============================================
 # fast_gicp CUDA backends (NDTCuda, FastVGICPCuda)
@@ -117,39 +108,36 @@ endif()
 # and headers are located by hand rather than with find_package.
 option(USE_CUDA "Build the fast_gicp CUDA backends (NDTCuda, FastVGICPCuda)" ON)
 
-if(USE_CUDA)
-    find_library(FAST_GICP_LIB fast_gicp)
-    find_library(FAST_VGICP_CUDA_LIB fast_vgicp_cuda)
-    find_path(FAST_GICP_INCLUDE_DIR fast_gicp/ndt/ndt_cuda.hpp)
-    find_package(CUDAToolkit QUIET)
-
-    if(FAST_GICP_LIB AND FAST_VGICP_CUDA_LIB AND FAST_GICP_INCLUDE_DIR AND CUDAToolkit_FOUND)
-        message(STATUS "fast_gicp CUDA found - GICP and NDT demos include the GPU backends")
-        message(STATUS "  ${FAST_GICP_LIB}")
-        message(STATUS "  ${FAST_VGICP_CUDA_LIB}")
-        foreach(target ${ALL_TARGETS})
-            if(TARGET ${target})
-                target_include_directories(${target} PRIVATE ${FAST_GICP_INCLUDE_DIR})
-                target_link_libraries(${target}
-                    ${FAST_GICP_LIB}
-                    ${FAST_VGICP_CUDA_LIB}
-                    CUDA::cudart
-                )
-                target_compile_definitions(${target} PRIVATE HAVE_FAST_GICP_CUDA)
-            endif()
-        endforeach()
-    else()
-        message(WARNING "fast_gicp CUDA not found - the GPU backends will NOT be built")
-        message(STATUS "  fast_gicp lib:      ${FAST_GICP_LIB}")
-        message(STATUS "  fast_vgicp_cuda:    ${FAST_VGICP_CUDA_LIB}")
-        message(STATUS "  fast_gicp headers:  ${FAST_GICP_INCLUDE_DIR}")
-        message(STATUS "  CUDAToolkit found:  ${CUDAToolkit_FOUND}")
-        message(STATUS "See the Dockerfile - upstream fast_gicp needs two patches to")
-        message(STATUS "build against CUDA 12.x and to target the right GPU.")
-    endif()
-else()
-    message(STATUS "CUDA support disabled - the GPU backends will not be built")
+# The flag exists to state the intent, not to make the GPU optional. The demos
+# carry no CPU fallback for these backends - and NDTCuda is the only NDT either
+# library provides, so experiment 2 has nothing at all to run without it.
+if(NOT USE_CUDA)
+    message(FATAL_ERROR
+        "USE_CUDA=OFF is not supported: the demos have no CPU fallback for the "
+        "fast_gicp CUDA backends, and NDTCuda is the only NDT available.")
 endif()
+
+# If any of these are missing, see the Dockerfile: upstream fast_gicp needs two
+# patches to build against CUDA 12.x at all, and to target the right GPU.
+find_library(FAST_GICP_LIB fast_gicp REQUIRED)
+find_library(FAST_VGICP_CUDA_LIB fast_vgicp_cuda REQUIRED)
+find_path(FAST_GICP_INCLUDE_DIR fast_gicp/ndt/ndt_cuda.hpp REQUIRED)
+find_package(CUDAToolkit REQUIRED)
+
+message(STATUS "fast_gicp CUDA found:")
+message(STATUS "  ${FAST_GICP_LIB}")
+message(STATUS "  ${FAST_VGICP_CUDA_LIB}")
+
+foreach(target ${ALL_TARGETS})
+    if(TARGET ${target})
+        target_include_directories(${target} PRIVATE ${FAST_GICP_INCLUDE_DIR})
+        target_link_libraries(${target}
+            ${FAST_GICP_LIB}
+            ${FAST_VGICP_CUDA_LIB}
+            CUDA::cudart
+        )
+    endif()
+endforeach()
 
 # ============================================
 # Compiler flags
