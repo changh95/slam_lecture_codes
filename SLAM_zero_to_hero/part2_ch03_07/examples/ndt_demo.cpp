@@ -1,28 +1,41 @@
 /**
- * Normal Distributions Transform (NDT) Demo
+ * NDT experiment: PCL's CPU NDT against fast_gicp's CUDA NDT
  *
- * This example demonstrates the Normal Distributions Transform algorithm,
- * which represents the target point cloud as a grid of Gaussian distributions
- * and maximizes the likelihood of source points under this representation.
+ * The Normal Distributions Transform represents the target as a grid of
+ * Gaussians instead of a set of points, so there are no explicit
+ * correspondences to search for - which is exactly the shape of problem a GPU
+ * likes. This demo puts the two implementations side by side.
  *
- * Key concepts covered:
- * - NDT algorithm overview and grid representation
- * - Parameter tuning (resolution, step size)
- * - Using initial guesses for faster convergence
- * - Comparing NDT performance with different settings
+ * Why these two and not others: NDTCuda is the ONLY NDT in fast_gicp and it is
+ * unconditionally CUDA-gated, and small_gicp has no NDT at all - its VGICP is
+ * GICP against a voxel map, a different cost function, not NDT by another name.
+ * So a CPU-vs-GPU NDT comparison means PCL against fast_gicp, and there is no
+ * third option to add.
  *
- * Runs on two KITTI velodyne scans and scores against the KITTI ground-truth
- * poses. With no arguments it uses the pair bundled with this chapter
- * (sequence 04, frames 0 and 1, 1.31 m apart).
+ * The GPU is much faster here. It is also, on this data, less accurate - which
+ * is the more useful lesson, and the reason both columns are reported rather
+ * than just the timings.
+ *
+ * fast_gicp's NDT offers two distance modes:
+ *   P2D  source points against the target's voxel distributions (classic NDT)
+ *   D2D  the source is voxelized too, and distributions are matched against
+ *        distributions. This is fast_gicp's default.
+ *
+ * Runs on two KITTI velodyne scans and scores everything against the KITTI
+ * ground-truth poses. With no arguments it uses the pair bundled with this
+ * chapter (sequence 04, frames 0 and 1, 1.31 m apart).
  *
  * Usage: ./ndt_demo [source.bin target.bin [resolution]]
  *
  * Reference: Biber & Strasser, "The Normal Distributions Transform", IROS 2003
  */
 
-#include <iostream>
-#include <iomanip>
+#include <array>
 #include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,235 +50,298 @@
 using PointT = pcl::PointXYZ;
 using CloudT = pcl::PointCloud<PointT>;
 
-/// Same voxel leaf as the other demos in this chapter, so the numbers are
-/// directly comparable across gicp_demo / ndt_demo / method_comparison
 constexpr float kVoxelLeaf = 0.3f;
+constexpr float kNdtResolution = 1.0f;
 
-/// Default NDT cell size for outdoor LiDAR
-constexpr float kDefaultResolution = 1.0f;
+/// More-Thuente maximum step length, for PCL's NDT. 0.1 m - the value indoor
+/// NDT examples use - is shorter than TransformationEpsilon at KITTI's 1.3-1.5 m
+/// scan spacing, so NDT reports convergence after a single iteration without
+/// having moved. See the step size study below.
+constexpr float kNdtStepSize = 0.5f;
 
-/// Maximum step length of the More-Thuente line search, in meters.
-///
-/// This has to be set against the displacement, not copied from an indoor
-/// tutorial. Consecutive KITTI scans are 1.3-1.5 m apart, and with the 0.1 m
-/// step that indoor examples use, NDT's first step is shorter than
-/// TransformationEpsilon - so it reports "converged" after one iteration having
-/// barely moved, leaving essentially the whole vehicle motion as error. The step
-/// size study below shows the cliff between 0.1 and 0.5.
-constexpr float kDefaultStepSize = 0.5f;
+constexpr int kMaxIterations = 50;
 
-struct NDTResult {
-    bool converged;
-    int iterations;
-    double fitness_score;
-    demo::PoseError error;
-    double time_ms;
-    Eigen::Matrix4f transform;
-};
+namespace {
 
-/**
- * Run NDT registration
- */
-NDTResult runNDT(const demo::KittiPair& pair,
-                 float resolution,
-                 float step_size,
-                 const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
-                 demo::RegistrationViz* viz = nullptr,
-                 demo::ErrorTrace* trace = nullptr) {
+const std::array<uint8_t, 3> kPclColor{80, 140, 255};
+const std::array<uint8_t, 3> kD2dColor{230, 110, 220};
+const std::array<uint8_t, 3> kP2dColor{90, 220, 210};
 
+demo::RunResult runPclNdt(const demo::KittiPair& pair, float resolution,
+                          float step_size = kNdtStepSize,
+                          const Eigen::Matrix4f& guess = Eigen::Matrix4f::Identity(),
+                          demo::RegistrationViz* viz = nullptr,
+                          demo::ErrorTrace* trace = nullptr,
+                          const std::string& label = "PCL NDT") {
     pcl::NormalDistributionsTransform<PointT, PointT> ndt;
 
-    // NDT parameters. The resolution has to be set BEFORE the target cloud:
-    // setInputTarget() builds the voxel-covariance grid there and then, at
-    // whatever resolution is currently set, and a later setResolution() discards
-    // that grid and builds a second one. Setting it first also keeps the reported
-    // time to a single grid build.
+    // Set the resolution BEFORE the target cloud. setInputTarget() builds the
+    // voxel-covariance grid immediately, using whatever resolution is set at that
+    // moment; a later setResolution() throws that grid away and builds another.
+    // Besides the wasted work, the discarded grid is built at PCL's 1 m default,
+    // which on a sparse cloud has too few points per cell and prints a scary
+    // "Grid will not be searchable" warning that has nothing to do with the run.
     ndt.setResolution(resolution);
     ndt.setStepSize(step_size);
     ndt.setTransformationEpsilon(0.01);
-    ndt.setMaximumIterations(50);
+    ndt.setMaximumIterations(kMaxIterations);
 
-    // Set input clouds
-    ndt.setInputSource(pair.source);
-    ndt.setInputTarget(pair.target);
-
-    demo::attachIterationLogging(ndt, viz, "NDT", 60, 220, 100, pair.source,
+    demo::attachIterationLogging(ndt, viz, label, kPclColor[0], kPclColor[1],
+                                 kPclColor[2], pair.source,
                                  pair.has_ground_truth ? &pair.ground_truth : nullptr,
-                                 trace, &initial_guess);
+                                 trace, &guess);
 
-    CloudT::Ptr aligned(new CloudT);
-
-    auto start = std::chrono::high_resolution_clock::now();
-    ndt.align(*aligned, initial_guess);
-    auto end = std::chrono::high_resolution_clock::now();
-
-    NDTResult result;
-    result.converged = ndt.hasConverged();
-    result.fitness_score = ndt.getFitnessScore();
-    result.time_ms = std::chrono::duration<double, std::milli>(end - start).count();
-    result.transform = ndt.getFinalTransformation();
-    result.iterations = ndt.getFinalNumIteration();
-    result.error = demo::poseError(result.transform, pair.ground_truth);
-
-    return result;
+    return demo::runPcl(label, ndt, pair.source, pair.target, pair.ground_truth, guess);
 }
 
-/**
- * Study the effect of resolution parameter
- */
-void studyResolution(const demo::KittiPair& pair) {
-    std::cout << "\n=== NDT Resolution Parameter Study ===" << std::endl;
-    std::cout << "(Cell size affects accuracy vs speed tradeoff)" << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
-    std::cout << std::setw(12) << "Resolution"
-              << std::setw(12) << "Converged"
-              << std::setw(12) << "Iters"
-              << std::setw(15) << "Trans Err (m)"
-              << std::setw(15) << "Rot Err (deg)"
-              << std::setw(12) << "Time (ms)" << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
+#ifdef HAVE_FAST_GICP_CUDA
+using CudaNdt = demo::Traced<fast_gicp::NDTCuda<PointT, PointT>>;
 
-    const std::vector<float> resolutions = {0.5f, 1.0f, 2.0f, 3.0f, 5.0f};
+std::unique_ptr<CudaNdt> makeCudaNdt(float resolution,
+                                     fast_gicp::NDTDistanceMode mode) {
+    auto reg = std::make_unique<CudaNdt>();
+    reg->setResolution(resolution);
+    reg->setDistanceMode(mode);
+    reg->setMaximumIterations(kMaxIterations);
+    // NDTCuda has no setNumThreads and no settable regularization - the voxel
+    // covariances are always regularized with MIN_EIG, hardcoded upstream. Its
+    // neighbour search defaults to DIRECT7, unlike FastVGICP's DIRECT1.
+    return reg;
+}
 
-    for (float res : resolutions) {
-        const NDTResult result = runNDT(pair, res, kDefaultStepSize);
+void warmUpGpu(const demo::KittiPair& pair) {
+    auto reg = makeCudaNdt(kNdtResolution, fast_gicp::NDTDistanceMode::D2D);
+    reg->setMaximumIterations(2);
+    reg->setInputTarget(pair.target);
+    reg->setInputSource(pair.source);
+    CloudT aligned;
+    reg->align(aligned);
+}
+#endif
 
-        std::cout << std::setw(12) << std::fixed << std::setprecision(1) << res
-                  << std::setw(12) << (result.converged ? "YES" : "NO")
-                  << std::setw(12) << result.iterations
-                  << std::setw(15) << std::setprecision(4) << result.error.translation_m
-                  << std::setw(15) << std::setprecision(4) << result.error.rotation_deg
-                  << std::setw(12) << std::setprecision(1) << result.time_ms << std::endl;
+void compareBackends(const demo::KittiPair& pair, float resolution,
+                     demo::RegistrationViz* viz) {
+    std::cout << "\n=== Experiment 2: CPU NDT vs CUDA NDT ===" << std::endl;
+    std::cout << "Identity initial guess, resolution " << resolution << " m.\n"
+              << std::endl;
+
+    std::vector<demo::RunResult> results;
+    std::vector<demo::ErrorTrace> traces;
+
+    demo::ErrorTrace pcl_trace;
+    auto pcl_result = runPclNdt(pair, resolution, kNdtStepSize,
+                                Eigen::Matrix4f::Identity(), viz, &pcl_trace);
+    results.push_back(pcl_result);
+    traces.push_back(pcl_trace);
+    viz->logAligned("aligned_pcl_ndt", *pair.source, pcl_result.transform, kPclColor[0],
+                    kPclColor[1], kPclColor[2]);
+
+#ifdef HAVE_FAST_GICP_CUDA
+    const std::array<std::pair<const char*, fast_gicp::NDTDistanceMode>, 2> modes{
+        {{"NDTCuda (D2D)", fast_gicp::NDTDistanceMode::D2D},
+         {"NDTCuda (P2D)", fast_gicp::NDTDistanceMode::P2D}}};
+
+    for (std::size_t i = 0; i < modes.size(); ++i) {
+        const auto& [name, mode] = modes[i];
+        const auto& color = (i == 0) ? kD2dColor : kP2dColor;
+
+        std::vector<Eigen::Isometry3d> poses;
+        auto reg = makeCudaNdt(resolution, mode);
+        auto r = demo::runFastGicp(name, *reg, pair.source, pair.target,
+                                   pair.ground_truth, Eigen::Matrix4f::Identity(),
+                                   &poses);
+        results.push_back(r);
+        traces.push_back(demo::traceFromPoses(name, color[0], color[1], color[2], poses,
+                                              pair.ground_truth));
+        viz->logAligned(std::string("aligned_") + (i == 0 ? "d2d" : "p2d"), *pair.source,
+                        r.transform, color[0], color[1], color[2]);
     }
-
-    std::cout << "\nObservations:" << std::endl;
-    std::cout << "  - Smaller resolution = more cells = finer detail but a narrower basin"
+#else
+    std::cout << "(fast_gicp CUDA not built in - no GPU NDT to compare against)"
               << std::endl;
-    std::cout << "    of convergence, so a coarse initial guess is more likely to fail"
+#endif
+
+    demo::printRunResults(results);
+
+    std::cout << "\nNDTCuda builds its voxel maps at the top of its own align(), so"
               << std::endl;
-    std::cout << "  - Larger resolution = fewer cells = more forgiving but less precise"
+    std::cout << "unlike the other backends that cost lands in the align column rather"
               << std::endl;
-    std::cout << "  - Typical values: 0.5-2.0m for outdoor, 0.1-0.5m for indoor" << std::endl;
-}
+    std::cout << "than prep. Compare on total." << std::endl;
 
-/**
- * Study the effect of step size parameter
- */
-void studyStepSize(const demo::KittiPair& pair) {
-    std::cout << "\n=== NDT Step Size Parameter Study ===" << std::endl;
-    std::cout << "(More-Thuente line search step size affects convergence)" << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
-    std::cout << std::setw(12) << "Step Size"
-              << std::setw(12) << "Converged"
-              << std::setw(12) << "Iters"
-              << std::setw(15) << "Trans Err (m)"
-              << std::setw(15) << "Rot Err (deg)"
-              << std::setw(12) << "Time (ms)" << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
+    viz->logErrorCurves(traces);
 
-    const std::vector<float> step_sizes = {0.01f, 0.05f, 0.1f, 0.5f, 1.0f};
-
-    for (float step : step_sizes) {
-        const NDTResult result = runNDT(pair, kDefaultResolution, step);
-
-        std::cout << std::setw(12) << std::fixed << std::setprecision(2) << step
-                  << std::setw(12) << (result.converged ? "YES" : "NO")
-                  << std::setw(12) << result.iterations
-                  << std::setw(15) << std::setprecision(4) << result.error.translation_m
-                  << std::setw(15) << std::setprecision(4) << result.error.rotation_deg
-                  << std::setw(12) << std::setprecision(1) << result.time_ms << std::endl;
+    std::cout << "\n=== PCL NDT transformation ===" << std::endl;
+    std::cout << std::fixed << std::setprecision(6) << pcl_result.transform << std::endl;
+    if (pair.has_ground_truth) {
+        std::cout << "\n=== Ground truth ===" << std::endl;
+        std::cout << pair.ground_truth << std::endl;
     }
+}
 
-    std::cout << "\nObservations:" << std::endl;
-    std::cout << "  - The step size is the MAXIMUM length of the line search step, so it"
+/// Cell size, swept on every available backend
+void testResolution(const demo::KittiPair& pair) {
+    std::cout << "\n=== Resolution study ===" << std::endl;
+    std::cout << "Cell size trades precision against the width of the basin of"
               << std::endl;
-    std::cout << "    has to be set against the displacement being recovered. At KITTI's"
+    std::cout << "convergence, and it is the one parameter both backends share.\n"
               << std::endl;
-    std::cout << "    1.3-1.5 m scan spacing the small steps stall: the first step comes"
+    std::cout << std::string(104, '-') << std::endl;
+    std::cout << std::left << std::setw(22) << "Backend / resolution" << std::right
+              << std::setw(8) << "Conv" << std::setw(7) << "Iters"
+              << std::setw(14) << "Trans Err (m)" << std::setw(14) << "Rot Err (deg)"
+              << std::setw(13) << "Prep (ms)" << std::setw(13) << "Align (ms)"
+              << std::setw(13) << "Total (ms)" << std::endl;
+    std::cout << std::string(104, '-') << std::endl;
+
+    std::vector<demo::RunResult> results;
+    for (float resolution : {0.5f, 1.0f, 2.0f, 3.0f, 5.0f}) {
+        std::ostringstream label;
+        label << "PCL " << std::fixed << std::setprecision(1) << resolution << " m";
+        results.push_back(runPclNdt(pair, resolution, kNdtStepSize,
+                                    Eigen::Matrix4f::Identity(), nullptr, nullptr,
+                                    label.str()));
+    }
+#ifdef HAVE_FAST_GICP_CUDA
+    for (float resolution : {0.5f, 1.0f, 2.0f, 3.0f, 5.0f}) {
+        std::ostringstream label;
+        label << "CUDA D2D " << std::fixed << std::setprecision(1) << resolution << " m";
+        auto reg = makeCudaNdt(resolution, fast_gicp::NDTDistanceMode::D2D);
+        results.push_back(demo::runFastGicp(label.str(), *reg, pair.source, pair.target,
+                                            pair.ground_truth));
+    }
+#endif
+
+    for (const auto& r : results) {
+        std::cout << std::left << std::setw(22) << r.method << std::right
+                  << std::setw(8) << (r.converged ? "YES" : "NO");
+        if (r.iterations >= 0) std::cout << std::setw(7) << r.iterations;
+        else                   std::cout << std::setw(7) << "-";
+        std::cout << std::fixed
+                  << std::setw(14) << std::setprecision(4) << r.error.translation_m
+                  << std::setw(14) << std::setprecision(4) << r.error.rotation_deg
+                  << std::setw(13) << std::setprecision(1) << r.preprocess_ms
+                  << std::setw(13) << std::setprecision(1) << r.align_ms
+                  << std::setw(13) << std::setprecision(1) << r.total_ms << std::endl;
+    }
+    std::cout << std::string(104, '-') << std::endl;
+    std::cout << "Smaller cells resolve more detail but narrow the basin, so a coarse"
               << std::endl;
-    std::cout << "    out shorter than TransformationEpsilon, NDT stops after one"
+    std::cout << "initial guess is likelier to fail. Typical outdoor values are"
               << std::endl;
-    std::cout << "    iteration, and nearly the whole vehicle motion is left as error."
-              << std::endl;
-    std::cout << "  - Note that those rows still report Converged = YES. PCL's flag only"
-              << std::endl;
-    std::cout << "    means the update fell below the epsilon - it is not a statement"
-              << std::endl;
-    std::cout << "    about correctness. Always read it next to the iteration count."
-              << std::endl;
-    std::cout << "  - Too large a step = may overshoot" << std::endl;
-    std::cout << "  - Typical values: 0.05-0.5 indoor, 0.5-1.0 for KITTI-scale motion"
-              << std::endl;
+    std::cout << "0.5-2.0 m; indoor work runs 0.1-0.5 m." << std::endl;
 }
 
 /**
- * Demonstrate the importance of the initial guess
+ * The step-size trap, on PCL's NDT
  *
- * The guesses are built from the true transform, so "Exact" is what a perfect
- * motion model would hand NDT and "Identity" is what it gets with no motion
- * model at all - on KITTI that is already the full 1.3-1.5 m of vehicle motion.
+ * Kept even though it is PCL-specific, because it is the single easiest way to
+ * get a silently wrong NDT result, and PCL's NDT is half of this experiment.
+ * fast_gicp's NDT has no equivalent knob - it does not use a More-Thuente line
+ * search - so there is nothing to sweep on the GPU side.
  */
-void studyInitialGuess(const demo::KittiPair& pair) {
-    std::cout << "\n=== Initial Guess Study ===" << std::endl;
-    std::cout << "(How the initial guess affects NDT convergence)" << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
-    std::cout << std::setw(25) << "Initial Guess"
-              << std::setw(12) << "Converged"
-              << std::setw(15) << "Trans Err (m)"
-              << std::setw(15) << "Rot Err (deg)"
-              << std::setw(12) << "Time (ms)" << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
+void testStepSize(const demo::KittiPair& pair) {
+    std::cout << "\n=== Step size study (PCL NDT) ===" << std::endl;
+    std::cout << std::string(78, '-') << std::endl;
+    std::cout << std::right << std::setw(12) << "Step Size" << std::setw(12) << "Converged"
+              << std::setw(10) << "Iters" << std::setw(16) << "Trans Err (m)"
+              << std::setw(16) << "Rot Err (deg)" << std::endl;
+    std::cout << std::string(78, '-') << std::endl;
+
+    for (float step : {0.01f, 0.05f, 0.10f, 0.50f, 1.00f}) {
+        const auto r = runPclNdt(pair, kNdtResolution, step);
+        std::cout << std::right << std::fixed << std::setw(12) << std::setprecision(2)
+                  << step << std::setw(12) << (r.converged ? "YES" : "NO")
+                  << std::setw(10) << r.iterations
+                  << std::setw(16) << std::setprecision(4) << r.error.translation_m
+                  << std::setw(16) << std::setprecision(4) << r.error.rotation_deg
+                  << std::endl;
+    }
+    std::cout << std::string(78, '-') << std::endl;
+    std::cout << "The step size is the MAXIMUM length of the line search step, so it"
+              << std::endl;
+    std::cout << "has to be set against the displacement being recovered. At KITTI's"
+              << std::endl;
+    std::cout << "1.3-1.5 m scan spacing the small steps stall: the first step comes"
+              << std::endl;
+    std::cout << "out shorter than TransformationEpsilon, NDT stops after one"
+              << std::endl;
+    std::cout << "iteration, and nearly the whole vehicle motion is left as error."
+              << std::endl;
+    std::cout << "Those rows still report Converged = YES. PCL's flag only means the"
+              << std::endl;
+    std::cout << "update fell below the epsilon - it is not a statement about"
+              << std::endl;
+    std::cout << "correctness. Always read it next to the iteration count." << std::endl;
+}
+
+/// How much wrongness in the initial guess each backend survives
+void testInitialGuess(const demo::KittiPair& pair) {
+    if (!pair.has_ground_truth) return;
+
+    std::cout << "\n=== Initial guess robustness ===" << std::endl;
+    std::cout << "The guesses are perturbations of the true transform, so they model a"
+              << std::endl;
+    std::cout << "motion model of decreasing quality. Identity is the no-model case.\n"
+              << std::endl;
 
     const Eigen::Matrix4f& gt = pair.ground_truth;
-
     const std::vector<std::pair<std::string, Eigen::Matrix4f>> guesses = {
         {"Exact", gt},
-        {"0.2 m / 1 deg off", gt * demo::makeTransform(0.2f, 0.1f, 0.0f, 0.0f, 0.0f, 0.017f)},
-        {"0.5 m / 3 deg off", gt * demo::makeTransform(0.5f, 0.3f, 0.1f, 0.0f, 0.0f, 0.052f)},
-        {"2.0 m / 10 deg off", gt * demo::makeTransform(2.0f, 1.0f, 0.5f, 0.0f, 0.0f, 0.175f)},
-        {"Identity (no model)", Eigen::Matrix4f::Identity()},
+        {"0.2 m / 1 deg", gt * demo::makeTransform(0.2f, 0.1f, 0.0f, 0.0f, 0.0f, 0.017f)},
+        {"0.5 m / 3 deg", gt * demo::makeTransform(0.5f, 0.3f, 0.1f, 0.0f, 0.0f, 0.052f)},
+        {"1.0 m / 6 deg", gt * demo::makeTransform(1.0f, 0.5f, 0.2f, 0.0f, 0.0f, 0.105f)},
+        {"Identity", Eigen::Matrix4f::Identity()},
     };
 
     for (const auto& [name, guess] : guesses) {
-        const NDTResult result = runNDT(pair, kDefaultResolution, kDefaultStepSize, guess);
-
-        std::cout << std::setw(25) << name
-                  << std::setw(12) << (result.converged ? "YES" : "NO")
-                  << std::setw(15) << std::fixed << std::setprecision(4)
-                  << result.error.translation_m
-                  << std::setw(15) << std::setprecision(4) << result.error.rotation_deg
-                  << std::setw(12) << std::setprecision(1) << result.time_ms << std::endl;
+        std::cout << "\nInitial guess: " << name << std::endl;
+        std::vector<demo::RunResult> results;
+        results.push_back(runPclNdt(pair, kNdtResolution, kNdtStepSize, guess));
+#ifdef HAVE_FAST_GICP_CUDA
+        {
+            auto reg = makeCudaNdt(kNdtResolution, fast_gicp::NDTDistanceMode::D2D);
+            results.push_back(demo::runFastGicp("NDTCuda (D2D)", *reg, pair.source,
+                                                pair.target, gt, guess));
+        }
+#endif
+        demo::printRunResults(results);
     }
 
-    std::cout << "\nObservations:" << std::endl;
-    std::cout << "  - A good initial guess significantly improves the result" << std::endl;
-    std::cout << "  - In odometry, use the previous pose estimate (constant velocity)"
+    std::cout << "\nNDT's basin is narrow in rotation and wide in translation: the"
               << std::endl;
-    std::cout << "  - For loop closure, run global registration first (see teaser_demo)"
+    std::cout << "identity guess is off by the full 1.31 m and is handled fine, while"
+              << std::endl;
+    std::cout << "the 1.0 m / 6 deg guess is off by less translation and fails. A motion"
+              << std::endl;
+    std::cout << "model that gets the heading wrong hurts more than having no model."
               << std::endl;
 }
 
 void printUsage(const char* prog_name) {
-    std::cout << "Usage: " << prog_name << " [source.bin target.bin [resolution]]" << std::endl;
+    std::cout << "Usage: " << prog_name << " [source.bin target.bin [resolution]]"
+              << std::endl;
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  No arguments        - Use the bundled KITTI pair (seq 04, frames 0-1)"
+    std::cout << "  No arguments      - Use the bundled KITTI pair (seq 04, frames 0-1)"
               << std::endl;
-    std::cout << "  source target       - Use the given KITTI velodyne .bin (or .pcd) scans"
+    std::cout << "  source target     - Use the given KITTI velodyne .bin (or .pcd) scans"
               << std::endl;
-    std::cout << "  source target res   - ... with a custom NDT cell size in meters"
-              << std::endl;
-    std::cout << std::endl;
-    std::cout << "Examples:" << std::endl;
-    std::cout << "  " << prog_name << std::endl;
-    std::cout << "  " << prog_name << " <kitti>/sequences/04/velodyne/000000.bin"
-              << " <kitti>/sequences/04/velodyne/000001.bin 1.0" << std::endl;
+    std::cout << "  resolution        - NDT cell size in meters (default "
+              << kNdtResolution << ")" << std::endl;
 }
 
+}  // namespace
+
 int main(int argc, char** argv) {
-    std::cout << "=== Normal Distributions Transform (NDT) Demo ===" << std::endl;
-    std::cout << "Grid-based registration with Gaussian distributions, on KITTI\n"
-              << std::endl;
+    std::cout << "=== NDT experiment ===" << std::endl;
+    std::cout << "PCL's CPU NDT vs fast_gicp's CUDA NDT, on KITTI\n" << std::endl;
+
+#ifdef HAVE_FAST_GICP_CUDA
+    std::cout << "fast_gicp CUDA: linked" << std::endl;
+#else
+    std::cout << "fast_gicp CUDA: NOT built in - only PCL NDT will run" << std::endl;
+#endif
 
     if (argc != 1 && argc != 3 && argc != 4) {
         printUsage(argv[0]);
@@ -277,15 +353,13 @@ int main(int argc, char** argv) {
     if (!pair.source || !pair.target) {
         return -1;
     }
+
+    const float resolution = (argc == 4) ? std::stof(argv[3]) : kNdtResolution;
+
     demo::printKittiPair(pair);
+    std::cout << "  NDT resolution: " << std::fixed << std::setprecision(3) << resolution
+              << " m" << std::endl;
 
-    float resolution = kDefaultResolution;
-    if (argc == 4) {
-        resolution = std::stof(argv[3]);
-    }
-    std::cout << "  NDT resolution: " << resolution << " m" << std::endl;
-
-    // Downsample
     std::cout << "\nVoxel-downsampling to " << kVoxelLeaf << " m..." << std::endl;
     const std::size_t source_raw = pair.source->size();
     const std::size_t target_raw = pair.target->size();
@@ -294,81 +368,33 @@ int main(int argc, char** argv) {
     std::cout << "  Source: " << source_raw << " -> " << pair.source->size() << std::endl;
     std::cout << "  Target: " << target_raw << " -> " << pair.target->size() << std::endl;
 
-    // ====================================
-    // Basic NDT registration
-    // ====================================
-
-    std::cout << "\n=== Basic NDT Registration ===" << std::endl;
-    std::cout << "(identity initial guess - no motion model)" << std::endl;
-
-    // Stream inputs, per-iteration steps, and the result to a rerun viewer
-    // (no-op without SDK/viewer)
     demo::RegistrationViz viz("ndt_demo");
     viz.logCloudByHeight("target", *pair.target);
     viz.logCloud("source_initial", *pair.source, 235, 80, 80);
 
-    demo::ErrorTrace ndt_trace;
-    const NDTResult basic_result = runNDT(pair, resolution, kDefaultStepSize,
-                                          Eigen::Matrix4f::Identity(), &viz, &ndt_trace);
-    viz.logErrorCurves({ndt_trace});
-
-    std::cout << "  Converged: " << (basic_result.converged ? "YES" : "NO") << std::endl;
-    std::cout << "  Iterations: " << basic_result.iterations << std::endl;
-    std::cout << "  Fitness score: " << std::fixed << std::setprecision(6)
-              << basic_result.fitness_score << std::endl;
-    std::cout << "  Translation error: " << std::setprecision(4)
-              << basic_result.error.translation_m << " m" << std::endl;
-    std::cout << "  Rotation error: " << std::setprecision(4)
-              << basic_result.error.rotation_deg << " deg" << std::endl;
-    std::cout << "  Time: " << std::setprecision(2) << basic_result.time_ms << " ms"
+#ifdef HAVE_FAST_GICP_CUDA
+    std::cout << "\nWarming up the GPU (context creation is not part of any timing)..."
               << std::endl;
+    warmUpGpu(pair);
+#endif
 
-    viz.logAligned("aligned_ndt", *pair.source, basic_result.transform, 60, 220, 100);
-
-    // ====================================
-    // Parameter studies
-    // ====================================
-
-    studyResolution(pair);
-    studyStepSize(pair);
-    if (pair.has_ground_truth) {
-        studyInitialGuess(pair);
-    } else {
-        std::cout << "\n=== Initial Guess Study ===" << std::endl;
-        std::cout << "Skipped: the guesses are built from the ground-truth transform,"
-                  << std::endl;
-        std::cout << "which is not available for this scan pair." << std::endl;
-    }
-
-    // ====================================
-    // Final transformation
-    // ====================================
-
-    std::cout << "\n=== Final NDT Transformation ===" << std::endl;
-    std::cout << std::fixed << std::setprecision(6);
-    std::cout << basic_result.transform << std::endl;
-
-    if (pair.has_ground_truth) {
-        std::cout << "\n=== Ground Truth ===" << std::endl;
-        std::cout << pair.ground_truth << std::endl;
-    }
-
-    // ====================================
-    // Summary
-    // ====================================
+    compareBackends(pair, resolution, &viz);
+    testResolution(pair);
+    testStepSize(pair);
+    testInitialGuess(pair);
 
     std::cout << "\n=== Summary ===" << std::endl;
-    std::cout << "NDT key characteristics:" << std::endl;
-    std::cout << "  1. Represents the target as a grid of Gaussian distributions"
+    std::cout << "NDT represents the target as a grid of Gaussians, so there are no"
               << std::endl;
-    std::cout << "  2. No explicit correspondences needed (unlike ICP)" << std::endl;
-    std::cout << "  3. Smooth cost function - good for Newton optimization" << std::endl;
-    std::cout << "  4. Cost is linear in the number of source points" << std::endl;
+    std::cout << "explicit correspondences to search and the cost is linear in the"
+              << std::endl;
+    std::cout << "number of source points - which is what makes it suit a GPU."
+              << std::endl;
     std::cout << std::endl;
-    std::cout << "Recommended parameter settings:" << std::endl;
-    std::cout << "  - Outdoor LiDAR (KITTI): resolution=1.0-2.0m, step_size=0.1" << std::endl;
-    std::cout << "  - Indoor/dense: resolution=0.2-0.5m, step_size=0.05" << std::endl;
-    std::cout << "  - Always provide a good initial guess when possible" << std::endl;
+    std::cout << "Speed is not free, though. Read the accuracy columns next to the"
+              << std::endl;
+    std::cout << "timings before concluding the GPU version is simply better."
+              << std::endl;
     std::cout << std::endl;
 
     return 0;

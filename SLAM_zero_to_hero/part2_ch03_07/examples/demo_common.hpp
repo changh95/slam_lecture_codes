@@ -19,14 +19,18 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <pcl/point_cloud.h>
@@ -52,6 +56,27 @@
 #include <unistd.h>
 
 #include <rerun.hpp>
+#endif
+
+#ifdef HAVE_SMALL_GICP
+#include <memory>
+
+#include <small_gicp/points/point_cloud.hpp>
+#include <small_gicp/ann/kdtree_omp.hpp>
+#include <small_gicp/factors/gicp_factor.hpp>
+#include <small_gicp/util/normal_estimation_omp.hpp>
+#include <small_gicp/util/lie.hpp>
+#include <small_gicp/registration/registration.hpp>
+#include <small_gicp/registration/reduction_omp.hpp>
+#include <small_gicp/registration/registration_result.hpp>
+#endif
+
+#ifdef HAVE_FAST_GICP_CUDA
+// These public headers pull only Eigen and PCL - fast_gicp instantiates the
+// templates inside libfast_vgicp_cuda.so - so nothing here needs the CUDA
+// toolkit's include path.
+#include <fast_gicp/gicp/fast_vgicp_cuda.hpp>
+#include <fast_gicp/ndt/ndt_cuda.hpp>
 #endif
 
 namespace demo {
@@ -833,5 +858,386 @@ void attachIterationLogging(Registration& reg, RegistrationViz* viz,
         };
     reg.registerVisualizationCallback(callback);
 }
+
+// ===========================================================================
+// Backend-neutral results
+// ===========================================================================
+
+/**
+ * One registration run, from any backend
+ *
+ * Preprocessing and alignment are timed separately on purpose. PCL builds its
+ * correspondence structures inside align(), while small_gicp and fast_gicp build
+ * KdTrees, covariances and voxel maps when the clouds are handed over. Reporting
+ * only align() would therefore flatter them: the optimizer loop really is far
+ * faster, but a pipeline pays for the setup too. Two numbers keep both facts
+ * visible.
+ *
+ * The split is not perfectly clean for one backend: NDTCuda builds its voxel
+ * maps at the top of its computeTransformation(), so that cost lands in
+ * align_ms rather than preprocess_ms. total_ms is the number to trust when
+ * comparing across backends.
+ */
+struct RunResult {
+    std::string method;
+    bool converged = false;
+    double fitness = std::numeric_limits<double>::quiet_NaN();
+    PoseError error{0.0, 0.0};
+    double preprocess_ms = 0.0;
+    double align_ms = 0.0;
+    double total_ms = 0.0;
+    int iterations = -1;
+    Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+};
+
+inline void printRunResults(const std::vector<RunResult>& results) {
+    std::cout << std::string(104, '-') << std::endl;
+    std::cout << std::left << std::setw(22) << "Method" << std::right
+              << std::setw(8) << "Conv"
+              << std::setw(7) << "Iters"
+              << std::setw(14) << "Trans Err (m)"
+              << std::setw(14) << "Rot Err (deg)"
+              << std::setw(13) << "Prep (ms)"
+              << std::setw(13) << "Align (ms)"
+              << std::setw(13) << "Total (ms)" << std::endl;
+    std::cout << std::string(104, '-') << std::endl;
+    for (const auto& r : results) {
+        std::cout << std::left << std::setw(22) << r.method << std::right
+                  << std::setw(8) << (r.converged ? "YES" : "NO");
+        if (r.iterations >= 0) std::cout << std::setw(7) << r.iterations;
+        else                   std::cout << std::setw(7) << "-";
+        std::cout << std::fixed
+                  << std::setw(14) << std::setprecision(4) << r.error.translation_m
+                  << std::setw(14) << std::setprecision(4) << r.error.rotation_deg
+                  << std::setw(13) << std::setprecision(1) << r.preprocess_ms
+                  << std::setw(13) << std::setprecision(1) << r.align_ms
+                  << std::setw(13) << std::setprecision(1) << r.total_ms << std::endl;
+    }
+    std::cout << std::string(104, '-') << std::endl;
+}
+
+/// Only some PCL registration classes report how many iterations they took:
+/// NormalDistributionsTransform has getFinalNumIteration(), while ICP and GICP
+/// keep nr_iterations_ protected. Detect it rather than print a number that is
+/// not there - the count matters for NDT, where "converged after 1 iteration"
+/// is the signature of a silent failure.
+template <typename T, typename = void>
+struct HasFinalNumIteration : std::false_type {};
+template <typename T>
+struct HasFinalNumIteration<
+    T, std::void_t<decltype(std::declval<const T&>().getFinalNumIteration())>>
+    : std::true_type {};
+
+/**
+ * Run a PCL registration and time setup separately from the solve
+ *
+ * PCL's split looks lopsided next to the other backends, and that is the point:
+ * setInputTarget() only builds a search tree, while GICP's per-point covariances
+ * and NDT's voxel grid are computed inside align(). So nearly all of PCL's cost
+ * lands in align_ms, whereas small_gicp and fast_gicp have already paid part of
+ * theirs by the time align() is called. Compare on total_ms.
+ *
+ * Call attachIterationLogging() on `reg` beforehand to also collect a curve.
+ */
+template <typename Reg>
+RunResult runPcl(const std::string& method, Reg& reg,
+                 const CloudT::Ptr& source, const CloudT::Ptr& target,
+                 const Eigen::Matrix4f& ground_truth,
+                 const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity()) {
+    using clock = std::chrono::high_resolution_clock;
+    RunResult result;
+    result.method = method;
+
+    const auto t0 = clock::now();
+    reg.setInputSource(source);
+    reg.setInputTarget(target);
+    const auto t1 = clock::now();
+
+    CloudT aligned;
+    reg.align(aligned, initial_guess);
+    const auto t2 = clock::now();
+
+    result.converged = reg.hasConverged();
+    result.transform = reg.getFinalTransformation();
+    result.error = poseError(result.transform, ground_truth);
+    if constexpr (HasFinalNumIteration<Reg>::value) {
+        result.iterations = reg.getFinalNumIteration();
+    }
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.align_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    result.total_ms = result.preprocess_ms + result.align_ms;
+    // Deliberately after the timers: getFitnessScore() runs its own full
+    // nearest-neighbour pass and would otherwise be charged to alignment
+    result.fitness = reg.getFitnessScore();
+    return result;
+}
+
+/// Score a recorded pose sequence against ground truth, ready for logErrorCurves()
+inline ErrorTrace traceFromPoses(const std::string& method,
+                                 uint8_t r, uint8_t g, uint8_t b,
+                                 const std::vector<Eigen::Isometry3d>& poses,
+                                 const Eigen::Matrix4f& ground_truth) {
+    ErrorTrace trace;
+    trace.method = method;
+    trace.r = r;
+    trace.g = g;
+    trace.b = b;
+    trace.steps.reserve(poses.size());
+    for (const auto& T : poses) {
+        trace.steps.push_back(poseError(T.matrix().cast<float>(), ground_truth));
+    }
+    return trace;
+}
+
+#ifdef HAVE_FAST_GICP_CUDA
+// ===========================================================================
+// fast_gicp: per-iteration tracing
+// ===========================================================================
+
+/**
+ * A fast_gicp registration class that records the pose at every outer iteration
+ *
+ * Do NOT reach for registerVisualizationCallback() here. fast_gicp's classes do
+ * derive from pcl::Registration, so the call compiles and even returns true -
+ * but `update_visualizer_` appears nowhere in fast_gicp, so it is never invoked
+ * during optimization. PCL 1.14 fires the callback once at registration time,
+ * and attachIterationLogging() deliberately drops exactly that call, so the
+ * trace would come back holding only the seeded initial guess: one point on the
+ * graph, no compile error, no warning. Silent data loss.
+ *
+ * linearize() is the hook that does work. It is protected virtual, every leaf
+ * class overrides it, and step_gn() and step_lm() each call it exactly once per
+ * OUTER iteration with the currently accepted pose. So recording there yields
+ * the pose before each update - the initial guess, then the result of iteration
+ * 1, of iteration 2, and so on - and appending align()'s final transformation
+ * completes the sequence. Step k then means "after iteration k", which is what
+ * the PCL demos plot, so the curves are directly comparable.
+ *
+ * step_optimize()/step_gn()/step_lm() are protected but NOT virtual, so
+ * linearize() really is the only available seam.
+ *
+ * Caveat: evaluateCost() is public and also calls linearize(). Set the sink
+ * immediately before align() and do not call evaluateCost() while it is set, or
+ * the trace picks up samples that are not optimization steps.
+ */
+template <typename Base>
+class Traced : public Base {
+public:
+    void traceInto(std::vector<Eigen::Isometry3d>* sink) { sink_ = sink; }
+
+protected:
+    double linearize(const Eigen::Isometry3d& trans,
+                     Eigen::Matrix<double, 6, 6>* H = nullptr,
+                     Eigen::Matrix<double, 6, 1>* b = nullptr) override {
+        if (sink_) sink_->push_back(trans);
+        return Base::linearize(trans, H, b);
+    }
+
+private:
+    std::vector<Eigen::Isometry3d>* sink_ = nullptr;
+};
+
+/**
+ * Run any fast_gicp registration and time setup separately from the solve
+ *
+ * `poses`, when given, receives the per-iteration trajectory (see Traced).
+ */
+template <typename Reg>
+RunResult runFastGicp(const std::string& method, Reg& reg,
+                      const CloudT::Ptr& source, const CloudT::Ptr& target,
+                      const Eigen::Matrix4f& ground_truth,
+                      const Eigen::Matrix4f& initial_guess = Eigen::Matrix4f::Identity(),
+                      std::vector<Eigen::Isometry3d>* poses = nullptr) {
+    using clock = std::chrono::high_resolution_clock;
+    RunResult result;
+    result.method = method;
+
+    const auto t0 = clock::now();
+    reg.setInputTarget(target);
+    reg.setInputSource(source);
+    const auto t1 = clock::now();
+
+    if (poses) {
+        poses->clear();
+        reg.traceInto(poses);
+    }
+
+    CloudT aligned;
+    reg.align(aligned, initial_guess);
+    const auto t2 = clock::now();
+
+    if (poses) {
+        reg.traceInto(nullptr);
+        // linearize() hands over pre-update poses, so the last accepted pose is
+        // still missing
+        // `reg` is a template parameter, so cast<> is a dependent member template
+        // and needs the `template` keyword to parse as one
+        poses->push_back(
+            Eigen::Isometry3d(reg.getFinalTransformation().template cast<double>()));
+    }
+
+    result.converged = reg.hasConverged();
+    result.transform = reg.getFinalTransformation();
+    result.error = poseError(result.transform, ground_truth);
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.align_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    result.total_ms = result.preprocess_ms + result.align_ms;
+    if (poses) result.iterations = static_cast<int>(poses->size()) - 1;
+    return result;
+}
+#endif  // HAVE_FAST_GICP_CUDA
+
+#ifdef HAVE_SMALL_GICP
+// ===========================================================================
+// small_gicp: per-iteration tracing
+// ===========================================================================
+
+/**
+ * small_gicp's Gauss-Newton optimizer, with the accepted pose recorded per step
+ *
+ * small_gicp has no callback of any kind in its registration path - the only
+ * introspection is a `verbose` flag that prints scalars, including only the
+ * NORMS of the update, so a trajectory cannot be reconstructed from it. What it
+ * does have is a duck-typed Optimizer template parameter, which is the seam
+ * used here: this mirrors small_gicp::GaussNewtonOptimizer and additionally
+ * appends each post-update pose to an external vector.
+ *
+ * Recording after the update (rather than before, as the fast_gicp hook must)
+ * means step k is "after iteration k" directly, matching the PCL demos.
+ *
+ * The sink is a raw pointer to storage the caller owns because Registration's
+ * align() is const, so the optimizer member is const inside optimize() and
+ * cannot hold a vector it appends to.
+ *
+ * Note the alternative that looks equivalent and is not: calling align()
+ * repeatedly with max_iterations=1. That is bit-identical for Gauss-Newton, but
+ * NOT for small_gicp's default Levenberg-Marquardt optimizer, whose damping
+ * `lambda` is a function-local reset on every call - so the annealing is thrown
+ * away and the reported convergence rate becomes an artifact. It also rebuilds
+ * the per-point factor vector once per recorded step.
+ */
+struct RecordingGaussNewton {
+    template <typename TargetPointCloud, typename SourcePointCloud, typename TargetTree,
+              typename CorrespondenceRejector, typename TerminationCriteria,
+              typename Reduction, typename Factor, typename GeneralFactor>
+    small_gicp::RegistrationResult optimize(
+        const TargetPointCloud& target, const SourcePointCloud& source,
+        const TargetTree& target_tree, const CorrespondenceRejector& rejector,
+        const TerminationCriteria& criteria, Reduction& reduction,
+        const Eigen::Isometry3d& init_T, std::vector<Factor>& factors,
+        GeneralFactor& general_factor) const {
+        small_gicp::RegistrationResult result(init_T);
+
+        if (sink) {
+            sink->clear();
+            sink->push_back(init_T);  // step 0 is where the method starts
+        }
+
+        for (int i = 0; i < max_iterations && !result.converged; i++) {
+            auto [H, b, e] = reduction.linearize(target, source, target_tree, rejector,
+                                                 result.T_target_source, factors);
+            general_factor.update_linearized_system(target, source, target_tree,
+                                                    result.T_target_source, &H, &b, &e);
+
+            const Eigen::Matrix<double, 6, 1> delta =
+                (H + lambda * Eigen::Matrix<double, 6, 6>::Identity()).ldlt().solve(-b);
+
+            result.converged = criteria.converged(delta);
+            result.T_target_source = result.T_target_source * small_gicp::se3_exp(delta);
+            result.iterations = i;
+            result.H = H;
+            result.b = b;
+            result.error = e;
+
+            if (sink) sink->push_back(result.T_target_source);
+        }
+
+        result.num_inliers = std::count_if(factors.begin(), factors.end(),
+                                           [](const auto& f) { return f.inlier(); });
+        return result;
+    }
+
+    int max_iterations = 50;
+    double lambda = 1e-6;
+    std::vector<Eigen::Isometry3d>* sink = nullptr;
+};
+
+/// Copy a PCL cloud into small_gicp's own container
+inline std::shared_ptr<small_gicp::PointCloud> toSmallGicp(const CloudT& cloud) {
+    std::vector<Eigen::Vector4f> points;
+    points.reserve(cloud.size());
+    for (const auto& p : cloud) points.emplace_back(p.x, p.y, p.z, 1.0f);
+    return std::make_shared<small_gicp::PointCloud>(points);
+}
+
+struct SmallGicpConfig {
+    int num_threads = 4;
+    int num_neighbors = 20;
+    double max_correspondence_distance = 2.0;
+    int max_iterations = 50;
+};
+
+/**
+ * small_gicp GICP through the native Registration<> template
+ *
+ * RegistrationPCL, the drop-in that would let the PCL code stay untouched, is
+ * deliberately avoided: it hardcodes Registration<GICPFactor,
+ * ParallelReductionOMP> with no way to inject an optimizer, so the per-iteration
+ * curves cannot be recovered through it.
+ */
+inline RunResult runSmallGicpGICP(const std::string& method,
+                                  const CloudT& source, const CloudT& target,
+                                  const Eigen::Matrix4f& ground_truth,
+                                  const Eigen::Matrix4f& initial_guess,
+                                  const SmallGicpConfig& cfg,
+                                  std::vector<Eigen::Isometry3d>* poses = nullptr) {
+    using clock = std::chrono::high_resolution_clock;
+    RunResult result;
+    result.method = method;
+
+    // Preprocessing: the copy in, both KdTrees and both covariance sets. This is
+    // the work PCL does inside align() instead.
+    const auto t0 = clock::now();
+    auto target_pc = toSmallGicp(target);
+    auto source_pc = toSmallGicp(source);
+    auto target_tree = std::make_shared<small_gicp::KdTree<small_gicp::PointCloud>>(
+        target_pc, small_gicp::KdTreeBuilderOMP(cfg.num_threads));
+    auto source_tree = std::make_shared<small_gicp::KdTree<small_gicp::PointCloud>>(
+        source_pc, small_gicp::KdTreeBuilderOMP(cfg.num_threads));
+    small_gicp::estimate_covariances_omp(*target_pc, *target_tree, cfg.num_neighbors,
+                                         cfg.num_threads);
+    small_gicp::estimate_covariances_omp(*source_pc, *source_tree, cfg.num_neighbors,
+                                         cfg.num_threads);
+    const auto t1 = clock::now();
+
+    small_gicp::Registration<small_gicp::GICPFactor, small_gicp::ParallelReductionOMP,
+                             small_gicp::NullFactor, small_gicp::DistanceRejector,
+                             RecordingGaussNewton>
+        registration;
+    registration.rejector.max_dist_sq =
+        cfg.max_correspondence_distance * cfg.max_correspondence_distance;
+    registration.reduction.num_threads = cfg.num_threads;
+    registration.optimizer.max_iterations = cfg.max_iterations;
+    registration.optimizer.sink = poses;
+
+    const auto sg_result = registration.align(
+        *target_pc, *source_pc, *target_tree,
+        Eigen::Isometry3d(initial_guess.cast<double>()));
+    const auto t2 = clock::now();
+
+    result.converged = sg_result.converged;
+    result.transform = sg_result.T_target_source.matrix().cast<float>();
+    result.error = poseError(result.transform, ground_truth);
+    result.fitness = sg_result.error;
+    // Upstream assigns `iterations = i` inside the loop, so it is a 0-based index
+    // of the last step taken, not a count
+    result.iterations = poses ? static_cast<int>(poses->size()) - 1
+                              : static_cast<int>(sg_result.iterations) + 1;
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.align_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    result.total_ms = result.preprocess_ms + result.align_ms;
+    return result;
+}
+#endif  // HAVE_SMALL_GICP
 
 }  // namespace demo
