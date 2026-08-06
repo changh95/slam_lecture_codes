@@ -76,9 +76,12 @@ int main()
               << scale << " m\n";
 
     // Build the source cloud by displacing the target with a known transform,
-    // so the estimate can be scored against the exact answer
-    const float shift = static_cast<float>(scale * 0.04);
-    const float angle = 8.0f * M_PI / 180.0f;
+    // so the estimate can be scored against the exact answer.
+    // The offset is deliberately large enough to see: at a few percent of the
+    // model the two clouds overlap so closely that there is nothing to watch
+    // converge. 15 degrees is still well inside ICP's basin of attraction here.
+    const float shift = static_cast<float>(scale * 0.08);
+    const float angle = 15.0f * M_PI / 180.0f;
 
     const Eigen::Matrix4f ground_truth =
         demo::makeTransform(shift, shift * 0.5f, shift * 0.2f, 0.0f, 0.0f, angle);
@@ -88,7 +91,7 @@ int main()
 
     std::cout << "Source cloud: " << source_cloud->size() << " points\n";
     std::cout << "Applied transformation: t=(" << std::setprecision(4) << shift << ", "
-              << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=8deg\n";
+              << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=15deg\n";
 
     // Optional: Downsample clouds for faster processing
     std::cout << "\nDownsampling clouds with voxel size " << std::setprecision(4)

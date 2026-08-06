@@ -194,8 +194,10 @@ int main()
 
     // Build the source cloud by displacing the target with a known transform,
     // so both methods can be scored against the exact answer
-    const float shift = static_cast<float>(scale * 0.04);
-    const float angle = 5.0f * M_PI / 180.0f;
+    // Large enough that the misalignment is visible in the viewer: at a few
+    // percent of the model the clouds overlap too closely to watch converge.
+    const float shift = static_cast<float>(scale * 0.08);
+    const float angle = 15.0f * M_PI / 180.0f;
 
     const Eigen::Matrix4f ground_truth =
         demo::makeTransform(shift, shift * 0.5f, shift * 0.2f, 0.01f, 0.02f, angle);
@@ -205,7 +207,7 @@ int main()
 
     std::cout << "Source cloud: " << source_cloud->size() << " points\n";
     std::cout << "Applied transformation: t=(" << std::setprecision(4) << shift << ", "
-              << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=5deg\n";
+              << shift * 0.5f << ", " << shift * 0.2f << ") m, rz=15deg\n";
 
     // Downsample
     std::cout << "\nDownsampling clouds with voxel size " << std::setprecision(4)

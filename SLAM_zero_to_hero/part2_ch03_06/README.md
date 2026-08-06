@@ -21,6 +21,7 @@ part2_ch03_06/
 │   ├── bun_zipper_res3.ply    # Stanford bunny - input for demos 1-2
 │   ├── 000000.bin             # KITTI velodyne scan (single frame)
 │   └── scene.pcd
+├── images/                     # Demo output, shown under Output below
 └── examples/
     ├── demo_common.hpp           # Cloud loading (.ply/.pcd/.bin), scale helpers, pose error
     ├── demo_viz.hpp              # Interactive viewer and per-keystroke ICP steppers
@@ -97,9 +98,9 @@ is what actually separates them:
 
 | | point-to-point | point-to-plane |
 |---|---|---|
-| iterations to converge | 9 | **3** |
-| alignment time | 12.4 ms | 5.1 ms |
-| normal estimation | not needed | 13 ms |
+| iterations to converge | 15 | **4** |
+| alignment time | 20.7 ms | 7.0 ms |
+| normal estimation | not needed | 2 ms |
 
 Measured separately, the gap widens in the cases the demo does not ship: with
 ~half the source cropped away, point-to-plane still converges in 3 iterations
@@ -191,6 +192,51 @@ docker run -it --rm \
     slam_zero_to_hero:part2_ch03_06 \
     ./lidar_odometry /kitti/extracted/dataset/sequences/04
 ```
+
+---
+
+## Output
+
+### Point-to-point ICP on the bunny
+
+The source (yellow) starts displaced from the target (blue) by a known 15 deg
+rotation and 8 % of the model size — large enough that the misalignment is
+actually visible, and still well inside ICP's basin of attraction. Every
+keystroke runs one iteration.
+
+![](./images/icp_basic_start.png)
+
+After 15 iterations the two clouds interleave everywhere and the overlay reports
+`CONVERGED at 15`. The recovered transform matches ground truth to 0.0000 deg and
+0.000000 m.
+
+![](./images/icp_basic_converged.png)
+
+### Point-to-plane vs point-to-point, stepped together
+
+Both methods start from the same displaced source and advance together, one
+iteration each per keystroke — point-to-point in yellow, point-to-plane in
+magenta. This frame is five keystrokes in: magenta has already settled onto the
+blue target (`CONVERGED at 4`), while yellow is still visibly short of it along
+the right flank and the base.
+
+![](./images/icp_point_to_plane.png)
+
+That is the whole argument for point-to-plane in one picture — same data, same
+correspondence distance, roughly a quarter of the iterations.
+
+### LiDAR odometry on KITTI sequence 04
+
+Plotted from the `trajectory_kitti.txt` and `trajectory_gt_kitti.txt` the demo
+writes, over all 271 scans.
+
+![](./images/lidar_odometry.png)
+
+The estimate tracks the ground truth's *length* almost exactly (395.27 m against
+393.645 m) but fans away from it sideways. The middle panel separates the two:
+along-track error stays under ~2.5 m for the whole run while across-track error
+grows quadratically to 24 m, and the right panel shows the cause — yaw error
+climbing monotonically to 6.7 deg with nothing to correct it.
 
 ---
 

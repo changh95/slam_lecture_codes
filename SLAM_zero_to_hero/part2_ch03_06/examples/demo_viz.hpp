@@ -224,12 +224,16 @@ inline std::function<StepOutcome()> makePointToPlaneStep(const CloudNT::Ptr& tar
 
 /**
  * @brief Point the camera at the origin from a distance proportional to the model
+ *
+ * The Stanford bunny is modelled +Y up, not +Z, so the up vector follows the
+ * model rather than the usual robotics convention - otherwise the demo opens
+ * looking at the bunny lying on its side.
  */
 inline void setupCamera(pcl::visualization::PCLVisualizer& viewer, double scale)
 {
-    viewer.setCameraPosition(0.0, -2.0 * scale, 1.2 * scale,  // camera position
-                             0.0, 0.0, 0.0,                    // look at the origin
-                             0.0, 0.0, 1.0);                   // up is +Z
+    viewer.setCameraPosition(0.5 * scale, 0.35 * scale, 1.7 * scale,  // camera position
+                             0.0, 0.0, 0.0,                           // look at the origin
+                             0.0, 1.0, 0.0);                          // up is +Y
     viewer.setCameraClipDistances(0.01 * scale, 100.0 * scale);
 }
 
@@ -248,20 +252,25 @@ inline void runStepViewer(const std::string& title,
         new pcl::visualization::PCLVisualizer(title));
 
     viewer->setBackgroundColor(0.1, 0.1, 0.1);
-    viewer->addCoordinateSystem(0.3 * scale, "coordinate");
+
+    // Small: the model is centred on the origin, so long axes would run straight
+    // through the cloud and read as part of it
+    viewer->addCoordinateSystem(0.12 * scale, "coordinate");
 
     // Target (blue), static
     pcl::visualization::PointCloudColorHandlerCustom<PointT> target_color(target, 0, 100, 255);
     viewer->addPointCloud<PointT>(target, target_color, "target");
+    // Drawn larger than the moving clouds so it stays visible underneath them
+    // once a method has converged onto it
     viewer->setPointCloudRenderingProperties(
-        pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "target");
+        pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 5, "target");
 
     for (const auto& t : tracks)
     {
         pcl::visualization::PointCloudColorHandlerCustom<PointT> color(t.display, t.r, t.g, t.b);
         viewer->addPointCloud<PointT>(t.display, color, t.id);
         viewer->setPointCloudRenderingProperties(
-            pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 4, t.id);
+            pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, t.id);
     }
 
     setupCamera(*viewer, scale);
