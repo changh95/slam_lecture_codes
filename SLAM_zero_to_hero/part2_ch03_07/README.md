@@ -96,14 +96,45 @@ directions (7.3 m and 179.7 deg apart):
 
 ### Docker, with the GPU
 
+Start a viewer on the host **first** — the demos stream into it as they go:
+
 ```bash
-docker run --rm \
+rerun &
+```
+
+Then open a shell in the container. It lands in the build directory, with all
+three binaries and the bundled scan pair at `../data/sample_sequences/`:
+
+```bash
+docker run -it --rm --network=host \
     --runtime=/usr/bin/nvidia-container-runtime --security-opt=label=disable \
     -v ~/data/kitti_vo_slam/extracted/dataset:/kitti:ro \
-    slam_zero_to_hero:part2_ch03_07 \
-    ./gicp_demo /kitti/sequences/04/velodyne/000000.bin \
-                /kitti/sequences/04/velodyne/000001.bin
+    slam_zero_to_hero:part2_ch03_07 bash
+
+./gicp_demo            # experiment 1
+./ndt_demo             # experiment 2
+./teaser_demo          # experiment 3
 ```
+
+Each takes the same two optional scan arguments as above, now under `/kitti`:
+
+```bash
+./gicp_demo /kitti/sequences/04/velodyne/000000.bin \
+            /kitti/sequences/04/velodyne/000001.bin
+```
+
+`--network=host` is what lets the container reach the viewer at
+`127.0.0.1:9876`. Live gRPC streaming is version-sensitive: the container's
+rerun SDK **must match** the host viewer's version (the Dockerfile pins
+`0.33.0` — set it to whatever `rerun --version` prints on the host). Set
+`RERUN_URL` to stream somewhere else, e.g.
+`-e RERUN_URL='rerun+http://127.0.0.1:9999/proxy'`. With no viewer listening
+each demo prints a one-line note and runs normally.
+
+The `-v` mount is only needed for scans outside the bundled pair — the
+loop-closure `teaser_demo` run above, for instance. To run all three in one shot
+without a shell, swap `bash` for
+`bash -lc './gicp_demo && ./ndt_demo && ./teaser_demo'`.
 
 ---
 
@@ -141,8 +172,7 @@ correspondences.
 
 ## Output
 
-The views below are the rerun viewer. Override its address with `RERUN_URL` if it
-is not at `rerun+http://127.0.0.1:9876/proxy`.
+The views below are the rerun viewer, one recording per demo.
 
 ### All four GICP backends on one scan pair
 
