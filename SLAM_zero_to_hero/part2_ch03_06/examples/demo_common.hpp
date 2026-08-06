@@ -1,21 +1,19 @@
 /**
  * Shared helpers for the part2_ch03_06 ICP demos:
- *  - point cloud loading from .ply, .pcd, or KITTI velodyne .bin files
+ *  - point cloud loading from .ply or .pcd files
  *  - locating the bundled data/ files regardless of the working directory
  *  - scale-relative ICP parameters derived from the cloud's bounding box
  *
- * The ICP demos run on the Stanford bunny (data/bun_zipper_res3.ply) by
- * default. The bunny is only ~0.25 m across, so absolute parameters tuned for
- * LiDAR scans (0.5 m correspondence distance, 0.1 m normal radius) are larger
- * than the whole model and make ICP meaningless. Deriving them from the
- * bounding-box diagonal keeps one set of demos working for both the bunny and
- * room- or street-scale clouds.
+ * Both ICP demos run on the Stanford bunny (data/bun_zipper_res3.ply). The bunny
+ * is only ~0.25 m across, so absolute parameters tuned for LiDAR scans (0.5 m
+ * correspondence distance, 0.1 m normal radius) are larger than the whole model
+ * and make ICP meaningless. Deriving them from the bounding-box diagonal keeps
+ * the helpers usable for the bunny and for room- or street-scale clouds alike.
  */
 
 #pragma once
 
 #include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -42,43 +40,12 @@ using CloudT = pcl::PointCloud<PointT>;
 inline const char* kBunnyFile = "bun_zipper_res3.ply";
 
 /**
- * @brief Load a KITTI velodyne scan (.bin): raw float32 records of x,y,z,intensity
- */
-inline CloudT::Ptr loadKittiBin(const std::string& file)
-{
-    std::ifstream input(file, std::ios::binary);
-    if (!input)
-    {
-        return nullptr;
-    }
-
-    CloudT::Ptr cloud(new CloudT);
-    float record[4];
-    while (input.read(reinterpret_cast<char*>(record), sizeof(record)))
-    {
-        cloud->push_back(PointT(record[0], record[1], record[2]));
-    }
-
-    cloud->width = cloud->size();
-    cloud->height = 1;
-    cloud->is_dense = true;
-
-    return cloud;
-}
-
-/**
- * @brief Load a point cloud from a .ply, .pcd, or KITTI .bin file
+ * @brief Load a point cloud from a .ply or .pcd file
  * @return nullptr on failure
  */
 inline CloudT::Ptr loadCloud(const std::string& file)
 {
     const std::string ext = std::filesystem::path(file).extension().string();
-
-    if (ext == ".bin")
-    {
-        CloudT::Ptr cloud = loadKittiBin(file);
-        return (cloud && !cloud->empty()) ? cloud : nullptr;
-    }
 
     CloudT::Ptr cloud(new CloudT);
     int ret = -1;
@@ -234,10 +201,9 @@ inline PoseError poseError(const Eigen::Matrix4f& estimated,
 
     // Angle of the residual rotation.
     //
-    // Do NOT use the textbook acos((trace - 1) / 2) here. Neither input is
-    // exactly orthonormal - the KITTI ground truth is rebased through Tr and
-    // round-tripped via text, and the estimate is a long product of float
-    // matrices - so the residual trace lands slightly above 3, the argument
+    // Do NOT use the textbook acos((trace - 1) / 2) here. The estimate is a
+    // product of float matrices - one per ICP iteration - so it is not exactly
+    // orthonormal, the residual trace can land slightly above 3, the argument
     // clamps to 1, and acos returns exactly 0. That silently reports "no
     // rotation error" precisely in the sub-degree range that matters. Going
     // through a normalized quaternion absorbs the non-orthonormality, and the

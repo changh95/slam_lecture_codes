@@ -58,22 +58,11 @@ target_link_libraries(icp_point_to_plane
     Eigen3::Eigen
 )
 
-# LiDAR Odometry executable
-add_executable(lidar_odometry
-    examples/lidar_odometry.cpp
-)
-
-target_link_libraries(lidar_odometry
-    ${PCL_LIBRARIES}
-    Eigen3::Eigen
-)
-
 # Compiler warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(WARNING_FLAGS -Wall -Wextra -Wpedantic)
     target_compile_options(icp_basic PRIVATE ${WARNING_FLAGS})
     target_compile_options(icp_point_to_plane PRIVATE ${WARNING_FLAGS})
-    target_compile_options(lidar_odometry PRIVATE ${WARNING_FLAGS})
 endif()
 
 # Optimization flags for Release build.
@@ -84,7 +73,6 @@ if(CMAKE_BUILD_TYPE MATCHES "Release")
     set(OPTIMIZATION_FLAGS -O3)
     target_compile_options(icp_basic PRIVATE ${OPTIMIZATION_FLAGS})
     target_compile_options(icp_point_to_plane PRIVATE ${OPTIMIZATION_FLAGS})
-    target_compile_options(lidar_odometry PRIVATE ${OPTIMIZATION_FLAGS})
 endif()
 
 # Print build info
@@ -93,12 +81,10 @@ message(STATUS "=== ICP using PCL Tutorial ===")
 message(STATUS "Executables:")
 message(STATUS "  - icp_basic: Point-to-point ICP, interactive viewer")
 message(STATUS "  - icp_point_to_plane: Point-to-plane vs point-to-point, interactive viewer")
-message(STATUS "  - lidar_odometry: Sequential scan registration for LiDAR odometry")
 message(STATUS "")
 message(STATUS "Usage:")
 message(STATUS "  ./icp_basic                  # Stanford bunny, no arguments")
 message(STATUS "  ./icp_point_to_plane         # Stanford bunny")
-message(STATUS "  ./lidar_odometry <kitti_sequence_dir>")
 message(STATUS "")
-message(STATUS "Only lidar_odometry takes arguments; pass --help for its options.")
+message(STATUS "Neither demo takes arguments; both open a viewer and step on any key.")
 message(STATUS "")

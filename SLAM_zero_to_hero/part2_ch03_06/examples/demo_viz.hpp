@@ -1,12 +1,12 @@
 /**
- * Interactive ICP viewer shared by the two registration demos.
+ * Interactive ICP viewer shared by the two demos.
  *
- * Both demos open a viewer and step their ICP one iteration per keystroke, so
- * the point-to-plane demo can drive two methods at once and show that it
- * converges in far fewer iterations than point-to-point on the same data.
+ * Both open a viewer and step their ICP one iteration per keystroke, so the
+ * point-to-plane demo can drive two methods at once and show that it converges
+ * in far fewer iterations than point-to-point on the same data.
  *
- * Included only by the registration demos: it pulls in PCL's visualization
- * module (and with it VTK), which the odometry demo has no use for.
+ * Kept separate from demo_common.hpp because it pulls in PCL's visualization
+ * module, and with it VTK.
  */
 
 #pragma once
