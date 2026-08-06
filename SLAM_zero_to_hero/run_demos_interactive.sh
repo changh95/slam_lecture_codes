@@ -46,7 +46,10 @@ DEMOS=(
   "part3_ch01_13:::cd /workspace/part3_ch01_13/build && ./g2o_bundle_adjustment:::[CLI] Part3 ch01_13 - g2o BAL Bundle Adjustment"
   "part3_ch01_14:::cd /workspace/part3_ch01_14/build && ./gtsam_bundle_adjustment:::[CLI] Part3 ch01_14 - GTSAM BAL Bundle Adjustment"
   "part3_ch01_15:::cd /workspace/part3_ch01_15/build && ./ceres_bundle_adjustment:::[CLI] Part3 ch01_15 - Ceres BAL Bundle Adjustment"
-  "part3_ch01_17:::/workspace/build/rpgo_basics; /workspace/build/rpgo_outlier_rejection:::[CLI] Part3 ch01_17 - Kimera-RPGO basics + outlier rejection"
+  # The SymForce bundle adjustment builds one Python factor per observation and
+  # takes minutes, so the menu runs the shared pose graph instead.
+  "part3_ch01_16:::cd /workspace/part3_ch01_16/run && python3 ../examples/symforce_pose_graph.py:::[CLI] Part3 ch01_16 - SymForce shared pose graph"
+  "part3_ch01_17:::cd /workspace/part3_ch01_17/build && ./rpgo_basics && ./rpgo_outlier_rejection && ./rpgo_pose_graph:::[CLI] Part3 ch01_17 - Kimera-RPGO basics + outlier rejection + shared pose graph"
 )
 
 TOTAL=${#DEMOS[@]}
