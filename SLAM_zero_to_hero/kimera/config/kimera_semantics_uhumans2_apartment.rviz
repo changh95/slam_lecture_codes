@@ -1,0 +1,85 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+    Tree Height: 400
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 30
+      Color: 90; 90; 90
+      Name: Grid
+      Reference Frame: world
+      Value: true
+    - Class: voxblox_rviz_plugin/VoxbloxMesh
+      Enabled: true
+      Name: Kimera Semantic 3D Mesh
+      Topic: /kimera_semantics_node/mesh
+      Unreliable: false
+      Value: true
+    - Class: rviz/TF
+      Enabled: true
+      Frame Timeout: 1000
+      Frames:
+        All Enabled: false
+        left_cam:
+          Value: true
+        world:
+          Value: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /tesse/seg_cam/rgb/image_raw
+      Name: Segmentation Cam
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /tesse/left_cam/rgb/image_raw
+      Name: Left Cam
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 30; 30; 30
+    Default Light: true
+    Fixed Frame: world
+    Frame Rate: 15
+  Name: root
+  Tools:
+    - Class: rviz/MoveCamera
+  Value: true
+  Views:
+    Current:
+      Class: slam_zero_to_hero/UnifiedOrbit
+      Distance: 24
+      Focal Point:
+        X: -5.5
+        Y: -2
+        Z: 0
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 1.05
+      Target Frame: world
+      Value: Orbit (rviz)
+      Yaw: 4.4
+    Saved: ~
+Window Geometry:
+  Height: 1080
+  Width: 1920
+  X: 0
+  Y: 0
+  Hide Left Dock: false
+  Hide Right Dock: true
