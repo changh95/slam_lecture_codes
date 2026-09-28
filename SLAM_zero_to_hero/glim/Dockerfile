@@ -190,11 +190,19 @@ RUN printf '#!/bin/bash\n. /opt/ros/%s/setup.bash\nexport AMENT_PREFIX_PATH=/usr
     glim_rosbag 2>&1 | grep -q "usage: glim_rosbag"
 
 # Korea_drive config set (headless), plus a viewer variant derived from it so
-# there is a single source of truth for every other key.
+# there is a single source of truth for every other key. The viewer variant:
+#  * loads only libstandard_viewer.so. librviz_viewer.so is left out: rviz2 is
+#    not installed, so it only serialized and published every scan and the map
+#    to ROS topics nobody subscribes to.
+#  * plays the bag in real time (playback_speed 1.0) so the map builds at the
+#    speed the car drove; the headless set keeps 0.0 (unthrottled).
+# enable_partial_rendering (config_viewer.json) is already true in the source.
 COPY config_korea /usr/local/share/glim_korea/config
 RUN cp -r /usr/local/share/glim_korea/config /usr/local/share/glim_korea/config_viewer && \
-    sed -i 's|"extension_modules": \[\]|"extension_modules": ["libstandard_viewer.so", "librviz_viewer.so"]|' \
+    sed -i -e 's|"extension_modules": \[\]|"extension_modules": ["libstandard_viewer.so"]|' \
+           -e 's|"playback_speed": 0.0|"playback_speed": 1.0|' \
       /usr/local/share/glim_korea/config_viewer/config_ros.json && \
-    grep -q 'librviz_viewer.so' /usr/local/share/glim_korea/config_viewer/config_ros.json
+    grep -q '"extension_modules": \["libstandard_viewer.so"\]' /usr/local/share/glim_korea/config_viewer/config_ros.json && \
+    grep -q '"playback_speed": 1.0' /usr/local/share/glim_korea/config_viewer/config_ros.json
 
 WORKDIR /data

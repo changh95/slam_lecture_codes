@@ -4,6 +4,40 @@ Reference material behind the short [README.md](README.md): exact verified numbe
 reasoning behind each config value, and the upstream bugs and gotchas found while getting
 this running. You do not need any of it to build and run — start with the README.
 
+**Default dataset: Korea_drive** (ROS 2 bag, GPU config, via `glim_rosbag`) — see
+[Korea_drive](#korea_drive-ros-2-bag-and-the-glim_ros2-switch) below. The KITTI sections that follow
+document the `glim_kitti` driver and are the secondary path.
+
+Re-verified 2026-09-27 on the existing image (no rebuild; every config and the driver source in the image
+match this folder byte-for-byte): full Korea_drive bag with `config_viewer` + `auto_quit:=true`, exit 0,
+16,367 poses, 126 submaps / 113 `vgicp_gpu` factors, path 10,989 m, ATE vs GNSS 4.58 m 2D / 12.92 m 3D
+(`scripts/eval_korea_gnss.py`), 801 s for the 1,638 s bag with the viewer on (the headless 77.7 scans/s below
+is without rendering), 82 caught ISAM2 `IndeterminantLinearSystemException`s. KITTI seq 04 re-run headless:
+ATE mean 2.61 m. The GNSS numbers differ from the August run below (5.28 / 16.55 m) by run-to-run variance of
+the threaded pipeline and a slightly different association in the evaluator (nearest fix within 50 ms).
+
+**Viewer tuning (2026-09-28, user decision).** `config_viewer` now sets `playback_speed` 1.0 (real time),
+loads only `libstandard_viewer.so` (no `librviz_viewer.so`), and has `enable_partial_rendering: true`. Measured
+on 617 s of the bag with the GPU config: the real-time factor was 1.00, the odometry queue was empty at stop
+(48 ms drain), no scans were dropped, and ATE on that segment was 2.70 m 2D / 5.88 m 3D. That run bind-mounted a
+`config_viewer` produced by the Dockerfile's own `cp` + `sed`, because the rebuild was blocked by low disk.
+The image was rebuilt afterwards (1b031f4e5307, 2026-09-28) and the README command was re-run verbatim for
+600 s: only `libstandard_viewer.so` loaded, 87/114 playback samples at 1.000x and the rest within ±0.5 %
+(except the 5x startup sample), 10 ms odometry drain at SIGINT, exit 0, 5,940 poses, ATE 2.38 m 2D / 8.92 m 3D
+(`results/metrics_korea_drive_img.txt`). The table is in the README.
+
+**Slice A/B (2026-09-28).** The four viewer configs were compared on the first 300 s of the bag (sliced into a
+separate sqlite3 bag, 9.0 GB) with `-p debug:=true` and `/tmp` bind-mounted, so the per-module trace logs
+survive. `scripts/odom_timing.py` reads `glim_log.log` (reader `points:` lines) and `glim_odom.log`
+(`insert_frame` / `frames updated`). It reports per-scan odometry time, queue depth and the gap between
+consecutive odometry outputs, which is what drives viewer updates. Raw numbers are in `results/ab_slice300.txt`.
+Odometry takes about 10 ms/scan in every variant, so the GPU pipeline is never the bottleneck. Removing
+`librviz_viewer.so` removes the >300 ms update stalls. Playback 1.0 gives an even 100 ms cadence and a queue of at
+most 2. The first batch, taken at load ~30, gave 12–19 ms/scan and was discarded. Two practical notes:
+`--cpuset-cpus` fails under this rootless podman (no cpuset cgroup delegation), so pin with
+`taskset -c 16-31 podman run …`; and glim_ros2 v1.0.0's only backpressure is a 10 ms sleep when
+`odometry_estimation->workload() > 10`, so with playback 0.0 and a fast reader the queue can grow without bound.
+
 ---
 
 Versatile range-based SLAM built on GTSAM factor graphs: fixed-lag smoothing odometry, submap-based local mapping, and global factor-graph optimization.

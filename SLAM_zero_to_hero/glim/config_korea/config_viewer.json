@@ -6,7 +6,7 @@
       -2.0,
       4.0
     ],
-    "enable_partial_rendering": false,
+    "enable_partial_rendering": true,
     "partial_rendering_budget": 1024
   },
   "interactive_viewer": {
@@ -16,7 +16,7 @@
       -2.0,
       4.0
     ],
-    "enable_partial_rendering": false,
+    "enable_partial_rendering": true,
     "partial_rendering_budget": 1024
   }
 }
