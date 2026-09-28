@@ -69,9 +69,15 @@ RUN python3 -m pip install --no-cache-dir --upgrade "pip<24.1" setuptools wheel 
 # msg_utils.py imports them by name, so the package has to be built even though
 # rosbag itself could deserialise them from the definitions inside the bag.
 ENV CATKIN_WS=/catkin_ws
+# Upstream HEADs as of the verified build (MonoLaneMapping 2024-05-10,
+# openlane_bag 2023-07-21).
+ARG MONOLANE_COMMIT=31f383dfc729679661e2d9c09d745bf71c533a56
+ARG OPENLANE_BAG_COMMIT=e0ae18c52c8fbbd44b9c0f4023dca1c5cabfac18
 RUN mkdir -p ${CATKIN_WS}/src && cd ${CATKIN_WS}/src && \
     git clone https://github.com/qiaozhijian/openlane_bag.git && \
+    git -C openlane_bag checkout --quiet ${OPENLANE_BAG_COMMIT} && \
     git clone https://github.com/HKUST-Aerial-Robotics/MonoLaneMapping.git && \
+    git -C MonoLaneMapping checkout --quiet ${MONOLANE_COMMIT} && \
     cd ${CATKIN_WS} && \
     . /opt/ros/noetic/setup.sh && \
     catkin_make -DPYTHON_EXECUTABLE=/usr/bin/python3 -DCMAKE_BUILD_TYPE=Release
