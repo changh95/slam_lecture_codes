@@ -31,7 +31,6 @@ The KITTI source zips in `~/data/kitti_vo_slam/` (velodyne, grey, colour, calib,
 | Tree | State |
 |---|---|
 | `extracted/dataset/` | seq **00**: `image_0` + `image_1` (4541 frames each, recovered from a truncated grey zip). `velodyne` complete for **00 (4541), 01 (1101), 02 (4661), 03 (801), 04 (271)**; 05 partial (584 of 2761) as `05/velodyne_partial`. `calib.txt` + `times.txt` for every sequence, `poses/{00..10}.txt`. |
-| `dataset/sequences/` | redundant byte-duplicates of 00/04 velodyne plus calib/poses, left over from the accidental extraction (safe to delete). |
 
 So camera demos on KITTI work only on **sequence 00** (orb_slam2 stereo/mono); LiDAR demos on 00-04. Other sequences need the 79 GB velodyne zip (and the grey zip for images) re-downloaded. dsp_slam does **not** depend on this: it uses the authors' own KITTI 07 package.
 
