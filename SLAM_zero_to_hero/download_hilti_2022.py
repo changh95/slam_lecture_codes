@@ -20,28 +20,30 @@ except ImportError:
     from tqdm import tqdm
 
 
-S3_BASE = "https://tp-public-facing.s3.eu-north-1.amazonaws.com/Challenges/2022"
+# The old S3 bucket (tp-public-facing.s3.eu-north-1.amazonaws.com) now returns 403;
+# the bags moved to Hugging Face.
+HF_BASE = "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2022/resolve/main/rosbags"
 
 # Sequences: name -> approximate size
 CHALLENGE_SEQUENCES = {
-    "exp01_construction_ground_level": "18 GB",
-    "exp02_construction_multilevel": "34 GB",
-    "exp03_construction_stairs": "21 GB",
-    "exp07_long_corridor": "11 GB",
-    "exp09_cupola": "33 GB",
-    "exp11_lower_gallery": "12 GB",
-    "exp15_attic_to_upper_gallery": "19 GB",
-    "exp21_outside_building": "11 GB",
+    "exp01_construction_ground_level": "19 GB",
+    "exp02_construction_multilevel": "36 GB",
+    "exp03_construction_stairs": "22 GB",
+    "exp07_long_corridor": "12 GB",
+    "exp09_cupola": "35 GB",
+    "exp11_lower_gallery": "13 GB",
+    "exp15_attic_to_upper_gallery": "21 GB",
+    "exp21_outside_building": "12 GB",
 }
 
 ADDITIONAL_SEQUENCES = {
     "exp04_construction_upper_level": "10 GB",
     "exp05_construction_upper_level_2": "10 GB",
-    "exp06_construction_upper_level_3": "12 GB",
-    "exp10_cupola_2": "27 GB",
+    "exp06_construction_upper_level_3": "13 GB",
+    "exp10_cupola_2": "29 GB",
     "exp14_basement_2": "6 GB",
-    "exp16_attic_to_upper_gallery_2": "15 GB",
-    "exp18_corridor_lower_gallery_2": "8 GB",
+    "exp16_attic_to_upper_gallery_2": "16 GB",
+    "exp18_corridor_lower_gallery_2": "9 GB",
 }
 
 ALL_SEQUENCES = {**CHALLENGE_SEQUENCES, **ADDITIONAL_SEQUENCES}
@@ -169,7 +171,7 @@ def main():
     downloaded = []
 
     for seq in sequences:
-        url = f"{S3_BASE}/{seq}.bag"
+        url = f"{HF_BASE}/{seq}.bag"
         size = ALL_SEQUENCES[seq]
         print(f"\n--- {seq} (~{size}) ---\n")
 

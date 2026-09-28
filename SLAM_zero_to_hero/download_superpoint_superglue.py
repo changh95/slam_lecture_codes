@@ -130,4 +130,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # This script takes no arguments. Refuse any (e.g. --list, --help) instead of
+    # silently running the full download, which also deletes the archives afterwards.
+    if len(sys.argv) > 1:
+        print(__doc__)
+        print(f"Usage: python3 {sys.argv[0]}  (no arguments; runs the full download)")
+        sys.exit(0 if sys.argv[1] in ("-h", "--help") else 2)
     main()

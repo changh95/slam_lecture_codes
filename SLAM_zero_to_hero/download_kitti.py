@@ -108,20 +108,23 @@ def main():
 
     # --- Unzip ---
     print("\n📦 Extracting archives...\n")
+    extracted: list[Path] = []
     for zf in zip_files:
         if not zf.exists():
             continue
         try:
             unzip_file(zf, DEST_DIR)
             print(f"  ✅ {zf.name} extracted.")
+            extracted.append(zf)
         except zipfile.BadZipFile:
             print(f"  ❌ {zf.name} is corrupted, skipping.")
         except Exception as e:
             print(f"  ❌ Failed to extract {zf.name}: {e}")
 
     # --- Cleanup ---
-    print("\n🧹 Removing zip files...\n")
-    for zf in zip_files:
+    # Only remove archives that extracted cleanly; a failed one is kept for a retry.
+    print("\n🧹 Removing extracted zip files...\n")
+    for zf in extracted:
         if zf.exists():
             zf.unlink()
             print(f"  🗑  Removed {zf.name}")
@@ -141,4 +144,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # This script takes no arguments. Refuse any (e.g. --list, --help) instead of
+    # silently running the full download, which also deletes the archives afterwards.
+    if len(sys.argv) > 1:
+        print(__doc__)
+        print(f"Usage: python3 {sys.argv[0]}  (no arguments; runs the full download)")
+        sys.exit(0 if sys.argv[1] in ("-h", "--help") else 2)
     main()
