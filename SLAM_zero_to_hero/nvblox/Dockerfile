@@ -59,11 +59,15 @@ ENV PATH=/nvblox/build/executables:${PATH}
 # Python side: dataset conversion (numpy/Pillow to read the lzma-compressed
 # depth and the JPEGs), pose refinement and PLY reading (Open3D), and the
 # viewer (rerun). Kept in a venv because Ubuntu 24.04 marks the system
-# interpreter externally-managed.
+# interpreter externally-managed. rerun-sdk is pinned to the host viewer
+# (`rerun --version`): the gRPC protocol is not compatible across minor
+# versions, so --connect to a 0.33 viewer needs a 0.33 SDK.
+ARG RERUN_VERSION=0.33.0
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/venv/bin/pip install --no-cache-dir \
-         numpy pillow scipy tqdm open3d rerun-sdk trimesh
+         numpy==2.5.1 pillow==12.3.0 scipy==1.18.0 tqdm==4.70.0 \
+         open3d==0.19.0 trimesh==5.0.0 rerun-sdk==${RERUN_VERSION}
 ENV PATH=/opt/venv/bin:${PATH}
 ENV VIRTUAL_ENV=/opt/venv
 

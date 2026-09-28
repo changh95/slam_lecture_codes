@@ -9,7 +9,8 @@ Two sinks:
                      backend. No display, no viewer, no X11.
 
 `--connect rerun+http://host:9876/proxy` pushes into a viewer you already have
-open on the host instead of serving one.
+open on the host instead of serving one; `--save run.rrd` writes the same
+recording to a file.
 """
 
 import argparse
@@ -57,9 +58,29 @@ def log_to_rerun(run: Path, args):
     tris = np.asarray(mesh.triangles)
     cols = np.asarray(mesh.vertex_colors) if mesh.has_vertex_colors() else None
 
+    # Start the 3D view looking down on the whole map from the same direction as
+    # the --png still, instead of rerun's default eye inside the floor.
+    lo, hi = np.percentile(verts, 1, axis=0), np.percentile(verts, 99, axis=0)
+    centre = (lo + hi) / 2
+    direction = np.asarray(args.eye, float)
+    direction /= np.linalg.norm(direction)
+    eye = rrb.archetypes.EyeControls3D(
+        kind=rrb.Eye3DKind.Orbital,
+        position=centre + direction * 1.3 * np.linalg.norm(hi - lo),
+        look_target=centre, eye_up=args.up)
+    print(f"3D view: eye {np.round(centre + direction * 1.3 * np.linalg.norm(hi - lo), 2)}, target {np.round(centre, 2)}")
+
     blueprint = rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial3DView(origin="world", name="nvblox map"),
+            # The ESDF is ~1 M voxels and buries the mesh, so it gets its own tab.
+            rrb.Tabs(
+                rrb.Spatial3DView(origin="world", name="nvblox map",
+                                  contents=["+ $origin/**", "- /world/esdf"],
+                                  eye_controls=eye),
+                rrb.Spatial3DView(origin="world", name="ESDF",
+                                  contents=["+ /world/esdf", "+ /world/trajectory"],
+                                  eye_controls=eye),
+            ),
             rrb.Vertical(
                 rrb.Spatial2DView(origin="camera/image", name="colour"),
                 rrb.Spatial2DView(origin="camera/depth", name="depth"),
@@ -70,7 +91,10 @@ def log_to_rerun(run: Path, args):
     )
 
     rr.init("nvblox_humanoid_everyday", spawn=False, default_blueprint=blueprint)
-    if args.connect:
+    if args.save:
+        rr.save(args.save, default_blueprint=blueprint)
+        print(f"recording to {args.save}")
+    elif args.connect:
         rr.connect_grpc(args.connect)
         print(f"streaming to {args.connect}")
     else:
@@ -139,7 +163,9 @@ def log_to_rerun(run: Path, args):
             d = np.asarray(Image.open(depths[i]))
             rr.log("camera/depth", rr.DepthImage(d, meter=1000.0))
     print(f"replayed {len(range(0, len(poses), step))} frames")
-    if not args.connect:
+    if args.save or args.connect:
+        rr.disconnect()  # flushes the file / the gRPC stream before exit
+    else:
         print("viewer still serving -- Ctrl-C to stop")
         try:
             import time
@@ -345,6 +371,8 @@ def main():
     ap.add_argument("--png", help="render one still here instead of serving a viewer")
     ap.add_argument("--connect", help="push into an existing rerun viewer, e.g. "
                                       "rerun+http://127.0.0.1:9876/proxy")
+    ap.add_argument("--save", help="write the rerun recording to this .rrd "
+                    "instead of serving a viewer (open it with `rerun file.rrd`)")
     ap.add_argument("--web-port", type=int, default=9090)
     ap.add_argument("--grpc-port", type=int, default=9877)
     ap.add_argument("--frame-stride", type=int, default=2)

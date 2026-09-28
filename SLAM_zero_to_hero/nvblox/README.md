@@ -125,14 +125,40 @@ you can scrub the timeline.
 
 To push into a viewer you already have open on the host instead of serving one,
 add `--network=host` to the `podman run` and
-`--connect rerun+http://127.0.0.1:9876/proxy` to the script.
+`--connect rerun+http://127.0.0.1:9876/proxy` to the script. The image pins
+`rerun-sdk==0.33.0` to match the host viewer (`rerun --version`); rebuild with
+`--build-arg RERUN_VERSION=<yours>` if yours differs, since the gRPC protocol
+does not talk across minor versions.
 
-The same script writes the stills in this README, offscreen through Open3D's EGL
-backend (needs the GPU flags, no display):
+Or write the recording to a file and open it whenever:
 
 ```bash
-python3 /nvblox_demo/scripts/viz_nvblox.py /results/chair_ep0 --png out.png
-python3 /nvblox_demo/scripts/viz_nvblox.py /results/chair_ep0 --plot traj.png
+podman run --rm -v "$PWD/results":/results slam_zero_to_hero:nvblox \
+  python3 /nvblox_demo/scripts/viz_nvblox.py /results/chair_ep0 --save /results/chair_ep0.rrd
+rerun results/chair_ep0.rrd
+```
+
+![rerun viewer](docs/rerun_viewer.jpg)
+
+The coloured mesh (armchair in purple, stool, carpet), the ICP trajectory in
+blue and the legged odometry in orange, with the colour and depth stream on the
+right; the ESDF (941 k voxels) has its own tab so it does not bury the mesh.
+The 85 MB full recording is slow to load, so that still was taken from a
+lighter one (`--frame-stride 100 --no-esdf`) with
+`rerun --window-size 1600x1000 --screenshot-to out.png file.rrd`.
+
+The same script writes the stills in this README: `--png` renders offscreen
+through Open3D's EGL backend (needs the GPU flags, including `graphics`, but no
+display), `--plot` is plain matplotlib:
+
+```bash
+podman run --rm \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+  -v "$PWD/results":/results slam_zero_to_hero:nvblox \
+  python3 /nvblox_demo/scripts/viz_nvblox.py /results/chair_ep0 --png /results/chair_ep0_mesh.png
+podman run --rm -v "$PWD/results":/results slam_zero_to_hero:nvblox \
+  python3 /nvblox_demo/scripts/viz_nvblox.py /results/chair_ep0 --plot /results/chair_ep0_traj.png
 ```
 
 ## Poses: where the trajectory comes from
@@ -188,6 +214,14 @@ Means per frame from `timings.txt`:
 The ESDF dominates and the mapping itself is 4.2 ms; the 136 Hz figure is what
 you get once reading the frames off disk is counted, which a live sensor would
 not pay.
+
+A re-run on 2026-09-28, with the GPU and disk shared with other jobs, gave the
+same trajectory (2.97 m ICP, 2.06 m odometry, identical to the centimetre) and
+4.17 ms per frame once the first frame is dropped: that one frame costs 0.8 s of
+CUDA warm-up and pulls the plain mean up to 5.6 ms. Converting the episode took
+about 2 min (21 s of it ICP). Writing `map.nvblx` took 203 s that time against
+0.4 s the first: that is nvblox' SQLite serialiser waiting on a busy disk, not
+the mapping.
 
 Three independent checks that the map is actually right, not just pretty:
 
@@ -257,6 +291,14 @@ locomotion attached, so even the walking tasks only travel about 1.2 m net per
 episode. These are room-corner maps, not building tours.
 
 ## Supported datasets
+
+| Dataset | Command | Status |
+|---|---|---|
+| **Humanoid Everyday** `walk_towards_chair_and_rotate_the_chair/episode_0` (default) | `run_nvblox.sh /data/walk_towards_chair_and_rotate_the_chair/episode_0 /results/chair_ep0` | ✅ re-verified 2026-09-28: 581 frames, ICP path 2.97 m (net 1.30 m), ground plane 1.9 mm from z=0 and 2.1° off vertical, 4.2 ms/frame mapping |
+| Humanoid Everyday `walk_towards_chair_and_rotate_the_chair/episode_2` | same, `.../episode_2` | ✅ ICP path 3.79 m, 1.7° ground-plane tilt |
+| Humanoid Everyday `walk_towards_outside_chair_and_pull_it_out/episode_0` | same, `.../walk_towards_outside_chair_and_pull_it_out/episode_0` | ✅ ICP path 2.67 m, 1.0° tilt; café tabletop 0.735 m above the paving |
+| Humanoid Everyday `pick_up_a_caution_sign...`, `walk_towards_elevator...` | same | ❌ planar scenes, ICP drifts and the map collapses (see above) |
+| Replica, Redwood, 3DMatch, cuSFM, PLY LiDAR | the fusers below, on their native layouts | Builds; not run in this demo |
 
 `fuse_replica` is one of five fusers the image builds; all of them are on the
 `PATH`.
