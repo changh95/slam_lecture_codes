@@ -1,0 +1,39 @@
+# Catkin-free workspace for glow + rangenet_lib (TensorRT 10) + semantic_suma.
+cmake_minimum_required(VERSION 3.16)
+project(suma_pp_ws C CXX)
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+set(OpenGL_GL_PREFERENCE GLVND)
+# catkin builds shared libraries, and SuMa++ depends on it: the generated
+# computation_shaders.cpp only registers shaders in glow's cache through static
+# initializers, so in a static libsuma.a the linker drops that object and the
+# visualizer dies with "Cache does not contain entry with name 'shader/color.glsl'".
+set(BUILD_SHARED_LIBS ON)
+set(OPENGL_VERSION 430 CACHE STRING "OpenGL core profile version")
+
+# --- glow (OpenGL wrapper + shader cache macros) ---
+add_subdirectory(glow)
+include(${CMAKE_SOURCE_DIR}/glow/cmake/GlowShaderCompilation.cmake)
+
+# --- rangenet_lib (RangeNet++ inference, TensorRT backend) ---
+find_package(CUDAToolkit REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core)
+set(TENSORRT_FOUND ON)
+configure_file(rangenet_lib/include/external.hpp.in ${CMAKE_SOURCE_DIR}/rangenet_lib/include/external.hpp @ONLY)
+add_library(rangenet_lib
+  rangenet_lib/src/external.cpp
+  rangenet_lib/src/net.cpp
+  rangenet_lib/src/selector.cpp
+  rangenet_lib/src/netTensorRT.cpp)
+set_target_properties(rangenet_lib PROPERTIES CXX_STANDARD 17)
+target_include_directories(rangenet_lib PUBLIC rangenet_lib/include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(rangenet_lib PUBLIC yaml-cpp CUDA::cudart nvinfer nvonnxparser ${OpenCV_LIBS})
+
+# --- semantic_suma (expects catkin_* variables) ---
+set(catkin_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/glow/src ${CMAKE_SOURCE_DIR}/rangenet_lib/include
+    ${CUDAToolkit_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+set(catkin_LIBRARIES glow glow_util rangenet_lib)
+add_subdirectory(semantic_suma)
