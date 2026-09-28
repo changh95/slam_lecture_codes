@@ -1,0 +1,82 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 10
+      Plane Cell Count: 40
+      Color: 90; 90; 90
+      Alpha: 0.3
+      Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: map
+      Enabled: true
+      Color Transformer: RGB8
+      Style: Points
+      Size (Pixels): 2
+      Alpha: 1
+      Decay Time: 0
+      Position Transformer: XYZ
+      Topic:
+        Value: /map_cloud
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Use Fixed Frame: true
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: trajectory
+      Enabled: true
+      Color: 255; 40; 40
+      Line Style: Billboards
+      Line Width: 0.6
+      Alpha: 1
+      Buffer Length: 1
+      Pose Style: None
+      Topic:
+        Value: /map_path
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 0; 0; 0
+    Fixed Frame: camera_init
+    Frame Rate: 10
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Value: true
+  Views:
+    Current:
+      Class: slam_zero_to_hero/UnifiedOrbit
+      Distance: @DIST@
+      Focal Point:
+        X: @FX@
+        Y: @FY@
+        Z: @FZ@
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: @PITCH@
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: @YAW@
+Window Geometry:
+  Displays:
+    collapsed: true
+  Hide Left Dock: true
+  Hide Right Dock: true
+  Height: 1080
+  Width: 1920
+  X: 0
+  Y: 0

@@ -1,0 +1,174 @@
+vikit_ros: read every camera model's intrinsics from the parameter_blackboard node.
+
+Upstream 6f213c7 reads only Pinhole via getRemoteParam(); RationalPolynomial (the model
+FAST-LIVO2-ROS2's avia_lvi / mid360_lvi launches use) and the others go through
+getParam(nh, "parameter_blackboard/cam_width"), a local lookup on laserMapping that never
+succeeds, so fx=0 and fastlivo_mapping dies with SIGFPE at start-up. Also wait up to
+10 s (not 100 ms) for the blackboard's parameter service.
+
+diff -ru a/vikit_ros/include/vikit/params_helper.h b/vikit_ros/include/vikit/params_helper.h
+--- a/vikit_ros/include/vikit/params_helper.h	2026-09-28 02:12:51.850133045 +0900
++++ b/vikit_ros/include/vikit/params_helper.h	2026-09-28 02:12:51.850133045 +0900
+@@ -114,7 +114,7 @@
+     try {
+         auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(nh, remote_node_name);
+         // Wait briefly for the service to be available
+-        if (parameters_client->wait_for_service(std::chrono::milliseconds(100))) {
++        if (parameters_client->wait_for_service(std::chrono::seconds(10))) {
+             auto values = parameters_client->get_parameters({param_name});
+             if (!values.empty() && values[0].get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+                 return values[0].get_value<T>();
+diff -ru a/vikit_ros/src/camera_loader.cpp b/vikit_ros/src/camera_loader.cpp
+--- a/vikit_ros/src/camera_loader.cpp	2026-09-28 02:12:51.848133109 +0900
++++ b/vikit_ros/src/camera_loader.cpp	2026-09-28 02:12:51.849133077 +0900
+@@ -39,64 +39,64 @@
+   else if(cam_model == "EquidistantCamera")
+   {
+     cam = new vk::EquidistantCamera(
+-        getParam<int>(nh, ns+"/cam_width"),
+-        getParam<int>(nh, ns+"/cam_height"),
+-        getParam<double>(nh, ns+"/scale", 1.0),
+-        getParam<double>(nh, ns+"/cam_fx"),
+-        getParam<double>(nh, ns+"/cam_fy"),
+-        getParam<double>(nh, ns+"/cam_cx"),
+-        getParam<double>(nh, ns+"/cam_cy"),
+-        getParam<double>(nh, ns+"/k1", 0.0),
+-        getParam<double>(nh, ns+"/k2", 0.0),
+-        getParam<double>(nh, ns+"/k3", 0.0),
+-        getParam<double>(nh, ns+"/k4", 0.0));
++        getRemoteParam<int>(nh, ns, "cam_width", int()),
++        getRemoteParam<int>(nh, ns, "cam_height", int()),
++        getRemoteParam<double>(nh, ns, "scale", 1.0),
++        getRemoteParam<double>(nh, ns, "cam_fx", double()),
++        getRemoteParam<double>(nh, ns, "cam_fy", double()),
++        getRemoteParam<double>(nh, ns, "cam_cx", double()),
++        getRemoteParam<double>(nh, ns, "cam_cy", double()),
++        getRemoteParam<double>(nh, ns, "k1", 0.0),
++        getRemoteParam<double>(nh, ns, "k2", 0.0),
++        getRemoteParam<double>(nh, ns, "k3", 0.0),
++        getRemoteParam<double>(nh, ns, "k4", 0.0));
+   }
+   else if(cam_model == "PolynomialCamera")
+   {
+     cam = new vk::PolynomialCamera(
+-        getParam<int>(nh, ns+"/cam_width"),
+-        getParam<int>(nh, ns+"/cam_height"),
+-        // getParam<double>(nh, ns+"/scale", 1.0),
+-        getParam<double>(nh, ns+"/cam_fx"),
+-        getParam<double>(nh, ns+"/cam_fy"),
+-        getParam<double>(nh, ns+"/cam_cx"),
+-        getParam<double>(nh, ns+"/cam_cy"),
+-        getParam<double>(nh, ns+"/cam_skew"),
+-        getParam<double>(nh, ns+"/k2", 0.0),
+-        getParam<double>(nh, ns+"/k3", 0.0),
+-        getParam<double>(nh, ns+"/k4", 0.0),
+-        getParam<double>(nh, ns+"/k5", 0.0),
+-        getParam<double>(nh, ns+"/k6", 0.0),
+-        getParam<double>(nh, ns+"/k7", 0.0));
++        getRemoteParam<int>(nh, ns, "cam_width", int()),
++        getRemoteParam<int>(nh, ns, "cam_height", int()),
++        // getRemoteParam<double>(nh, ns, "scale", 1.0),
++        getRemoteParam<double>(nh, ns, "cam_fx", double()),
++        getRemoteParam<double>(nh, ns, "cam_fy", double()),
++        getRemoteParam<double>(nh, ns, "cam_cx", double()),
++        getRemoteParam<double>(nh, ns, "cam_cy", double()),
++        getRemoteParam<double>(nh, ns, "cam_skew", double()),
++        getRemoteParam<double>(nh, ns, "k2", 0.0),
++        getRemoteParam<double>(nh, ns, "k3", 0.0),
++        getRemoteParam<double>(nh, ns, "k4", 0.0),
++        getRemoteParam<double>(nh, ns, "k5", 0.0),
++        getRemoteParam<double>(nh, ns, "k6", 0.0),
++        getRemoteParam<double>(nh, ns, "k7", 0.0));
+   }
+   else if(cam_model == "RationalPolynomial")
+   {
+     cam = new vk::RationalPolynomialCamera(
+-        getParam<int>(nh, ns+"/cam_width"),
+-        getParam<int>(nh, ns+"/cam_height"),
+-        getParam<double>(nh, ns+"/cam_fx"),
+-        getParam<double>(nh, ns+"/cam_fy"),
+-        getParam<double>(nh, ns+"/cam_cx"),
+-        getParam<double>(nh, ns+"/cam_cy"),
+-        getParam<double>(nh, ns+"/k1", 0.0),
+-        getParam<double>(nh, ns+"/k2", 0.0),
+-        getParam<double>(nh, ns+"/k3", 0.0),
+-        getParam<double>(nh, ns+"/k4", 0.0),
+-        getParam<double>(nh, ns+"/k5", 0.0),
+-        getParam<double>(nh, ns+"/k6", 0.0),
+-        getParam<double>(nh, ns+"/p1", 0.0),
+-        getParam<double>(nh, ns+"/p2", 0.0));
++        getRemoteParam<int>(nh, ns, "cam_width", int()),
++        getRemoteParam<int>(nh, ns, "cam_height", int()),
++        getRemoteParam<double>(nh, ns, "cam_fx", double()),
++        getRemoteParam<double>(nh, ns, "cam_fy", double()),
++        getRemoteParam<double>(nh, ns, "cam_cx", double()),
++        getRemoteParam<double>(nh, ns, "cam_cy", double()),
++        getRemoteParam<double>(nh, ns, "k1", 0.0),
++        getRemoteParam<double>(nh, ns, "k2", 0.0),
++        getRemoteParam<double>(nh, ns, "k3", 0.0),
++        getRemoteParam<double>(nh, ns, "k4", 0.0),
++        getRemoteParam<double>(nh, ns, "k5", 0.0),
++        getRemoteParam<double>(nh, ns, "k6", 0.0),
++        getRemoteParam<double>(nh, ns, "p1", 0.0),
++        getRemoteParam<double>(nh, ns, "p2", 0.0));
+   }
+   else if(cam_model == "ATAN")
+   {
+     cam = new vk::ATANCamera(
+-        getParam<int>(nh, ns+"/cam_width"),
+-        getParam<int>(nh, ns+"/cam_height"),
+-        getParam<double>(nh, ns+"/cam_fx"),
+-        getParam<double>(nh, ns+"/cam_fy"),
+-        getParam<double>(nh, ns+"/cam_cx"),
+-        getParam<double>(nh, ns+"/cam_cy"),
+-        getParam<double>(nh, ns+"/cam_d0"));
++        getRemoteParam<int>(nh, ns, "cam_width", int()),
++        getRemoteParam<int>(nh, ns, "cam_height", int()),
++        getRemoteParam<double>(nh, ns, "cam_fx", double()),
++        getRemoteParam<double>(nh, ns, "cam_fy", double()),
++        getRemoteParam<double>(nh, ns, "cam_cx", double()),
++        getRemoteParam<double>(nh, ns, "cam_cy", double()),
++        getRemoteParam<double>(nh, ns, "cam_d0", double()));
+   }
+   else
+   {
+@@ -109,8 +109,8 @@
+ bool loadFromRosNs(const rclcpp::Node::SharedPtr & nh, const std::string& ns, std::vector<vk::AbstractCamera*>& cam_list)
+ {
+   bool res = true;
+-  std::string cam_model(getParam<std::string>(nh, ns+"/cam_model", "Pinhole"));
+-  int cam_num = getParam<int>(nh, ns+"/cam_num");
++  std::string cam_model(getRemoteParam<std::string>(nh, ns, "cam_model", "Pinhole"));
++  int cam_num = getRemoteParam<int>(nh, ns, "cam_num", int());
+   for (int i = 0; i < cam_num; i ++)
+   {
+     std::string cam_ns = ns + "/cam_" + std::to_string(i);
+@@ -136,17 +136,17 @@
+     else if(cam_model == "Pinhole")
+     {
+       cam_list.push_back(new vk::PinholeCamera(
+-          getParam<int>(nh, ns+"/cam_width"),
+-          getParam<int>(nh, ns+"/cam_height"),
+-          getParam<double>(nh, ns+"/scale", 1.0),
+-          getParam<double>(nh, ns+"/cam_fx"),
+-          getParam<double>(nh, ns+"/cam_fy"),
+-          getParam<double>(nh, ns+"/cam_cx"),
+-          getParam<double>(nh, ns+"/cam_cy"),
+-          getParam<double>(nh, ns+"/cam_d0", 0.0),
+-          getParam<double>(nh, ns+"/cam_d1", 0.0),
+-          getParam<double>(nh, ns+"/cam_d2", 0.0),
+-          getParam<double>(nh, ns+"/cam_d3", 0.0)));
++          getRemoteParam<int>(nh, ns, "cam_width", int()),
++          getRemoteParam<int>(nh, ns, "cam_height", int()),
++          getRemoteParam<double>(nh, ns, "scale", 1.0),
++          getRemoteParam<double>(nh, ns, "cam_fx", double()),
++          getRemoteParam<double>(nh, ns, "cam_fy", double()),
++          getRemoteParam<double>(nh, ns, "cam_cx", double()),
++          getRemoteParam<double>(nh, ns, "cam_cy", double()),
++          getRemoteParam<double>(nh, ns, "cam_d0", 0.0),
++          getRemoteParam<double>(nh, ns, "cam_d1", 0.0),
++          getRemoteParam<double>(nh, ns, "cam_d2", 0.0),
++          getRemoteParam<double>(nh, ns, "cam_d3", 0.0)));
+     }
+     else 
+     {
