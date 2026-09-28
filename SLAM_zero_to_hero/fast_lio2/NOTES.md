@@ -15,10 +15,10 @@ Tightly-coupled LiDAR-inertial odometry on an iterated error-state Kalman filter
 ## Build
 
 ```bash
-podman build -t slam_zero_to_hero:fast_lio2 .
+podman build -t localhost/slam_zero_to_hero:fast_lio2 .
 ```
 
-The image bakes `ros:noetic`, Livox-SDK v1, `livox_ros_driver`, and FAST_LIO into `/catkin_ws`, producing `/catkin_ws/devel/lib/fast_lio/fastlio_mapping`. Stock configs ship for Avia, Horizon, Mid-360, Ouster-64, Velodyne, and MARSIM — **there is no Hesai config upstream**, so this directory adds one.
+The image bakes `ros:noetic`, Livox-SDK v1 (`9306596`), `livox_ros_driver` (`3d240d5`), and FAST_LIO (`7cc4175`, ikd-Tree `e2e3f4e`) into `/catkin_ws` — all pinned by `ARG` in the Dockerfile, producing `/catkin_ws/devel/lib/fast_lio/fastlio_mapping`. Stock configs ship for Avia, Horizon, Mid-360, Ouster-64, Velodyne, and MARSIM — **there is no Hesai config upstream**, so this directory adds one.
 
 ## Verified run — Hilti 2022 `exp14_basement_2.bag`
 
@@ -34,7 +34,7 @@ timeout 900 podman run --rm \
   -v "$PWD/scripts":/scripts:ro \
   -v "$PWD/run_hilti_offline.sh":/run.sh:ro \
   -e RATE=1.0 -e SAVE_PCD=1 -e CONFIG=hilti_pandarxt32 \
-  slam_zero_to_hero:fast_lio2 bash /run.sh
+  localhost/slam_zero_to_hero:fast_lio2 bash /run.sh
 ```
 
 `run_hilti_offline.sh` starts a container-private `roscore`, launches `mapping_hilti.launch` headless, logs `/Odometry` to TUM format while `rosbag play` streams the bag at real time, then SIGINTs the node so it flushes its map and pose log. **No `--net=host`** — the ROS master lives in the container's own network namespace, so several ROS containers can run at once without fighting over port 11311.
@@ -61,11 +61,25 @@ python3 scripts/traj_stats.py results/fullA/fastlio_traj_tum.txt
 # median inter-frame step 0.0540 m (= 0.54 m/s walk), max 0.1696 m
 ```
 
-There is **no ATE for this sequence** — Hilti withheld ground truth for `exp14_basement_2`, and `evo` is not in the image. Judge the run by self-consistency instead: path length, inter-frame smoothness, and map crispness.
+**ATE is now available.** Hilti has since published ground truth for `exp14_basement_2` on Hugging Face (`ground_truth/exp14_basement_2_imu.txt`: TUM format, Alphasense IMU frame, 10 Hz, 689 poses, 37.80 m). FAST-LIO's `/Odometry` is the same IMU body frame, so `scripts/ate.py` (numpy only, nearest-stamp match within 20 ms + rigid Umeyama alignment) compares them directly:
+
+```bash
+python3 scripts/ate.py results/exp14/fastlio_traj_tum.txt ~/data/hilti_2022/exp14_basement_2_imu.txt
+# est poses 737, gt poses 689, matched 686 (|dt| <= 0.020 s)
+# ATE RMSE 0.0496 m | mean 0.0453 | median 0.0450 | max 0.1468
+```
+
+The fullA run from 2026-08-05 scores the same 0.0496 m; a plain headless rerun on 2026-09-27 gave 0.0566 m. That spread is real-time playback nondeterminism, not a regression.
+
+The same Hugging Face repo hosts the bag (`rosbags/exp14_basement_2.bag`, 6,260,771,085 bytes — identical to the local copy). The S3 URL in `download_hilti_2022.py` now returns `403 AccessDenied`.
+
+## Headless screenshots (SCREENSHOT=1)
+
+`SCREENSHOT=1` makes `run_hilti_offline.sh` start `Xvfb :99` inside the container, launch rviz with `config/hilti.rviz` (bind-mounted as `rviz_cfg/hilti.rviz`) rendered by mesa llvmpipe, and grab the root window with `xwd | convert` 35 s into playback (`rviz_midway.png`) and after the 10 s drain (`rviz_map.png`). No host X server or GPU is involved. rviz only manages 0–1 fps in software, so `/cloud_registered` has `Queue Size: 200` to keep scans from being dropped out of the accumulated (Decay 1000 s) map. The view uses `Invert Z Axis: true` because the world frame is z-down (see Gotchas); map alpha is 0.35 so the ceiling does not hide the magenta `/path`. `DISABLE_ROS1_EOL_WARNINGS=1` is exported by the script — without it rviz opens a modal "ROS Noetic goes end-of-life" dialog over the map.
 
 ## Watching it run (GUI on your desktop)
 
-Set `RVIZ=true` and add the X11 + GPU flags. `mapping_hilti.launch` then starts rviz with FAST_LIO's own `rviz_cfg/loam_livox.rviz`, so you watch the point cloud accumulate and the body frame move as the bag plays:
+Set `RVIZ=true` and add the X11 + GPU flags. `mapping_hilti.launch` then starts rviz with `config/hilti.rviz` when it is mounted (else FAST_LIO's own `rviz_cfg/loam_livox.rviz`; override with `RVIZ_CFG`), so you watch the point cloud accumulate and the body frame move as the bag plays:
 
 ```bash
 mkdir -p results/gui
@@ -77,11 +91,12 @@ timeout 900 podman run --rm \
   -v ~/data/hilti_2022:/data:ro \
   -v "$PWD/results/gui":/out \
   -v "$PWD/config/hilti_pandarxt32.yaml":/catkin_ws/src/FAST_LIO/config/hilti_pandarxt32.yaml:ro \
+  -v "$PWD/config/hilti.rviz":/catkin_ws/src/FAST_LIO/rviz_cfg/hilti.rviz:ro \
   -v "$PWD/launch/mapping_hilti.launch":/catkin_ws/src/FAST_LIO/launch/mapping_hilti.launch:ro \
   -v "$PWD/scripts":/scripts:ro \
   -v "$PWD/run_hilti_offline.sh":/run.sh:ro \
   -e RVIZ=true -e CONFIG=hilti_pandarxt32 \
-  slam_zero_to_hero:fast_lio2 bash /run.sh
+  localhost/slam_zero_to_hero:fast_lio2 bash /run.sh
 ```
 
 `rviz` is installed for exactly this (it is not in `ros:noetic`), and renders on the RTX 5090 via the `--runtime` flags — without them it falls back to software GL. **No `xhost` change and no `--net=host` are needed**: podman here is rootless, so container root maps to your uid, which X already authorizes, and the connection goes over the bind-mounted socket.
@@ -113,7 +128,7 @@ Extrinsics come from upstream FAST-LIVO2's own Hilti-2022 calibration (`config/H
 If you'd rather not rely on the azimuth reconstruction, `scripts/hesai_to_velodyne.py` republishes `/hesai/pandar` as `/velodyne_points` with a genuine float32 `time = timestamp - header.stamp`:
 
 ```bash
-podman run --rm ... -e CONFIG=hilti_pandarxt32_relay -e RELAY=1 slam_zero_to_hero:fast_lio2 bash /run.sh
+podman run --rm ... -e CONFIG=hilti_pandarxt32_relay -e RELAY=1 localhost/slam_zero_to_hero:fast_lio2 bash /run.sh
 ```
 
 This silences all 740 PCL warnings and changes the result very little: 737 poses, **37.929 m** vs 37.934 m, with per-pose divergence of median 4.5 cm / max 8.5 cm over 38 m of travel. Variant A is the recommended teaching path (stock FAST-LIO, nothing extra to explain); variant B is the one to reach for on a faster or vehicle-mounted Hesai sequence, where a 100 ms sweep covers much more ground.

@@ -9,6 +9,8 @@
 # Env:
 #   BAG=/data/exp14_basement_2.bag   RATE=1.0   DURATION=   (empty = whole bag)
 #   CONFIG=hilti_pandarxt32          SAVE_PCD=0
+#   RVIZ=false   RVIZ_CFG=  (default: rviz_cfg/hilti.rviz if mounted, else loam_livox.rviz)
+#   SCREENSHOT=0 (1 = rviz on a private Xvfb, PNGs to /out/rviz_*.png; no host X needed)
 # Outputs in /out: fastlio_traj_tum.txt, odometry_raw.csv, fastlio_stdout.log,
 #                  pos_log.txt, (optional) scans.pcd
 
@@ -21,6 +23,19 @@ CONFIG="${CONFIG:-hilti_pandarxt32}"
 SAVE_PCD="${SAVE_PCD:-0}"
 RELAY="${RELAY:-0}"
 RVIZ="${RVIZ:-false}"
+SCREENSHOT="${SCREENSHOT:-0}"
+RVIZ_CFG="${RVIZ_CFG:-/catkin_ws/src/FAST_LIO/rviz_cfg/hilti.rviz}"
+[ -f "$RVIZ_CFG" ] || RVIZ_CFG=/catkin_ws/src/FAST_LIO/rviz_cfg/loam_livox.rviz
+
+if [ "$SCREENSHOT" = "1" ]; then
+  # Headless capture: rviz renders (mesa llvmpipe) into a container-private Xvfb.
+  RVIZ=true
+  export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1
+  Xvfb :99 -screen 0 1400x1000x24 -nolisten tcp >/out/xvfb.log 2>&1 &
+  XVFB_PID=$!
+  sleep 2
+fi
+shot() { xwd -root -silent -display "$DISPLAY" | convert xwd:- "/out/$1" && echo "[run] screenshot /out/$1"; }
 
 # Export these BEFORE sourcing setup.bash. ROS's own
 # etc/catkin/profile.d/10.roslaunch.sh reads $ROS_MASTER_URI, and under `set -u`
@@ -30,6 +45,7 @@ RVIZ="${RVIZ:-false}"
 export ROS_MASTER_URI=http://localhost:11311
 export ROS_HOSTNAME=localhost
 export ROS_IP=127.0.0.1
+export DISABLE_ROS1_EOL_WARNINGS=1   # rviz otherwise pops a modal EOL dialog over the map
 
 source /opt/ros/noetic/setup.bash
 source /catkin_ws/devel/setup.bash
@@ -50,6 +66,7 @@ PCD_ARG=false
 [ "$SAVE_PCD" = "1" ] && PCD_ARG=true
 echo "[run] roslaunch fast_lio mapping_hilti.launch config:=$CONFIG rviz:=$RVIZ pcd_save:=$PCD_ARG"
 roslaunch fast_lio mapping_hilti.launch config:="$CONFIG" rviz:="$RVIZ" pcd_save:="$PCD_ARG" \
+    rviz_cfg:="$RVIZ_CFG" \
     >/out/fastlio_stdout.log 2>&1 &
 LAUNCH_PID=$!
 
@@ -75,11 +92,19 @@ PLAY_ARGS=(-r "$RATE")
 PLAY_ARGS+=("$BAG" --topics /hesai/pandar /alphasense/imu)
 echo "[run] rosbag play ${PLAY_ARGS[*]}"
 SECONDS=0
-rosbag play "${PLAY_ARGS[@]}" >/out/rosbag_play.log 2>&1
+if [ "$SCREENSHOT" = "1" ]; then
+  rosbag play "${PLAY_ARGS[@]}" >/out/rosbag_play.log 2>&1 &
+  PLAY_PID=$!
+  sleep 35 && kill -0 $PLAY_PID 2>/dev/null && shot rviz_midway.png
+  wait $PLAY_PID
+else
+  rosbag play "${PLAY_ARGS[@]}" >/out/rosbag_play.log 2>&1
+fi
 echo "[run] bag playback wall-clock: ${SECONDS} s"
 
 echo "[run] draining 10 s"
 sleep 10
+[ "$SCREENSHOT" = "1" ] && shot rviz_map.png
 
 echo "[run] SIGINT -> nodes (flushes PCD / pos_log)"
 kill -INT $LAUNCH_PID 2>/dev/null
@@ -94,6 +119,7 @@ if [ "$SAVE_PCD" = "1" ]; then
 fi
 
 kill -INT $ROSCORE_PID 2>/dev/null
+[ "${XVFB_PID:-}" ] && kill $XVFB_PID 2>/dev/null
 sleep 2
 echo "[run] done. outputs:"
 ls -la /out/

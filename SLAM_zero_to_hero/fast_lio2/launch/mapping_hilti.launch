@@ -6,6 +6,7 @@
     <arg name="rviz" default="false" />
     <arg name="config" default="hilti_pandarxt32" />
     <arg name="pcd_save" default="false" />
+    <arg name="rviz_cfg" default="$(find fast_lio)/rviz_cfg/loam_livox.rviz" />
 
     <rosparam command="load" file="$(find fast_lio)/config/$(arg config).yaml" />
 
@@ -24,6 +25,6 @@
 
     <group if="$(arg rviz)">
       <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz"
-            args="-d $(find fast_lio)/rviz_cfg/loam_livox.rviz" />
+            args="-d $(arg rviz_cfg)" />
     </group>
 </launch>
