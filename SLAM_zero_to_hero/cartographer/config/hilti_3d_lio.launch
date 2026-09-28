@@ -7,10 +7,10 @@
   The stock Dockerfile COPYs launch files one level above that, which is why
   `roslaunch cartographer_ros hilti_3d.launch` fails with a file-not-found.
 
-  roslaunch cartographer_ros hilti_3d_lio.launch bag:=/data/lidar_imu_full_t.bag
+  roslaunch cartographer_ros hilti_3d_lio.launch bag:=/data/exp14_basement_2_carto.bag
 -->
 <launch>
-  <arg name="bag" default="/data/lidar_imu_full_t.bag"/>
+  <arg name="bag" default="/data/exp14_basement_2_carto.bag"/>
   <arg name="cfg_dir" default="/cfg"/>
   <arg name="rate" default="1.0"/>
 

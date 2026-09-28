@@ -18,19 +18,49 @@ Google's real-time 2D and 3D LiDAR SLAM running on ROS Noetic.
 podman build -t slam_zero_to_hero:cartographer .
 ```
 
-The image extracts `cartographer.tar.xz`, builds Abseil from source, then runs `catkin build` over `cartographer`, `cartographer_ros`, and `cartographer_rviz`. `rviz` is installed; `map_server` is not.
+The image extracts `cartographer.tar.xz`, builds Abseil from source, then runs `catkin build` over `cartographer`, `cartographer_ros`, and `cartographer_rviz`. `rviz` is installed; `map_server` is not. The last layers add Xvfb, x11-utils, xdotool and ImageMagick for headless rviz screenshots, then build the course's rviz view controllers from `localhost/slam_zero_to_hero:rviz_unified_controls` (build that image first, see `../rviz_unified_controls/README.md`). A `sed` switches the upstream `demo_2d.rviz` / `demo_3d.rviz` from `rviz/TopDownOrtho` to `slam_zero_to_hero/UnifiedTopDownOrtho`; `config/hilti_*.rviz` use `slam_zero_to_hero/UnifiedOrbit`. Left drag rotates, the wheel zooms, right or middle drag pans.
+
+## Verified run — Hilti 2022 `exp21_outside_building.bag` (3D + IMU, default)
+
+A 152 s handheld walk around the outside of a building: 1,528 sweeps, 130 m of path, a map about 87 × 84 m. It uses the same rig, topics and LiDAR↔IMU extrinsic as exp14, so `urdf/`, the static transform in `run_carto_live.sh` and `scripts/hesai_add_time_field.py` are unchanged. The per-point times after conversion run 0.000 to 0.101 s. Outdoors the returns reach 20–60 m (p95), up to 151 m.
+
+**Ground truth.** Hilti publishes the IMU position at 5 surveyed timestamps (`ground_truth/exp21_outside_building.txt` on the Hugging Face mirror). The points are up to 44 m apart; the quaternions in the file are dummies. `scripts/eval_survey.py` interpolates the trajectory at those 5 times, fits one rigid SE(3) transform (no scale), and prints the residuals. Five points cannot say much about local accuracy, but they are enough to expose height drift.
+
+**Result** (`config/hilti_outdoor_3d.lua`, measured 2026-09-28 at load average 27–42): **0.093 m RMSE, max 0.112 m**. The per-point errors are 0.095 / 0.052 / 0.112 / 0.085 / 0.109 m. There are 1,518 poses, 1,536 loop-closure match attempts and 192 accepted constraints. SLAM takes 31 s of wall clock. The run is deterministic: pbstream md5 `0eb1bbb6…` in two runs at different host loads. The online node (`run_carto_live.sh`, 1x, rviz on the GPU) gives 1,527 poses and 0.099 m RMSE, and wrote the same 24,608,369 B pbstream in two runs.
+
+**Tuning, one change at a time** (survey RMSE; each row changes only that value from the row above, unless it says otherwise):
+
+| Config | RMSE | What it shows |
+|---|---|---|
+| `hilti_3d_lio.lua` (basement config) unchanged | 0.517 m | xy within 0.12 m at every point; **height drifts 1.43 m** by the end |
+| first outdoor draft: 80 m range, 10 cm, 160 sweeps/submap, 30 m loop search | 0.503 m | range alone does not fix the height |
+| + loop closure z window ±3 m (stock ±1 m) | 0.503 m | no change by itself |
+| + sampling ratio 0.3, `min_score` 0.55 (Cartographer's default; basement uses 0.62) | 0.295 m | loops can now close; 35 → 150 constraints |
+| + `max_range` 120 m (and the coarse voxel filter's range) | 0.272 m | |
+| + high-resolution submap 15 cm (voxel filter stays 10 cm) | 0.120 m | the big step. A 5–10 cm grid is mostly empty at 30 m from a 32-beam sensor |
+| + `occupied_space_weight_0` 3 (stock 1) | **0.093 m** | the fine grid counts for more against the coarse one. **Shipped.** |
+
+The following changes were rejected, each tested against a nearby config. 5 cm high resolution with a 5 cm voxel filter: 0.550 m, no loop closures at all. 20 cm: 0.155 m. 100 sweeps per submap: 0.241 m. `min_score` 0.62: 0.352 m. `occupied_space_weight_0` 6: 0.208 m. Low-resolution submap 60 cm: 0.227 m. Scan matcher `rotation_weight` 2e3: 0.820 m, and 1e2: 0.404 m. Pose-graph IMU `rotation_weight` 1e5: 0.506 m. `optimize_every_n_nodes` 50: 0.449 m. `max_constraint_distance` 50 m (0.101 m) and sampling ratio 0.5 (0.098 m) were neutral.
+
+Take the last centimetres with a pinch of salt: 5 survey points, and the configs from 0.093 to 0.12 m are not different in any way a reader could see in the map. What the numbers are good for is the direction. Coarser matching and working loop closure remove the height drift; the xy error stays around 0.1 m throughout.
+
+**Map quality.** `map.pgm` (the 2D projection of the submaps, 0.05 m/px) shows the building faces, including the curved facade, as single thin lines, and no wall is doubled. The occupancy slab from `assets_writer_hilti_outdoor_grid.lua` (0.10 m/px, 1133 × 1333 px) has 1.41 % occupied cells, a free/occupied ratio of 20.6, and a median occupied run of 0.30 m. `pgm_stats.py` assumes 0.05 m/px, so double the lengths it prints for this grid. The dense cloud `assets_map3d.ply` (`assets_writer_hilti_outdoor.lua`, 80 m range, 10 cm voxels) has 49,928,673 points (800 MB PLY, 600 MB PCD).
+
 
 ## Verified run — Hilti 2022 `exp14_basement_2.bag` (3D + IMU)
 
-```bash
-mkdir -p results
-./run_carto.sh                     # offline: preprocess bag -> SLAM -> 3D map + occupancy grid
-./run_carto_live.sh                # online: same SLAM with rviz, submaps appearing as it goes
-```
+This was the default demo until 2026-09-28, and it is still the smaller indoor
+demo. The exact commands are in the [README](README.md): pass
+`CFG=hilti_3d_lio.lua BAG=/data/exp14_basement_2_carto.bag` (plus
+`ASSETS_CFG=assets_writer_hilti.lua` offline, `RVIZ_CFG=hilti_3d.rviz` live).
+`run_carto.sh` and `run_carto_live.sh` run **inside** the container. They read
+the output of `scripts/hesai_add_time_field.py` and bind-mount `config/`, `urdf/`
+and `scripts/`, so nothing needs rebuilding to change a parameter. Do not edit
+`run_carto.sh` while a run is using it: bash reads the script as it goes, and a
+run that is already going will pick up the half-edited file. Neither needs `--net=host` — each starts its own roscore in the container's
+network namespace.
 
-Both scripts bind-mount `config/`, `urdf/` and `scripts/` into `slam_zero_to_hero:cartographer`, so nothing needs rebuilding to change a parameter. Neither needs `--net=host` — each starts its own roscore in the container's network namespace.
-
-Last verified: Ryzen 9 7950X, 2026-08-05. Independently re-measured from the artifacts by a second pass, with scripts calibrated against this repo's published FAST-LIO2 reference before being trusted.
+Last verified: Ryzen 9 7950X, 2026-08-05; re-run 2026-09-27 with byte-identical pbstream and the same numbers. Independently re-measured from the artifacts by a second pass, with scripts calibrated against this repo's published FAST-LIO2 reference before being trusted.
 
 | | Cartographer 3D | FAST-LIO2 reference |
 |---|---|---|
@@ -99,21 +129,19 @@ This was not in the original diagnosis and it mattered more than any tuning. `ca
 
 ## Watching it run (GUI on your desktop)
 
-```bash
-./run_carto_live.sh
-```
+`run_carto_live.sh` starts `cartographer_node`, a `static_transform_publisher` for the
+extrinsic, `rosbag play` (default 1x, `RATE=3` to speed up) and rviz on
+`config/$RVIZ_CFG`: `hilti_outdoor_3d.rviz` by default (a 95 m orbit over the building,
+5 m grid) or `hilti_3d.rviz` for the basement. Both show cartographer_rviz `Submaps`,
+`/trajectory_node_list` and `/scan_matched_points2`. With `XVFB=1` rviz renders on a
+private Xvfb display (llvmpipe, ~30 fps). `SHOT=<png>` captures the rviz window (found
+with `xdotool`, so a shared desktop's other windows stay out of it) when the bag ends. The script exports
+`DISABLE_ROS1_EOL_WARNINGS=1`; without it rviz opens a modal "Noetic end-of-life" dialog
+over the map.
 
-That starts `cartographer_node` plus rviz with cartographer_rviz's `Submaps` display, so you watch submaps appear as the bag plays. It passes the X11 and GPU flags:
+**No `xhost +local:root`** — podman here is rootless, so container root maps to your uid, which X already authorizes. **No `--net=host`** either. With the NVIDIA flags rviz renders on the GPU; without them it falls back to software GL.
 
-```
---runtime=/usr/bin/nvidia-container-runtime
--e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
--e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix
-```
-
-**No `xhost +local:root`** — podman here is rootless, so container root maps to your uid, which X already authorizes; earlier revisions of this file told you to loosen `xhost`, which is an unnecessary security downgrade. **No `--net=host`** either. With the NVIDIA flags rviz renders on the RTX 5090 (OpenGL 4.6); without them it falls back to software GL and is noticeably slower on a 21 M-point map.
-
-Expect one cosmetic red herring: rviz's `RobotModel` display shows a red error, since this configuration has no full URDF for display purposes. The map still renders.
+The `Trajectories` (MarkerArray) display shows a red status; the trajectory line still draws.
 
 To inspect a **finished** map, use `visualize_pbstream.launch` (already in the image) rather than `map_server`, which is not installed:
 

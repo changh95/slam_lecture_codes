@@ -37,6 +37,23 @@ RUN catkin config --extend /opt/ros/noetic && catkin build
 
 RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh && catkin build
 
+# Headless visualization: rviz renders on a private Xvfb display and ImageMagick
+# `import` grabs it (run_carto_live.sh XVFB=1 SHOT=...). Appended last so the
+# long catkin build layers above stay cached.
+RUN apt-get -y update && \
+    apt-get install -y --no-install-recommends xvfb x11-utils xdotool imagemagick libgl1-mesa-dri && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Course-wide RViz mouse scheme: left drag rotates, right/middle drag pans, wheel zooms.
+COPY --from=localhost/slam_zero_to_hero:rviz_unified_controls /rviz_unified_controls /opt/rviz_unified_controls
+RUN /opt/rviz_unified_controls/install_ros1.sh /opt/rviz_unified_controls
+# Upstream cartographer_ros demo configs: switch only their Views > Current class.
+RUN for f in /catkin_ws/src/cartographer/cartographer_ros/cartographer_ros/configuration_files/demo_2d.rviz \
+             /catkin_ws/src/cartographer/cartographer_ros/cartographer_ros/configuration_files/demo_3d.rviz; do \
+      sed -i -E 's#Class: rviz/TopDownOrtho$#Class: slam_zero_to_hero/UnifiedTopDownOrtho#' "$f" && \
+      grep -q 'Class: slam_zero_to_hero/UnifiedTopDownOrtho' "$f" || exit 1; \
+    done
+
 WORKDIR /
 
 ENTRYPOINT ["/ros_entrypoint.sh"]

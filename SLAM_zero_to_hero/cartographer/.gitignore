@@ -1,3 +1,7 @@
 *.bag
 *.pgm
 *.yaml
+*.ply
+*.pcd
+*.pbstream
+results/*/*.log

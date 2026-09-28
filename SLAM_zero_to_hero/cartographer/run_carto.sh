@@ -11,18 +11,20 @@
 #   /scripts helper python
 #
 # Env:
-#   CFG        lua basename            (default hilti_3d_lio.lua)
-#   BAG        bag path                (default /data/hilti_deskew.bag)
+#   CFG        lua basename            (default hilti_outdoor_3d.lua; hilti_3d_lio.lua for exp14)
+#   BAG        bag path                (default /data/exp21_outside_building_carto.bag, see README)
 #   TAG        output subdir under /out (default run)
 #   ASSETS     1 => also run cartographer_assets_writer (default 1)
-#   ASSETS_CFG assets_writer lua       (default assets_writer_hilti.lua = 3D cloud)
+#   ASSETS_CFG comma-separated assets_writer luas, run in turn
+#              (default assets_writer_hilti_outdoor.lua,assets_writer_hilti_outdoor_grid.lua
+#               = 3D cloud + 2D occupancy slab; use assets_writer_hilti.lua for exp14)
 set -euo pipefail
 
-CFG="${CFG:-hilti_3d_lio.lua}"
-BAG="${BAG:-/data/hilti_deskew.bag}"
+CFG="${CFG:-hilti_outdoor_3d.lua}"
+BAG="${BAG:-/data/exp21_outside_building_carto.bag}"
 TAG="${TAG:-run}"
 ASSETS="${ASSETS:-1}"
-ASSETS_CFG="${ASSETS_CFG:-assets_writer_hilti.lua}"
+ASSETS_CFG="${ASSETS_CFG:-assets_writer_hilti_outdoor.lua,assets_writer_hilti_outdoor_grid.lua}"
 
 source /opt/ros/noetic/setup.bash
 source /catkin_ws/devel/setup.bash
@@ -65,15 +67,17 @@ python3 /scripts/tfbag_to_tum.py "$O/traj.bag" "$O/carto_tum.txt" >>"$O/traj_exp
 wc -l "$O/carto_tum.txt"
 
 if [ "$ASSETS" = "1" ]; then
-  echo "[run] assets_writer (3D cloud + level slices)"
-  "$CARTO_BIN/cartographer_assets_writer" \
-    -configuration_directory /cfg \
-    -configuration_basename "$ASSETS_CFG" \
-    -urdf_filename /urdf/hilti_alphasense_pandar.urdf \
-    -bag_filenames "$BAG" \
-    -pose_graph_filename "$O/map.pbstream" \
-    -output_file_prefix "$O/assets_" \
-    >"$O/assets.log" 2>&1 || echo "[run] WARNING assets_writer failed, see assets.log"
+  for A in ${ASSETS_CFG//,/ }; do
+    echo "[run] assets_writer $A"
+    "$CARTO_BIN/cartographer_assets_writer" \
+      -configuration_directory /cfg \
+      -configuration_basename "$A" \
+      -urdf_filename /urdf/hilti_alphasense_pandar.urdf \
+      -bag_filenames "$BAG" \
+      -pose_graph_filename "$O/map.pbstream" \
+      -output_file_prefix "$O/assets_" \
+      >>"$O/assets.log" 2>&1 || echo "[run] WARNING assets_writer $A failed, see assets.log"
+  done
 fi
 
 kill -INT $ROSCORE_PID 2>/dev/null || true
