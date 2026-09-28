@@ -52,12 +52,18 @@ RUN wget https://huggingface.co/datasets/collabora/monado-slam-datasets/resolve/
     unzip MIPB07_beatsaber_fitbeat_expertplus_2.zip && \
     rm MIPB07_beatsaber_fitbeat_expertplus_2.zip
 
-# Build Basalt from the Monado fork (canonical fork tracked by Monado SLAM datasets).
-RUN git clone --recursive https://gitlab.freedesktop.org/mateosss/basalt.git
+# Build Basalt from the Monado fork (canonical fork tracked by Monado SLAM datasets),
+# pinned to the commit verified in this folder (2026-06-15); submodules follow it.
+ARG BASALT_COMMIT=a90a57d7cc1974dfd2ecc9f0345d4166a849548d
+RUN git clone https://gitlab.freedesktop.org/mateosss/basalt.git && \
+    cd basalt && git checkout ${BASALT_COMMIT} && \
+    git submodule update --init --recursive
 WORKDIR /basalt
 # Downgrade Sophus to 1.22.10 (compatible with CMake 3.22 on this base image)
 RUN cd thirdparty/basalt-headers/thirdparty/Sophus && git checkout 1.22.10
-RUN ./scripts/install_deps.sh
+# Refresh the package lists first: the apt layers above may be cached from an
+# older build, and their pinned .deb versions 404 once Ubuntu publishes updates.
+RUN apt-get update && ./scripts/install_deps.sh && apt-get clean
 RUN cmake --preset development
 RUN cmake --build build --target install -j$(nproc) && ldconfig
 
@@ -65,34 +71,4 @@ WORKDIR /
 ENTRYPOINT []
 CMD ["bash"]
 
-#RUN git clone --recursive https://github.com/changh95/vslam_lecture.git
-#WORKDIR vslam_lecture/basalt_monado
-#RUN apt-get install -y sudo
-#RUN ./scripts/install_deps.sh
-#RUN apt-get install -y pluginlib-dev libgpgme-dev
-#RUN cmake --preset development
-#RUN sudo cmake --build build --target install
-
-# Build Command:
-# docker build . -t basalt
-
-# Run Command:
-# docker run -it --privileged --net=host --ipc=host -e "DISPLAY=$DISPLAY" -e "QT_X11_NO_MITSHM=1" -v "/tmp/.X11-unix:/tmp/.X11-unix:rw" -e "XAUTHORITY=$XAUTH" --gpus all basalt
-
-#docker run -it --rm \
-#    --gpus all \
-#    --net=host \
-#    --ipc=host \
-#    --env DISPLAY=$DISPLAY \
-#    --env QT_X11_NO_MITSHM=1 \
-#    --env XAUTHORITY=$HOME/.Xauthority \
-#    -v /tmp/.X11-unix:/tmp/.X11-unix \
-#   -v $HOME/.Xauthority:$HOME/.Xauthority \
-#    --privileged \
-#    basalt
-
-# Inside docker, run command:
-
-# (Samsung Odyssey Plus)
-# basalt_vio --show-gui 1 --dataset-path ../MOO09_short_1_updown/ --dataset-type euroc --cam-calib ./data/msd/msdmo_calib.json --config-path ./data/msd/msdmo_config.json
-
+# Build and run commands: see README.md.
