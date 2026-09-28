@@ -299,7 +299,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz/Orbit
+      Class: slam_zero_to_hero/UnifiedOrbit
       Distance: 30.0
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549

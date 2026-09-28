@@ -5,6 +5,9 @@ feature-based reprojection and optimisation to refine it. This demo runs the ful
 **visual-inertial** configuration — SVO frontend plus an OKVIS-style ceres
 sliding-window backend — on drone-racing footage recorded by the same lab that wrote it.
 
+**Default dataset:** UZH-FPV `indoor_forward_3_snapdragon_with_gt.bag` (Snapdragon
+stereo fisheye + IMU, `~/data/uzh_fpv/`).
+
 - **Repo**: [uzh-rpg/rpg_svo_pro_open](https://github.com/uzh-rpg/rpg_svo_pro_open)
 - **Paper**: [SVO: Semi-Direct Visual Odometry for Monocular and Multi-Camera Systems](http://rpg.ifi.uzh.ch/docs/TRO17_Forster-SVO.pdf) — Forster, Zhang, Gassner, Werlberger and Scaramuzza, IEEE T-RO 2017
 - Also relevant: [SVO: Fast Semi-Direct Monocular Visual Odometry](http://rpg.ifi.uzh.ch/docs/ICRA14_Forster.pdf) (ICRA 2014, the original); [Benefit of Large Field-of-View Cameras for Visual Odometry](http://rpg.ifi.uzh.ch/docs/ICRA16_Zhang.pdf) (ICRA 2016, the fisheye camera model this demo relies on); [Keyframe-based visual–inertial odometry using nonlinear optimization](https://doi.org/10.1177/0278364914554813) (Leutenegger et al., IJRR 2015 — the OKVIS backend this repo's sliding window is modified from; paywalled, and its freely readable RSS 2013 predecessor is [Keyframe-Based Visual-Inertial SLAM Using Nonlinear Optimization](https://www.roboticsproceedings.org/rss09/p37.pdf))
@@ -29,8 +32,10 @@ python3 ../download_uzh_fpv.py            # indoor_forward_3 + calibration, ~1.6
 python3 ../download_uzh_fpv.py --list     # all 28 sequences, and which have ground truth
 ```
 
-Everything lands in `~/data/uzh_fpv/`. The default is `indoor_forward_3`, the sequence
-this demo is verified on.
+Everything lands in `~/data/uzh_fpv/`: `indoor_forward_3_snapdragon_with_gt.bag`
+(1,608,934,832 bytes, 2552 stereo pairs, 46053 IMU and 24750 ground-truth messages) and
+`calib/indoor_forward_calib_snapdragon/`. That bag is the default everywhere below.
+Re-running the script skips files whose size already matches the server's.
 
 The drone carries two camera systems and the dataset ships both. This demo uses the
 **Snapdragon Flight**: a 640×480 stereo *fisheye* pair at 30 Hz plus a 500 Hz IMU.
@@ -69,22 +74,39 @@ frusta and the sliding-window trajectory. No `xhost` change and no `--net=host` 
 needed. The two NVIDIA lines give hardware GL; without them it falls back to software
 rendering.
 
-Swap `stereo` for `mono` to run the monocular pipeline. Useful variations:
+Mouse controls in rviz follow the course-wide scheme ([rviz_unified_controls](../rviz_unified_controls/)): left drag rotates, the wheel zooms, right or middle drag pans.
+
+Swap `stereo` for `mono` to run the monocular pipeline.
+
+Headless — no display and no GPU needed; writes the same trajectories and metrics
+(this is the run the numbers below come from):
 
 ```bash
-# No display needed; writes the same trajectories and metrics.
-... slam_zero_to_hero:svo_pro_open /svo_ws/scripts/run_fpv.sh /data/<bag>.bag stereo --headless
-
-# Replay slower, or skip into the sequence (mono initialisation sometimes wants this).
-... -e RATE=0.5 -e START=5 ... /svo_ws/scripts/run_fpv.sh /data/<bag>.bag mono
-
-# Regenerate the screenshot above on a private Xvfb display, no host X server involved.
-... /svo_ws/scripts/capture_rviz.sh /data/<bag>.bag stereo 85
+podman run --rm \
+  -v ~/data/uzh_fpv:/data:ro \
+  -v $PWD/results:/results \
+  slam_zero_to_hero:svo_pro_open \
+  /svo_ws/scripts/run_fpv.sh /data/indoor_forward_3_snapdragon_with_gt.bag stereo --headless
 ```
 
+Regenerate the rviz screenshot on a private Xvfb display inside the container (no host X
+server, software GL), captured 85 s into playback:
+
+```bash
+podman run --rm \
+  -e OUT=/results/rviz_capture \
+  -v ~/data/uzh_fpv:/data:ro \
+  -v $PWD/results:/results \
+  slam_zero_to_hero:svo_pro_open \
+  /svo_ws/scripts/capture_rviz.sh /data/indoor_forward_3_snapdragon_with_gt.bag stereo 85
+```
+
+Replay slower, or skip into the sequence (mono initialisation sometimes wants this):
+add `-e RATE=0.5 -e START=5` to any of the commands above.
+
 Each run writes to `results/<bag>_<mode>/`: `svo_tum.txt` and `gt_tum.txt` (TUM-format
-trajectories), `ape.zip` and `ape_plot_*.png` from evo, `rviz.png` if captured, and
-`svo.log`.
+trajectories), `ape.zip` and `ape_plot_*.png` from evo, and `svo.log`. The capture command writes
+`results/rviz_capture/rviz.png` instead (it stops at the screenshot, no evaluation).
 
 To drive the pipeline yourself instead of using the wrapper, the launch files take the
 usual roslaunch arguments:
@@ -106,12 +128,23 @@ several laps of the indoor racing track, with error staying low except at one tu
 
 `run_fpv.sh` writes the same plot for every run.
 
+Latest verification (2026-09-28, headless stereo, default bag, host shared with other
+jobs at load average ~50): **RMS ATE 0.453 m** (mean 0.399, max 1.22 m, SE(3)),
+2317 poses over 92.06 s, 304.5 m estimated path, zero `[ERROR]` lines, 114 s wall
+clock for the whole container run including evaluation. The rviz command above, on the
+host display, gave 0.588 m with 2526 poses. The bag is replayed in real
+time, so a loaded host drops frames: the 7-run average on an idle host was
+0.434 ± 0.036 m with 2551 poses (see [NOTES.md](NOTES.md)). The capture from that
+session is `results/rviz_stereo_indoor_forward_3.png` (`results/` is not tracked).
+
 ## Supported datasets
 
-| Dataset | Launch file | Calibration | Notes |
+| Dataset | Launch file | Calibration | Status |
 |---|---|---|---|
-| **UZH-FPV** Snapdragon, `indoor_forward` (verified: `indoor_forward_3`) | `fpv_vio_stereo.launch`, `fpv_vio_mono.launch` | `UZH_FPV_indoor_forward_snapdragon_{stereo,mono}.yaml` | The verified configuration. |
-| **UZH-FPV** Snapdragon, `indoor_45` / `outdoor_*` | same | needs its own calibration — download with `--sequences indoor_45_2` etc. and convert | Each environment has a **different** calibration; do not reuse the `indoor_forward` one. `outdoor_45` is the hardest split in the dataset. |
-| **UZH-FPV** mDAVIS | same, with `cam0_topic:=` overridden | not provided here | 346×260 frames; expect to lower `grid_size` and `img_align_max_level` for the smaller image. |
-| **EuRoC MAV** | upstream `euroc_vio_stereo.launch`, `euroc_vio_mono.launch` | upstream `euroc_{stereo,mono}.yaml` | Ships with the repo. Mono needs a start offset (`-s 10` for `V2_02_medium`). |
-| **FLA** stereo+IMU | upstream `launch/frontend/fla_stereo_imu.launch` | upstream `fla_stereo_imu.yaml` | Frontend-with-IMU only, no ceres backend. |
+| **UZH-FPV** Snapdragon `indoor_forward_3_snapdragon_with_gt.bag` (default) | `fpv_vio_stereo.launch` | `UZH_FPV_indoor_forward_snapdragon_stereo.yaml` | ✅ stereo VIO: RMS ATE 0.453 m (2026-09-28), 0.434 ± 0.036 m over 7 idle-host runs; rviz screenshot above |
+| same bag, monocular | `fpv_vio_mono.launch` | `UZH_FPV_indoor_forward_snapdragon_mono.yaml` | ✅ verified earlier: RMS ATE 0.156 m (Sim(3), 2 runs), see [NOTES.md](NOTES.md) |
+| **UZH-FPV** Snapdragon, other `indoor_forward_*` | same | same `indoor_forward` calibration | ⚠️ not run; `--sequences indoor_forward_5` etc. |
+| **UZH-FPV** Snapdragon, `indoor_45` / `outdoor_*` | same | needs its own calibration — download with `--sequences indoor_45_2` etc. and convert | ⚠️ not run. Each environment has a **different** calibration; do not reuse the `indoor_forward` one. `outdoor_45` is the hardest split in the dataset. |
+| **UZH-FPV** mDAVIS | same, with `cam0_topic:=` overridden | not provided here | ⚠️ not run. 346×260 frames; expect to lower `grid_size` and `img_align_max_level` for the smaller image. |
+| **EuRoC MAV** | upstream `euroc_vio_stereo.launch`, `euroc_vio_mono.launch` | upstream `euroc_{stereo,mono}.yaml` | Shipped by upstream, not verified here. Mono needs a start offset (`-s 10` for `V2_02_medium`). |
+| **FLA** stereo+IMU | upstream `launch/frontend/fla_stereo_imu.launch` | upstream `fla_stereo_imu.yaml` | Shipped by upstream, not verified here. Frontend-with-IMU only, no ceres backend. |

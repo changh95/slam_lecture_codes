@@ -118,11 +118,17 @@ def main():
            "--t_max_diff", "0.05",
            "--save_results", os.path.join(args.out, "ape.zip"),
            "--plot_mode", "xyz",
-           "--save_plot", os.path.join(args.out, "ape_plot")]
+           "--save_plot", os.path.join(args.out, "ape_plot"),
+           # Re-runs reuse the output folder; without this evo stops to ask
+           # whether to overwrite ape.zip and dies on the closed stdin.
+           "--no_warnings"]
     if args.correct_scale:
         cmd.append("--correct_scale")
     print("+ " + " ".join(cmd))
-    return subprocess.call(cmd)
+    # evo only saves the plot, never shows it. Force the file backend, or with
+    # DISPLAY set matplotlib picks TkAgg and crashes (no tkinter in the image).
+    env = dict(os.environ, MPLBACKEND="Agg")
+    return subprocess.call(cmd, env=env)
 
 
 if __name__ == "__main__":

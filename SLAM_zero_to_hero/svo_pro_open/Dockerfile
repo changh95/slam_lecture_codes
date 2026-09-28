@@ -75,6 +75,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # x11-utils, not x11-apps: xdpyinfo (the Xvfb readiness probe in
 # scripts/capture_rviz.sh) ships in x11-utils.
 
+# Course-wide RViz mouse scheme: left drag rotates, right/middle drag pans, wheel zooms.
+COPY --from=localhost/slam_zero_to_hero:rviz_unified_controls /rviz_unified_controls /opt/rviz_unified_controls
+RUN /opt/rviz_unified_controls/install_ros1.sh /opt/rviz_unified_controls
+# Upstream's own rviz configs (rviz_config*.rviz, used by its launch files) get
+# the same controller. Only the Views > Current > Class line changes.
+RUN for f in /svo_ws/src/rpg_svo_pro_open/svo_ros/rviz_config*.rviz; do \
+      sed -i -E 's#^( *)Class: rviz/Orbit$#\1Class: slam_zero_to_hero/UnifiedOrbit#' "$f" \
+      && grep -q "Class: slam_zero_to_hero/UnifiedOrbit" "$f" || exit 1; \
+    done
+
 # rviz otherwise opens a modal "ROS 1 End-of-Life" dialog over the render view.
 ENV DISABLE_ROS1_EOL_WARNINGS=1
 

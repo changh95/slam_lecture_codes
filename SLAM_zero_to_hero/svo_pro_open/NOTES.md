@@ -81,6 +81,31 @@ reddens at one turn. The plot covers only the ground-truth overlap window, so th
 the mono pipeline spends initialising and recovering scale — 81.6 s tracked against
 stereo's 92.1 s — is not visible here.
 
+## Re-verification, 2026-09-28
+
+Same bag, rebuilt image, host shared with ~19 other jobs (load average 17-60).
+
+| run | poses | RMS ATE | note |
+|---|---|---|---|
+| headless stereo (README command) | 2317 | **0.453 m** | 114 s wall clock, zero `[ERROR]` |
+| rviz on the host display `:1` (README main command) | 2526 | 0.588 m | rviz ran for the whole bag, zero `[ERROR]` |
+| stereo, GPU runtime + `DISPLAY` set, load ~20 | 2342 | 0.475 m | |
+| same, load ~60 with four other SLAM containers | 1761 | 1.184 m | 26x "Backend scale not stable" |
+
+Under heavy CPU contention the real-time replay drops a quarter of the frames and the
+error more than doubles. Quote numbers from an idle host, or replay at `RATE=0.5`.
+
+Two evaluation bugs surfaced and are fixed in `scripts/eval_fpv.py`:
+
+- With `DISPLAY` set (the rviz command), matplotlib picked the TkAgg backend and evo
+  crashed with `ModuleNotFoundError: No module named 'tkinter'` before saving the plot.
+  evo now runs with `MPLBACKEND=Agg`.
+- A second run into the same output folder stopped at evo's "ape.zip exists,
+  overwrite?" prompt and died with `EOFError`. evo now gets `--no_warnings`.
+
+`rosbag info` reports 79 s for the bag (receive time), while the message header stamps,
+which the evaluation uses, span 92.06 s.
+
 ## The calibration conversion, which is where this demo would most easily go wrong
 
 UZH-FPV ships Kalibr output; SVO wants the aslam/vikit "ncamera" format. Two
