@@ -10,7 +10,8 @@ Feature-based visual SLAM: ORB features, keyframe bundle adjustment, DBoW2 place
 
 - **Repo**: https://github.com/changh95/Portable_ORB_SLAM2 (a fork that vendors its own OpenCV, Pangolin, DBoW2, g2o)
 - **Sensors**: mono / stereo camera, or RGB-D
-- **GPU**: not required — the verified runs below use no display at all
+- **GPU**: not required. The GUI run on TUM fr1_desk used the NVIDIA runtime only for hardware GL; the KITTI runs below use no display at all.
+- **Default demo**: RGB-D on TUM RGB-D `freiburg1_desk`. See the [README](README.md) for the command and results.
 
 ## Build
 
@@ -35,13 +36,18 @@ The stock KITTI examples hard-code `true` for the `System` constructor's `bUseVi
 CommonMakeCurrent: Assertion `oldCtxInfo != NULL' failed.
 ```
 
-partway through a long sequence — on KITTI 00 it died after ~8 minutes, i.e. after processing thousands of frames but *before* the trajectory is written at shutdown, losing the entire run. So this image adds:
+partway through a sequence. On TUM fr1_desk (2026-09-28) the stock `rgbd_tum` died after about 30-40 s, with or without the screenshot script, with the GLX error `BadAccess` on `X_GLXMakeCurrent` (opcode 150, minor 5) reported just before. On KITTI 00 it died after ~8 minutes, i.e. after processing thousands of frames but *before* the trajectory is written at shutdown, losing the entire run. So this image adds:
 
 | Addition | Purpose |
 |---|---|
-| `mono_kitti_headless`, `stereo_kitti_headless` | Same sources with `bUseViewer = false`. No GL, no X, no display. Same SLAM, same output files. **Use these for any unattended run.** |
+| `mono_kitti_headless`, `stereo_kitti_headless`, `rgbd_tum_headless` | Same sources with `bUseViewer = false`. No GL, no X, no display. Same SLAM, same output files. **Use these for any unattended run.** |
 | `headless <cmd>` | Starts Xvfb, waits for it with `xdpyinfo`, then runs `<cmd>`. Use when you *do* want the stock viewer binaries without a real display. `xvfb-run -a` is deliberately avoided: it intermittently hangs before ever exec'ing its child (observed repeatedly here, once for 30 minutes). |
-| `libgl1-mesa-dri` + `LIBGL_ALWAYS_SOFTWARE=1` | `libgl1-mesa-dev` alone ships no DRI driver, so any GL context inside the container fails. This gives llvmpipe software rendering (verified: OpenGL 4.5, direct rendering yes). |
+| `libgl1-mesa-dri` | `libgl1-mesa-dev` alone ships no DRI driver, so any GL context inside the container fails. Under Xvfb, Mesa then picks llvmpipe on its own (verified: `llvmpipe (LLVM 15.0.7)`, direct rendering yes). `LIBGL_ALWAYS_SOFTWARE` is deliberately not set. |
+| `xdotool`, `imagemagick` | Used by `scripts/run_tum_rgbd.sh` to place the two windows side by side and grab them into `viewer.png`. |
+
+## Verified run: TUM RGB-D fr1_desk, RGB-D (default)
+
+The command, numbers and screenshots are in the [README](README.md): RMS ATE 1.52 cm (SE(3)), 434 poses from 573 frames. Tracking was lost for 4.97 s starting 5.7 s in and then relocalized. The viewer was verified on the host display (`:1`) with hardware GL, because under Xvfb it aborts as described above.
 
 ## Verified runs — KITTI odometry sequence 00
 

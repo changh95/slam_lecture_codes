@@ -25,12 +25,15 @@ RUN apt-get install build-essential -y && \
     apt-get install -y zip &&\
     apt-get clean
     
-# ORB-SLAM3
+# ORB-SLAM2 (Portable fork: vendors OpenCV, Pangolin, DBoW2, g2o)
 RUN apt-get install cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev -y
 RUN apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev wayland-protocols libegl1-mesa-dev libc++-dev libglew-dev libeigen3-dev
 RUN apt-get install -y libboost-all-dev libssl-dev
+# Pinned: HEAD of master as of 2021-08-01.
+ARG ORB_SLAM2_COMMIT=8131ce6f9fa5b9b28f653772210459ef2bd66fe2
 RUN git clone https://github.com/changh95/Portable_ORB_SLAM2.git &&\
     cd Portable_ORB_SLAM2 &&\
+    git checkout ${ORB_SLAM2_COMMIT} &&\
     python3 ./buildDeps.py &&\
     python3 ./build.py
 
@@ -52,6 +55,11 @@ RUN git clone https://github.com/changh95/Portable_ORB_SLAM2.git &&\
 # a GTK warning from the OpenCV frame window.
 RUN apt-get install -y xvfb libgl1-mesa-dri mesa-utils libcanberra-gtk-module && apt-get clean
 
+# Screenshot tooling for headless verification (scripts/run_tum_rgbd.sh):
+# xdotool lays the two windows out side by side (Xvfb has no window manager, so
+# both open at 0,0), imagemagick grabs each window and joins them into one PNG.
+RUN apt-get update && apt-get install -y xdotool imagemagick && apt-get clean
+
 # `xvfb-run -a` intermittently hangs in this image without ever exec'ing its
 # child, so ship a deterministic wrapper instead: it starts Xvfb, waits for the
 # display with xdpyinfo, then runs the command.
@@ -59,15 +67,15 @@ RUN apt-get install -y xvfb libgl1-mesa-dri mesa-utils libcanberra-gtk-module &&
 COPY headless /usr/local/bin/headless
 RUN chmod +x /usr/local/bin/headless
 
-# Truly headless KITTI examples. The stock mono_kitti / stereo_kitti hard-code
+# Truly headless examples. The stock mono_kitti / stereo_kitti / rgbd_tum hard-code
 # `true` for System's bUseViewer argument, so they always build a Pangolin GL
 # window *and* an OpenCV highgui window. Under Xvfb that combination aborts with
 #   CommonMakeCurrent: Assertion `oldCtxInfo != NULL' failed
-# partway through a long run (reproduced on KITTI 00 after ~8 min), losing the
+# partway through a run (KITTI 00 after ~8 min, TUM fr1_desk after ~30 s), losing the
 # trajectory that is only written at shutdown. These variants pass `false`
 # instead: no GL, no X, no display of any kind. Same SLAM, same output files.
 RUN P=/Portable_ORB_SLAM2 && set -e && \
-    for pair in "Monocular/mono_kitti MONOCULAR" "Stereo/stereo_kitti STEREO"; do \
+    for pair in "Monocular/mono_kitti MONOCULAR" "Stereo/stereo_kitti STEREO" "RGB-D/rgbd_tum RGBD"; do \
       set -- $pair; src="$P/Examples/$1.cc"; name=$(basename $1); \
       sed "s/ORB_SLAM2::System::$2,true/ORB_SLAM2::System::$2,false/" "$src" > /tmp/${name}_headless.cc; \
       grep -q "ORB_SLAM2::System::$2,false" /tmp/${name}_headless.cc || { echo "viewer-flag patch failed for $name"; exit 1; }; \
