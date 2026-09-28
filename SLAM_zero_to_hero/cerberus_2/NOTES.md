@@ -32,6 +32,12 @@ that:
   through the pose of the frame it was first seen in) and `/vilo/key_poses`. No estimator
   maths is touched. The patch is generated against the pinned commit and `git apply`d in the
   Dockerfile, so it fails loudly if upstream moves.
+  Both publishers are called from `POLoop()`, the 400 Hz proprioceptive loop. Since
+  2026-09-28 they are throttled to 10 Hz of wall time and skipped when nothing
+  subscribes. Before that they ran on every iteration and try-locked the solver mutex
+  400 times a second. The throttle was not the cure for the random divergence (see "Random
+  divergence on CMU Garage" below), but it keeps the readout off the
+  estimator's hot path.
 
 The same patch also publishes the window **as a factor graph**, which is what the estimator
 is really doing and what no upstream topic exposes:
@@ -141,28 +147,112 @@ topics).
 Note the coupling this creates: `interpolateMIPOData` advances its data pointer by the same
 `dt_ros` but then **clamps** it to what the measurement queues actually hold
 (`getMIPOMinLatestTime()`). When the loop runs ahead of the data the EKF integrates over
-`dt_ros` while the data only advanced by less, so the filter's accuracy is tied to the loop
-keeping pace with sim time. Playing at `RATE=0.5` produced a bit-for-bit similar trajectory
-(440.6 m vs 445.4 m on the same window), so on a 32-core host this is not the limiting
-factor — but it is the mechanism to suspect on a slower machine.
+`dt_ros` while the data only advanced by less. It looks like the obvious suspect for runs
+that differ from each other, and it is **not** what made them diverge. Logged per iteration
+at a host load of 40, the sensor time advanced by exactly `dt_ros` in 99.7 % of the loop's
+iterations: after the first sample the estimator sits a constant ~85 ms behind `/clock`, so
+the clamp only bites at start-up. The largest step was 17 ms.
+
+## Random divergence on CMU Garage: the first frames had one IMU sample
+
+Until 2026-09-28 identical runs of CMU Garage gave different answers, and some blew up: the
+dog "flipped" in rviz, z jumped to 20 m and roll to ±π within the first 10 s, or later at
+55 s or 447 s. It looked like thread timing under host load, `-r 0.5`, or rviz under the
+NVIDIA runtime. It was none of those. It was an initialisation bug, fixed by
+`patches/0002-wait-for-imu-before-first-frame.patch`.
+
+**Mechanism.** The body IMU does not reach `VILOEstimator` from its own subscriber. It comes
+through `POLoop()` (`VILOFusion.cpp`), which only starts once every proprioceptive queue
+holds `MIN_PO_QUEUE_SIZE` = 25 samples. The slowest of those queues are the 200 Hz foot
+IMUs, so on CMU Garage the first IMU sample arrives ~0.15 s after the first camera frame.
+`processMeasurements()` waits until *some* IMU sample is newer than the frame, and
+`getBodyIMUInterval()` never checks that the IMU also covers the start of the interval. So:
+
+```
+frame  interval  IMU samples  preintegrated over
+  1    66.7 ms        1          0.155 s      <- the one sample, from beyond the frame
+  2    66.7 ms        1          0.088 s      <- the same sample again
+  3    66.7 ms       31          0.067 s
+```
+
+A preintegration of a single step has a singular covariance. Its square-root information,
+measured, was **8.4e20 and 8.8e26** for those two factors (a normal one is ~1e5). Every one of
+the ~106 "numerical unstable in preintegration" warnings a run used to print came from
+these two factors, checked one by one. When the frames are marginalised that information
+goes into the prior and stays. The gyro bias initialisation, which solves over the first
+ten frames, absorbed the one raw gyro sample: across identical runs the initial bias came out
+anywhere from x = -0.0098 to +0.0017 and z = -0.0076 to +0.0024 rad/s, while the robot's real
+standing bias, averaged straight from the bag, is about (0.0001, 0.0000, -0.0002). The bias
+random walk here (`gyr_w`) lets the estimate move only ~2e-4 rad/s over the whole run, so the
+initial value decides the heading drift for all 644 s.
+
+Which sample the loop happened to grab depends on thread timing, which is why runs differed.
+A prior that ill-conditioned makes every later solve sensitive to tiny differences, which is
+why the failures looked random: at 5 s, at 10 s when the robot starts to walk and vision
+thins out, or minutes later. Rate, load and the GPU runtime only reshuffled the timing:
+
+| before the fix (30-45 s runs) | diverged |
+|---|---|
+| `-r 1`, load 6-46 | 0/12 |
+| `-r 0.5`, load 4-30 | 1/8 |
+| pinned to 2 cores, load 13-66 | 4/35 |
+| rviz under the NVIDIA runtime | 0/3 (3/3 on an earlier day) |
+| St Mary Cemetery, full bag | 2/2 (340 km, 896 km) |
+
+**The fix.** 14 lines in `processMeasurements()`: until the first frame has been
+initialised, drop camera frames older than the first IMU sample. Nothing is clamped or
+filtered on the output; the estimator simply starts two frames later, with IMU under every
+frame. After it: 0 warnings, and the initial bias comes out (0.0002..0.0004,
+-0.0002..0.0000, 0.0000..0.0003) in every run. Same N-run protocol:
+
+| after the fix | diverged |
+|---|---|
+| 30-45 s runs, `-r 1` / `-r 0.5` / 2 cores / NVIDIA rviz, load 4-66 | 0/47 |
+| final image: 12 × `-r 1`, 6 × `-r 0.5`, 3 × rviz on NVIDIA, 1 × rviz on Mesa, load 9-36 | 0/22 |
+| St Mary Cemetery, full bag | 0/3 |
+
+On bags where the IMU already starts before the camera (indoor, Wightman Park) the patch
+never triggers and the results are unchanged.
+
+**The old "good" CMU Garage numbers were wrong.** The run that produced "475.9 m path,
+228.3 m span" had started from an initial gyro bias z of -0.0031, i.e. one noise sample. The
+iPhone GPS that ships next to the bag (`.mat`, 276 fixes with better than 10 m accuracy, at
+the start and end of the circuit outside the garage) settles it. Rigid 2D fit over the whole
+run:
+
+| | path | xy span | end-to-start | z range | RMSE vs GPS |
+|---|---|---|---|---|---|
+| before, six runs | 474.5-474.9 m | 202-250 m | 101-234 m | 37 m | **47-104 m** |
+| after, eight runs | 475.0-478.7 m | 267-271 m | 354-357 m | 7-10 m | **4.6-4.9 m** |
+
+4.6-4.9 m is the GPS's own accuracy (median 4.8 m). The GPS is a MATLAB Mobile `timetable`,
+which `scipy.io.loadmat` cannot decode; the lat/lon/time arrays are plain float64 inside the
+`__function_workspace__` blob and were read from there (phone clock = bag clock - 14397 s).
+
+One thing the fix does not change: at 376.7 s a burst of new visual outliers raises the
+visual cost from ~600 to 2.4e4 for one frame. The Huber loss lets them pull the newest pose
+up by ~0.15 m (0.37 m in the logged output) before `outliersRejection()` removes them, and
+the next frame is back on the track. It happens in every run at the same frame, so the drift
+table reports 2 steps over 25 cm. It is upstream VINS behaviour, not a divergence.
 
 ## estimate_extrinsic must be 0, not upstream's 1
 
 The one substantive config change here. Upstream's `hardware_go1_vilo_config.yaml` sets
 `estimate_extrinsic: 1`, i.e. optimise the camera-IMU transform online around the initial
 guess. That is the right choice on live hardware. On a recorded sequence whose rig transform
-is already in the config it slowly corrupts the heading, and the longer the run the worse it
-gets. CMU Garage, full 644 s, everything else identical:
+is already in the config, `0` is better. CMU Garage, full 644 s, with patch 0002, against the
+iPhone GPS (rigid 2D fit):
 
-| | xy span | end-to-start | Wightman 197 s loop closure |
+| | path | xy span | RMSE vs GPS |
 |---|---|---|---|
-| `estimate_extrinsic: 1` | 430.0 m | 431.7 m | 6.14 m |
-| `estimate_extrinsic: 0` | **228.3 m** | **227.0 m** | **4.54 m** |
+| `estimate_extrinsic: 1` | 476.7 m | 258.4 m | 6.4 m |
+| `estimate_extrinsic: 0` | 478.2-478.7 m | 268-270 m | **4.6-4.7 m** |
 
-The span is the tell. `MIPO`, which never touches the camera and so cannot be affected by
-the extrinsics, independently reports 225.9 m on the same bag: with `0` the fused estimate
-agrees with it, with `1` it does not. `estimate_td` was tried the same way and helps less
-(247.1 m span).
+An earlier version of this section argued from the xy span, taking MIPO's 225.9 m as an
+independent reference. It is not one: MIPO takes its yaw from VILO (`getYawObservation()`),
+so it inherits VILO's heading. Those numbers also predate patch 0002 and came from a bad
+initial gyro bias. On Wightman Park, where the patch never triggers, `0` closes the 197 s loop
+to 4.54 m against 6.14 m for `1`.
 
 ## Indoor sequences: which ones work
 
@@ -192,6 +282,12 @@ volume with continuous contact, proprioception is the stronger signal, and the c
 contribution is what stops it drifting over hundreds of metres outdoors.
 
 ## Mill19 Trail diverges
+
+**Update 2026-09-28:** Mill19 also had the one-IMU-sample start (29-65 "numerical unstable"
+warnings per run). With patch 0002, 3 of 5 120 s runs are clean (75.4 m, 0 jumps) where every
+run used to diverge ~22 s in; the other two and a full 419 s run still diverge ~35 s in, with
+0 warnings. So there is a second problem on this sequence. The experiments below were all
+made before the patch.
 
 The sequence upstream's README showcases as a video does not work with the released code.
 `MIPO` — the camera-free filter — fails first: it tracks correctly for 20 s at 0.5 m/s with
@@ -223,6 +319,14 @@ so foot slip on loose ground breaking the contact assumption is the obvious susp
 `vio`, which never touches the legs, also diverges on it, so that alone does not explain it.
 
 ## The outdoor vertical channel drifts, and I could not fix it
+
+**Update 2026-09-28: most of this was the start-up bug.** Everything below was measured
+before patch 0002, from runs whose initial gyro bias was one noise sample (see "Random
+divergence on CMU Garage"). With the patch the full CMU Garage run ends at z = −9.5 m instead
+of −36.4 m, and the grade regression below gives a slope of −0.0164 (0.9°), correlation
+−0.19, instead of −0.0779 and −0.861. The frame-mismatch argument about `LOFactor` still
+holds as code reading, but its measured effect was mostly the tilted initialisation. The
+section is kept as the record of what was tried.
 
 Worth reading before you trust any z number from an outdoor run.
 

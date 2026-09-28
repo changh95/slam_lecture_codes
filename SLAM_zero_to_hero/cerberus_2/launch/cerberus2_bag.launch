@@ -16,7 +16,7 @@
        not in run_demo.sh. -->
   <param name="use_sim_time" value="true" />
 
-  <arg name="config" default="$(find cerberus2)/config/lecture/mill19_trail.yaml" />
+  <arg name="config" default="$(find cerberus2)/config/lecture/cmu_garage.yaml" />
   <arg name="path_viz" default="true" />
   <arg name="leg_viz" default="true" />
   <!-- rviz is deliberately NOT a node here. Started as a roslaunch node it stays

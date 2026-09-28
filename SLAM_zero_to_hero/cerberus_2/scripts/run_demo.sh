@@ -6,8 +6,8 @@
 #   /out    writable results dir     (host: cerberus_2/results/<run>)
 #
 # Env:
-#   BAG=/data/mill19_trail/230628-mil19-trot-07-039-wild1445.bag
-#   CONFIG=<pkg>/config/lecture/mill19_trail.yaml
+#   BAG=/data/cmu_garage/230828-cmu-trot-06-040-east-campus-garage-bad-gps.bag
+#   CONFIG=<pkg>/config/lecture/cmu_garage.yaml
 #   START=          seconds to skip at the start of the bag (rosbag play -s)
 #   DURATION=       seconds of bag to play; empty = whole bag
 #   RATE=1.0        rosbag play rate
@@ -29,8 +29,8 @@
 set -uo pipefail
 
 CATKIN_WS=/home/EstimationUser/estimation_ws
-BAG="${BAG:-/data/mill19_trail/230628-mil19-trot-07-039-wild1445.bag}"
-CONFIG="${CONFIG:-$CATKIN_WS/src/cerberus2/config/lecture/mill19_trail.yaml}"
+BAG="${BAG:-/data/cmu_garage/230828-cmu-trot-06-040-east-campus-garage-bad-gps.bag}"
+CONFIG="${CONFIG:-$CATKIN_WS/src/cerberus2/config/lecture/cmu_garage.yaml}"
 START="${START:-}"
 DURATION="${DURATION:-}"
 RATE="${RATE:-1.0}"
@@ -89,6 +89,17 @@ fi
 echo "[run] bag    : $BAG"
 echo "[run] config : $CONFIG"
 echo "[run] rviz   : $RVIZ   rate: $RATE   duration: ${DURATION:-whole bag}"
+
+# Read the whole bag once so playback comes out of the page cache. rosbag play
+# keeps a wall-clock schedule: if a read stalls on a busy disk it falls behind and
+# then bursts to catch up, the estimator sees the IMU arrive in clumps, and the
+# fused estimate diverges within the first minute. Seen here with a cold 6 GB bag
+# on a shared disk (132 MB/s): playback took 732 s for 644 s of data and the run
+# blew up at 55 s. Free when the bag is already cached.
+echo "[run] pre-reading the bag into the page cache"
+SECONDS=0
+cat "$BAG" >/dev/null
+echo "[run] pre-read: ${SECONDS} s"
 
 roscore >"$OUT/roscore.log" 2>&1 &
 ROSCORE_PID=$!
@@ -179,6 +190,12 @@ echo "[run] rosbag play ${PLAY_ARGS[*]}"
 SECONDS=0
 rosbag play "${PLAY_ARGS[@]}" >"$OUT/rosbag_play.log" 2>&1
 echo "[run] playback wall-clock: ${SECONDS} s"
+# Initialisation health. With patches/0002 a CMU Garage start estimates a gyro bias
+# within a few 1e-4 rad/s of zero and logs 0 "numerical unstable" warnings. Without
+# it, the first frames were preintegrated from one IMU sample: ~100 warnings, a bias
+# that was one noise sample, and runs that diverged at random (NOTES.md).
+echo "[run] init: $(grep -m1 -o 'gyroscope bias initial calibration.*' "$OUT/cerberus2.log" | sed 's/\x1b\[[0-9;]*m//g')"
+echo "[run] 'numerical unstable in preintegration' warnings: $(grep -c 'numerical unstable' "$OUT/cerberus2.log")"
 
 echo "[run] draining 10 s"
 sleep 10

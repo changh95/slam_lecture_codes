@@ -1,16 +1,17 @@
 diff --git a/include/fusion/VILOFusion.hpp b/include/fusion/VILOFusion.hpp
-index e478878..ab0b323 100644
+index e478878..1ec7123 100644
 --- a/include/fusion/VILOFusion.hpp
 +++ b/include/fusion/VILOFusion.hpp
-@@ -23,6 +23,7 @@
+@@ -23,6 +23,8 @@
  #include <sensor_msgs/Imu.h>
  #include <sensor_msgs/JointState.h>
  #include <sensor_msgs/PointCloud.h>
 +#include <visualization_msgs/Marker.h>
++#include <chrono>
  #include <tf/transform_broadcaster.h>
  
  // project files
-@@ -48,6 +49,8 @@ class VILOFusion {
+@@ -48,6 +50,8 @@ class VILOFusion {
  
    void publishPOEstimationResult(const Eigen::VectorXd& x, const Eigen::MatrixXd& P, const Eigen::Matrix<double, NUM_LEG, 1>& contact_est);
  
@@ -19,7 +20,7 @@ index e478878..ab0b323 100644
    void publishVILOEstimationResult(Eigen::Matrix<double, VS_OUTSIZE, 1>& state);
    void publishVILOTF(double timestamp, Eigen::Matrix<double, VS_OUTSIZE, 1>& state, const Eigen::Vector3d& tic, const Eigen::Matrix3d& ric);
  
-@@ -74,6 +77,11 @@ class VILOFusion {
+@@ -74,6 +78,12 @@ class VILOFusion {
    ros::Publisher twist_vilo_pub_;      // VILO twist
    ros::Publisher contact_pub_;         // contact state estimated by MIPO
    ros::Publisher vis_joint_state_pub;  // publish joint state according to robot
@@ -28,11 +29,12 @@ index e478878..ab0b323 100644
 +  ros::Publisher graph_imu_pub_;   // keyframe-to-keyframe IMU preintegration factors
 +  ros::Publisher graph_leg_pub_;   // keyframe-to-keyframe leg-odometry factors
 +  ros::Publisher graph_obs_pub_;   // landmark-to-keyframe reprojection factors
++  std::chrono::steady_clock::time_point last_viz_pub_{};  // 10 Hz throttle for the map/graph publishers
  
    std::thread po_loop_thread_;
    std::thread vilo_loop_thread_;
 diff --git a/include/vilo/VILOEstimator.hpp b/include/vilo/VILOEstimator.hpp
-index 8920faf..99b4aba 100644
+index 8920faf..1595a7f 100644
 --- a/include/vilo/VILOEstimator.hpp
 +++ b/include/vilo/VILOEstimator.hpp
 @@ -60,6 +60,48 @@ class VILOEstimator {
@@ -56,7 +58,7 @@ index 8920faf..99b4aba 100644
 +  // reasons. Reading feature_manager_->feature (a std::list) unlocked while the
 +  // solver inserts and erases is a data race that hangs the caller on a corrupted
 +  // iterator -- observed as the estimator silently stopping partway through a bag.
-+  // And a *blocking* lock would let the 20 Hz visualization stall the solver, so
++  // And a *blocking* lock would let the 10 Hz visualization stall the solver, so
 +  // if the window is busy these simply skip a frame.
 +  void getLocalMap(std::vector<Eigen::Vector3d>& points, std::vector<Eigen::Vector3d>& kf_poses);
 +
@@ -85,7 +87,7 @@ index 8920faf..99b4aba 100644
    enum SolverFlag { INITIAL, NON_LINEAR };
  
 diff --git a/src/fusion/VILOFusion.cpp b/src/fusion/VILOFusion.cpp
-index 16e1293..49cc34d 100644
+index 16e1293..eef459b 100644
 --- a/src/fusion/VILOFusion.cpp
 +++ b/src/fusion/VILOFusion.cpp
 @@ -38,6 +38,11 @@ VILOFusion::VILOFusion(ros::NodeHandle nh) {
@@ -100,16 +102,32 @@ index 16e1293..49cc34d 100644
  
    // initialize the filter
    for (int i = 0; i < 3; i++) {
-@@ -211,6 +216,8 @@ void VILOFusion::POLoop() {
+@@ -211,6 +216,24 @@ void VILOFusion::POLoop() {
      // extract the result from VILO estimator and publish it
      vilo_x = vilo_estimator->outputState();
      publishVILOEstimationResult(vilo_x);
-+    publishVILOLocalMap();
-+    publishVILOFactorGraph();
++    // Visualization only. This loop runs at 400 Hz and the MIPO EKF above is only
++    // accurate while it keeps pace with sim time, and both readouts try-lock the
++    // solver's mutex. Called every iteration, with rviz subscribed, they slowed the
++    // loop enough to diverge the estimate ~10 s into CMU Garage. So: 10 Hz of wall
++    // time, and only while something is listening.
++    {
++      auto viz_now = std::chrono::steady_clock::now();
++      if (viz_now - last_viz_pub_ >= std::chrono::milliseconds(100)) {
++        last_viz_pub_ = viz_now;
++        if (map_points_pub_.getNumSubscribers() + kf_poses_pub_.getNumSubscribers() > 0) {
++          publishVILOLocalMap();
++        }
++        if (graph_imu_pub_.getNumSubscribers() + graph_leg_pub_.getNumSubscribers() +
++                graph_obs_pub_.getNumSubscribers() > 0) {
++          publishVILOFactorGraph();
++        }
++      }
++    }
      publishVILOTF(prev_esti_time, vilo_x, vilo_estimator->getTic(), vilo_estimator->getRic());
  
      /* record end time */
-@@ -412,6 +419,103 @@ void VILOFusion::publishPOEstimationResult(const Eigen::VectorXd& x, const Eigen
+@@ -412,6 +435,103 @@ void VILOFusion::publishPOEstimationResult(const Eigen::VectorXd& x, const Eigen
    return;
  }
  

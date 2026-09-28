@@ -1,0 +1,25 @@
+diff --git a/src/vilo/VILOEstimator.cpp b/src/vilo/VILOEstimator.cpp
+index 73ffd21..e6bad26 100644
+--- a/src/vilo/VILOEstimator.cpp
++++ b/src/vilo/VILOEstimator.cpp
+@@ -457,6 +457,20 @@ void VILOEstimator::processMeasurements() {
+       std::cout << "process measurments" << std::endl;
+       feature = featureBuf.front();
+       curTime = feature.first + td;
++      // The body IMU only reaches this estimator through VILOFusion::POLoop, which starts once
++      // every proprioceptive queue holds MIN_PO_QUEUE_SIZE samples, ~0.15 s after the first
++      // image. A frame older than the first IMU sample would be preintegrated from that single
++      // sample: a one-step IntegrationBase with a singular covariance (sqrt_info ~1e20), which
++      // then lives on in the marginalization prior. Drop such frames until the IMU covers them.
++      if (!initFirstPoseFlag) {
++        std::unique_lock<std::mutex> lock(mBuf);
++        if (accBuf.empty() || accBuf.front().first > curTime) {
++          if (!accBuf.empty()) featureBuf.pop();
++          lock.unlock();
++          std::this_thread::sleep_for(dura);
++          continue;
++        }
++      }
+       while (ros::ok()) {
+         if (BodyIMUAvailable(feature.first + td))
+           break;

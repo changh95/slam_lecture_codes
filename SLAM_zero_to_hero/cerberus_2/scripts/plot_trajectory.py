@@ -92,7 +92,11 @@ DIVERGED_MEAN_SPEED = 3.0  # m/s
 
 
 def is_diverged(a, length):
-    span = a[:, 0].ptp()
+    # A solver blow-up writes NaN positions, and NaN compares False against
+    # every threshold below, so without this a NaN run is reported "ok".
+    if not np.isfinite(a[:, 1:4]).all():
+        return True
+    span = np.ptp(a[:, 0])
     return span > 1.0 and length / span > DIVERGED_MEAN_SPEED
 
 
@@ -172,7 +176,7 @@ def main():
         xyz = a[:, 1:4]
         L = path_length(xyz)
         closure = float(np.linalg.norm(xyz[-1] - xyz[0]))
-        span = float(max(xyz[:, 0].ptp(), xyz[:, 1].ptp()))
+        span = float(max(np.ptp(xyz[:, 0]), np.ptp(xyz[:, 1])))
         bad = is_diverged(a, L)
         style = dict(color=colour, lw=1.2, ls="--", alpha=0.55) if bad else dict(color=colour, lw=1.6)
         if bad:
@@ -190,7 +194,7 @@ def main():
             good_z.append(xyz[:, 2])
 
         mj, njump = max_jump(xyz)
-        print(f"{key:<12}{len(a):>8}{L:>11.1f}{span:>13.1f}{closure:>15.2f}{xyz[:, 2].ptp():>11.2f}"
+        print(f"{key:<12}{len(a):>8}{L:>11.1f}{span:>13.1f}{closure:>15.2f}{np.ptp(xyz[:, 2]):>11.2f}"
               f"{mj:>10.2f}{njump:>7d}  {'DIVERGED' if bad else 'ok'}")
 
     ax_xy.set_title(f"{title} — top-down (x/y)")

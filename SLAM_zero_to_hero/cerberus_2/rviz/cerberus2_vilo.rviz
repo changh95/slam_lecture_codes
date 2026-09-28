@@ -287,7 +287,7 @@ Visualization Manager:
     # leg geometry and the local map while still showing the last ~20 m of path. Scroll out to see a whole circuit, or set
     # RVIZ_DISTANCE / RVIZ_FOCAL / RVIZ_PITCH per run.
     Current:
-      Class: rviz/Orbit
+      Class: slam_zero_to_hero/UnifiedOrbit
       Distance: 14
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.06

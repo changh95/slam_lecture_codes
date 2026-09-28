@@ -81,9 +81,12 @@ RUN mkdir -p $SUPPORT_WS && cd $SUPPORT_WS && \
 # pinhole/MEI/Kannala-Brandt models the feature tracker undistorts with), but the
 # rest of upstream's VINS-Fusion fork is dead weight here: vins_estimator is an
 # alternative estimator this demo does not run, and global_fusion would drag in
-# GeographicLib. Same fork, same commit as upstream's Dockerfile clones.
+# GeographicLib. Same fork upstream's Dockerfile clones; upstream takes the moving
+# HEAD with --depth 1, pinned here to the commit that HEAD was on 2026-09-28.
+ARG VINS_FUSION_COMMIT=4ef0240d857f68461ca2737eeb86b2f4a900d0c2
 RUN mkdir -p $CATKIN_WS/src && \
-    git clone --depth 1 https://github.com/ShuoYangRobotics/VINS-Fusion.git /tmp/vins && \
+    git clone https://github.com/ShuoYangRobotics/VINS-Fusion.git /tmp/vins && \
+    cd /tmp/vins && git checkout ${VINS_FUSION_COMMIT} && \
     mv /tmp/vins/camera_models $CATKIN_WS/src/ && rm -rf /tmp/vins
 
 # camera_models predates OpenCV 4: Chessboard.cc and CameraCalibration.cc use the
@@ -114,11 +117,24 @@ RUN git clone https://github.com/ShuoYangRobotics/Cerberus2.0.git $CATKIN_WS/src
 #   /vilo/factor_graph_leg    keyframe-chain leg-odometry factors -- the ones that
 #                             make this VILO and not VIO
 #   /vilo/factor_graph_obs    landmark-to-keyframe reprojection factors
-# Estimator maths is untouched: both accessors are read-only.
+# Estimator maths is untouched: both accessors are read-only. The two publishers
+# run from the 400 Hz proprioceptive loop, so they are throttled to 10 Hz and skip
+# entirely when nothing subscribes.
+#
+# 0002 IS an estimator fix, and the reason runs on CMU Garage used to diverge at
+# random. The body IMU reaches VILOEstimator only through the proprioceptive loop,
+# which starts once every leg/IMU queue holds 25 samples -- ~0.15 s after the first
+# camera frame. Upstream then preintegrated frames 1 and 2 from one IMU sample each,
+# giving a singular covariance (sqrt_info ~1e20..1e26, all of the "numerical unstable
+# in preintegration" warnings) that went into the marginalization prior, plus a
+# gyro bias that was one noise sample. The patch drops camera frames until the IMU
+# covers them. See NOTES.md "Random divergence on CMU Garage".
 COPY patches/ /tmp/patches/
 RUN cd $CATKIN_WS/src/cerberus2 && \
     git apply --verbose /tmp/patches/0001-publish-local-map-and-factor-graph.patch && \
-    grep -q "getLocalMap" include/vilo/VILOEstimator.hpp
+    grep -q "getLocalMap" include/vilo/VILOEstimator.hpp && \
+    git apply --verbose /tmp/patches/0002-wait-for-imu-before-first-frame.patch && \
+    grep -q "Drop such frames until the IMU covers them" src/vilo/VILOEstimator.cpp
 
 # The casadi header patch that upstream applies as a devcontainer postStartCommand.
 # casadi's casadi_misc.hpp defines `operator<<(ostream&, const pair<T1,T2>&)`
@@ -187,6 +203,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-noetic-robot-state-publisher ros-noetic-tf2-ros \
       python3-matplotlib python3-scipy python3-numpy && \
     rm -rf /var/lib/apt/lists/*
+
+# Course-wide RViz mouse scheme: left drag rotates, right/middle drag pans, wheel zooms.
+COPY --from=localhost/slam_zero_to_hero:rviz_unified_controls /rviz_unified_controls /opt/rviz_unified_controls
+RUN /opt/rviz_unified_controls/install_ros1.sh /opt/rviz_unified_controls
+# Upstream's own rviz configs get the same controller; only the Views > Current class line.
+RUN for f in cerberus_debug cerberus_elevmap; do \
+      sed -i 's#Class: rviz/Orbit$#Class: slam_zero_to_hero/UnifiedOrbit#' $CATKIN_WS/src/cerberus2/config/rviz/$f.rviz && \
+      grep -q 'Class: slam_zero_to_hero/UnifiedOrbit' $CATKIN_WS/src/cerberus2/config/rviz/$f.rviz || exit 1; \
+    done
 
 # Lecture assets last, for the same cache reason. config/lecture/ holds the
 # per-sequence yaml *and* the two camera calibs, because parameters.cpp resolves

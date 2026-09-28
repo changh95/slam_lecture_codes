@@ -11,6 +11,8 @@ the camera never has to recover on its own.
   - [Cerberus: Low-Drift Visual-Inertial-Leg Odometry For Agile Locomotion](https://ieeexplore.ieee.org/document/10160486) — Yang, Zhang, Fu, Manchester, ICRA 2023
   - [Online Kinematic Calibration for Legged Robots](https://ieeexplore.ieee.org/abstract/document/9807408) — Yang, Choset, Manchester, RA-L / IROS 2022
 - Predecessor: [ShuoYangRobotics/Cerberus](https://github.com/ShuoYangRobotics/Cerberus)
+- **Default dataset**: Cerberus 2.0 Go1 **CMU Garage** (`cmu_garage`, 644 s, 5.96 GB) at
+  `~/data/cerberus2/cmu_garage/`. Every command below uses it unless it says otherwise.
 
 ## The three estimators, and which is which
 
@@ -24,12 +26,11 @@ is the whole vocabulary you need:
 | **VIO** — the visual-inertial half on its own, legs switched off. Ablation only. | stereo + trunk IMU | not shown by default | `vio-<seq>.csv` |
 | ground truth | Optitrack, indoor sequences only | **white** | `gt-<seq>.csv` |
 
-So green vs orange is *with camera* vs *without*. On a good run they sit almost on top of
-each other **horizontally** — on CMU Garage they agree to ~1 % of a 227 m circuit. Vertically
-they diverge, but be careful how you read that: MIPO reports base height above the local
-terrain (flat at 0.24 m by construction, it cannot see elevation at all), while VILO's z
-**drifts**, on this sequence at a near-constant 5.7 cm/s. It is not measuring the ramp. See
-"the vertical channel drifts" below. `SIPO` and `vilo-s`/`vilo-tm` also exist (single-IMU and
+So green vs orange is *with camera* vs *without*. Horizontally they trace the same circuit;
+note that MIPO is not fully independent, it takes its yaw from VILO. Vertically they differ:
+MIPO reports base height above the local terrain (flat at 0.24 m by construction, it cannot
+see elevation at all), while VILO's z drifts by ~10 m over the 644 s CMU Garage run. See "the
+vertical channel" below. `SIPO` and `vilo-s`/`vilo-tm` also exist (single-IMU and
 tightly-coupled leg-factor variants); see `FUSION_TYPE`/`KF_TYPE` below.
 
 ## Build
@@ -39,7 +40,7 @@ podman build -t slam_zero_to_hero:cerberus_2 .
 ```
 
 5.4 GB. Bakes ROS Noetic, casadi 3.5.5 (built from source — the long step), Ceres 1.14 from
-apt, a CPU libtorch, VINS-Fusion's `camera_models`, and Cerberus 2.0 itself into
+apt, a CPU libtorch 1.13.1, VINS-Fusion's `camera_models` (pinned at `4ef0240`), and Cerberus 2.0 itself into
 `/home/EstimationUser/estimation_ws`, then asserts the binaries, launch file and configs all
 resolve.
 
@@ -71,6 +72,10 @@ python3 ../download_cerberus2.py indoor_square_31s # 291 MB, the only one with g
 python3 ../download_cerberus2.py --list            # all 11 sequences, ~33 GB
 ```
 
+Name the sequence: with no argument the script fetches `mill19_trail` **and** `cmu_garage`
+(9.8 GB), and Mill19 is one of the sequences that diverges. It checks each file's exact byte
+count, so a re-run on a finished download does nothing.
+
 Every bag carries the same eight topics: `/unitree_hardware/imu` (400 Hz),
 `/unitree_hardware/joint_foot` (400 Hz, 12 joints + 4 foot-force channels),
 `/WT901_47..50_Data` (the four foot IMUs, 200 Hz, gyro in **deg/s**), and the rectified stereo
@@ -79,8 +84,23 @@ IR pair `/camera_forward/infra{1,2}/image_rect_raw` (15 Hz).
 **Ground truth.** Only the indoor bags have a pose topic (`/natnet_ros/Shuo_Go1/pose`), which
 `cerberus2_main` writes out as `gt-<seq>.csv` and `plot_trajectory.py` turns into an ATE.
 Outdoor bags have none — what ships beside them is a MATLAB Mobile `.mat` of iPhone GPS/IMU
-stored as `timetable` **objects** (MCOS) that `scipy.io.loadmat` cannot decode; converting it
-needs MATLAB and upstream's `script/matlab/mobile_gps_process/`.
+stored as `timetable` **objects** (MCOS) that `scipy.io.loadmat` cannot decode; upstream
+converts it with MATLAB and `script/matlab/mobile_gps_process/`. For CMU Garage the GPS
+arrays were read straight out of the file's binary blob to check the fix below (see
+[NOTES.md](NOTES.md)); `plot_trajectory.py` does not do that.
+
+## Supported datasets
+
+| Sequence | Config | Status |
+|---|---|---|
+| **CMU Garage** `cmu_garage` (default) | `cmu_garage.yaml` | ✅ 2026-09-28, with patch 0002: 478 m path, 4.6 m RMSE against the iPhone GPS, same result in every run |
+| Wightman Park flying trot `wightman_park_flying_trot` | `mill19_trail.yaml` + `BAG=`, `DURATION=197` | ✅ 2026-09-28: 135 m loop closes to 4.2-4.7 m |
+| indoor 31 s square `indoor_square_31s` (Optitrack) | `indoor_mocap.yaml`, `RVIZ_DISTANCE=5` | ✅ 2026-09-28: ATE 0.065-0.094 m (`vilo-m`), 0.041 m (`mipo`), 0.077 m (`vio`) |
+| St Mary Cemetery | `cmu_garage.yaml` + `BAG=` | ✅ 2026-09-28, with patch 0002: 411 m, 0 jumps in 3 of 3 runs (it diverged every time before) |
+| Mill19 Trail | `mill19_trail.yaml` | ⚠️ 120 s: 3 of 5 runs clean (75.4 m), 2 diverge ~35 s in; the full 419 s diverged |
+| indoor 93 s square | — | ❌ diverges, see "Sequences that do not work" |
+| indoor two loops `indoor_two_loops_27hz` | — | ❌ foot IMUs at 27 Hz; the estimator stops emitting after ~11 s |
+| Frick Park, Schenley Park, Wightman trot bridge | — | not tried |
 
 ## Run
 
@@ -96,21 +116,63 @@ podman run --rm \
 
 Writes `vilo-m-cmu_garage.csv` (`time, x, y, z, roll, pitch, yaw, vx, vy, vz`), a
 `trajectory.png`, and a drift table to stdout. Add `-e DURATION=140` for a two-minute taste.
+Takes 11.5 min wall-clock: the bag is played in real time (646 s) after a one-off read of the
+whole bag into the page cache.
+
+Re-run on 2026-09-28 with exactly this command, on the current image:
+
+```
+variant        poses   path [m]  span xy [m]  end-start [m]  z rng [m]  max step  >25cm  state
+vilo-m         23330      478.7        268.0         357.15      10.00      0.38      2  ok
+[run] init: gyroscope bias initial calibration 0.00028 -0.00010 0.00013
+[run] 'numerical unstable in preintegration' warnings: 0
+```
+
+![CMU Garage, re-run 2026-09-28](docs/trajectory_cmu_garage.png)
+
+The two ">25cm" steps are one frame at 376.7 s, identical in every run: a burst of new visual
+outliers pulls the newest pose up for one frame before outlier rejection drops them. It is
+upstream VINS behaviour, not a divergence; see [NOTES.md](NOTES.md).
+
+Against the iPhone GPS that ships with the bag (276 fixes better than 10 m, at both ends of the
+circuit outside the garage), after a rigid 2D fit, the whole run is off by **4.6 m RMS**, which
+is the GPS's own accuracy:
+
+![CMU Garage against GPS](docs/gps_cmu_garage.png)
+
+**It used to diverge at random; patch 0002 fixed that.** Until 2026-09-28 identical runs gave
+different answers and some blew up (z to 20 m, roll to ±π, then kilometres off), which looked
+like thread timing under host load, `-r 0.5`, or rviz on the GPU. The real cause was the
+initialisation. The body IMU reaches the visual-inertial estimator only after the
+proprioceptive loop has 25 samples in every leg/IMU queue, ~0.15 s after the first camera
+frame, and upstream preintegrated the first two frames from **one** IMU sample each. That
+gave a singular covariance (every one of the ~106 "numerical unstable" warnings a run used to
+print) which went into the sliding window's prior, and an initial gyro bias that was a single
+noise sample. [`patches/0002-wait-for-imu-before-first-frame.patch`](patches/) drops camera
+frames until the IMU covers them. Measured on this host, most runs at load 10-60:
+
+| | runs diverged, before | after |
+|---|---|---|
+| 30-45 s, `-r 1` / `-r 0.5` / 2 cores / rviz on NVIDIA | 5/58 | **0/69** |
+| full bag | varies from run to run: 101-234 m end-to-start, 47-104 m off the GPS | 8/8 the same: 4.6-4.9 m off the GPS |
+| St Mary Cemetery, full bag | 2/2 | 0/3 |
+
+`run_demo.sh` still prints the two health lines: a good start estimates a gyro bias within a
+few 1e-4 rad/s of zero and logs **0** "numerical unstable" warnings. The whole story, with the
+per-condition numbers, is in [NOTES.md](NOTES.md).
 
 ### With the GUI
 
 ```bash
 mkdir -p results/cmu_garage_gui
 podman run --rm \
-  --runtime=/usr/bin/nvidia-container-runtime \
-  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
   -e DISPLAY=$DISPLAY -e XDG_RUNTIME_DIR=/tmp/runtime-root \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v ~/data/cerberus2:/data:ro \
   -v "$PWD/results/cmu_garage_gui":/out:rw \
   -e BAG=/data/cmu_garage/230828-cmu-trot-06-040-east-campus-garage-bad-gps.bag \
   -e CONFIG=/home/EstimationUser/estimation_ws/src/cerberus2/config/lecture/cmu_garage.yaml \
-  -e RVIZ=true -e SHOT_AT=320 \
+  -e DURATION=140 -e RVIZ=true -e SHOT_AT=120 \
   slam_zero_to_hero:cerberus_2 bash /opt/cerberus2_demo/run_demo.sh
 ```
 
@@ -119,12 +181,30 @@ No `xhost` change and no `--net=host` needed. The rviz camera **follows the robo
 about ten keyframes around the current pose — so a world-anchored view loses it within
 seconds. Screenshots land in `/out` at `SHOT_AT` seconds and at end of playback.
 
+The shot 120 s in: fused path (green), the keyframes (orange), landmarks (cyan) and the
+reprojection fan (blue).
+
+**Mouse:** left drag rotates, wheel zooms, right (or middle, or Shift+left) drag pans, the
+course-wide scheme from [`../rviz_unified_controls`](../rviz_unified_controls). The view
+controller is `slam_zero_to_hero/UnifiedOrbit`, set in `rviz/cerberus2_vilo.rviz` and in
+upstream's own `cerberus_debug.rviz` / `cerberus_elevmap.rviz`; rviz loads it with no plugin
+errors.
+
+![rviz, CMU Garage 120 s in](docs/rviz_cmu_garage_20260928_mid.png)
+
+rviz renders with the image's Mesa OpenGL at 30 fps, so the command needs no GPU flags. Adding
+`--runtime=/usr/bin/nvidia-container-runtime -e NVIDIA_VISIBLE_DEVICES=all -e
+NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility` renders on the GPU instead and works too
+(3 of 3 runs clean). The divergence once blamed on it was the initialisation bug above. rviz
+may log a `Segmentation fault` as `run_demo.sh` shuts it down; that is after both screenshots
+and the CSV are written.
+
 ### Knobs
 
 | Env | Meaning |
 |---|---|
 | `BAG`, `CONFIG` | bag path and sequence config (`config/lecture/{cmu_garage,mill19_trail,indoor_mocap}.yaml`) |
-| `START`, `DURATION`, `RATE` | `rosbag play -s / -u / -r` |
+| `START`, `DURATION`, `RATE` | `rosbag play -s / -u / -r`. `RATE=0.5` gives the same result as 1.0 |
 | `RVIZ=true`, `SHOT_AT=90` | rviz on the host X display; screenshot this many seconds in |
 | `RVIZ_DISTANCE`, `RVIZ_FOCAL`, `RVIZ_PITCH` | orbit camera; the shipped view suits an outdoor run, an indoor 3 m square wants `RVIZ_DISTANCE=5` |
 | `FUSION_TYPE` | `0` = VIO **and** MIPO baselines, `1` = fuse leg velocity (**Cerberus 2.0**), `2` = tightly-coupled leg factor |
@@ -178,10 +258,11 @@ tracked-image one — so the graph and the landmarks come from [`patches/`](patc
 from `scripts/pose_to_path.py`, and the legs from `robot_state_publisher` on a topic upstream
 publishes but never consumes. See [NOTES.md](NOTES.md).
 
-The whole 644 s with both ablations. Fused and proprioception-only trace the *same* 227 m
-circuit for eleven minutes; **stereo VIO on its own diverges within 30 s**. On a trotting
-quadruped it is the legs that keep the estimate alive — which is the papers' claim, in one
-picture.
+The whole 644 s with both ablations (`FUSION_TYPE=0` gives `mipo` and `vio`). With patch 0002
+all three trace the same circuit: 4.6 m (fused), 6.0 m (MIPO) and 5.6 m (VIO) RMS against the
+GPS. Before the patch this figure showed stereo VIO diverging within 30 s, which was the
+initialisation bug, not VIO. What the legs buy on this sequence is height: VIO climbs 7 m, the
+fused estimate drifts 10 m down, MIPO is flat by construction.
 
 ![CMU Garage ablation](docs/ablation_cmu_garage.png)
 
@@ -202,15 +283,14 @@ initialisation, which is how a visibly jumping estimate is told from smooth drif
 
 | Sequence | Window | Variant | Path | xy span | end→start | max step | Verdict |
 |---|---|---|---|---|---|---|---|
-| **CMU Garage** | 644 s (full) | `vilo-m` | 476 m | **228.3 m** | 227.0 m | 0.30 m | ✅ the demo, **horizontally**. Same circuit as MIPO for 11 min. Vertical channel drifts, below |
-| **CMU Garage** | 644 s | `mipo` | 474 m | **225.9 m** | 223.9 m | 0.14 m | ✅ agrees with the fused estimate to ~1 % of span |
-| **CMU Garage** | 644 s | `vio` | 568 km | — | — | — | ❌ diverged, as the ablation figure shows |
-| **CMU Garage** | 140 s | `vilo-m` | 91.8 m | 68.2 m | 75.4 m | 0.30 m | ✅ tracks the 7 m ramp |
-| **Wightman Park** flying trot | 197 s (upstream's own `-u 197`) | `vilo-m` | 136.9 m | 43.7 m | **4.54 m** | 0.30 m | ✅ closed loop, closes to **3.3 % of path** |
-| **indoor 31 s square** (Optitrack) | 31 s | `vilo-m` / `mipo` / `vio` | 15 m | 3.6 m | 0.2 m | 0.08 / 0.04 / 0.39 m | ✅ **ATE 0.070 / 0.045 / 0.148 m** vs mocap |
-| Mill19 Trail | any | all variants | — | — | — | — | ❌ diverges ~22 s in |
-| St Mary Cemetery (706 s) | any | `vilo-m` | — | — | — | 670 km | ❌ diverges, 56 jumps > 25 cm in the first 40 s |
-| indoor 93 s square | 93 s | all variants | — | — | — | — | ❌ diverges |
+| **CMU Garage** | 644 s (full) | `vilo-m` | 478 m | 268-270 m | 357 m | 0.38 m | ✅ **4.6 m RMS vs GPS**, same in every run. The 0.38 m step is the one-frame outlier blip at 376.7 s |
+| **CMU Garage** | 644 s | `mipo` | 472 m | 281 m | 350 m | 0.50 m | ✅ 6.0 m RMS vs GPS (yaw comes from VIO) |
+| **CMU Garage** | 644 s | `vio` | 493 m | 280 m | 353 m | 0.33 m | ✅ 5.6 m RMS vs GPS, but z climbs 7 m |
+| **Wightman Park** flying trot | 197 s (upstream's own `-u 197`) | `vilo-m` | 135 m | 43.5 m | **4.2-4.7 m** | 0.22 m | ✅ closed loop, closes to ~3.3 % of path |
+| **St Mary Cemetery** | 706 s (full) | `vilo-m` | 411 m | 204 m | 212-218 m | 0.16 m | ✅ with patch 0002; diverged in 2 of 2 runs without it |
+| **indoor 31 s square** (Optitrack) | 31 s | `vilo-m` / `mipo` / `vio` | 15 m | 3.6 m | 0.2 m | 0.09 / 0.06 / 0.23 m | ✅ **ATE 0.065 / 0.041 / 0.077 m** vs mocap |
+| Mill19 Trail | 120 s | `vilo-m` | 75.4 m | 54 m | 70 m | 0.13 m | ⚠️ 3 of 5 runs; the other 2 diverge ~35 s in, and so did the full 419 s |
+| indoor 93 s square | 93 s | `vilo-m` | — | — | — | 4.6 m | ❌ diverges |
 
 The indoor ATE, rigidly aligned (Umeyama, rotation+translation, no scale) over 11.7 m of
 mocap path, is the one place a real number is available — and it orders exactly as the papers
@@ -218,11 +298,15 @@ argue:
 
 | variant | ATE RMSE | ATE max | RMSE / path |
 |---|---|---|---|
-| `mipo` — 5 IMUs + joints, no camera | **0.045 m** | 0.162 m | 0.38 % |
-| `vilo-m` — fused | **0.070 m** | 0.176 m | 0.60 % |
-| `vio` — stereo + trunk IMU, no legs | **0.148 m** | 0.411 m | 1.26 % |
+| `mipo` — 5 IMUs + joints, no camera | **0.041 m** | 0.274 m | 0.35 % |
+| `vilo-m` — fused | **0.065 m** | 0.127 m | 0.56 % |
+| `vio` — stereo + trunk IMU, no legs | **0.077 m** | 0.209 m | 0.65 % |
 
-Dropping the legs roughly doubles the error. MIPO alone edging out the fused estimate at
+(2026-09-28 re-run; the 2026-08 numbers were 0.045 / 0.070 / 0.148 m. `vilo-m` varies
+0.065-0.117 m between identical runs on this bag, which the patch does not touch, because
+the IMU already starts before the camera here.)
+
+Dropping the legs costs accuracy. MIPO alone edging out the fused estimate at
 0.4 m/s in a 3 m box is not a contradiction: with continuous contact, proprioception is the
 stronger signal there, and the camera is what stops it drifting over hundreds of metres
 outdoors — which is what the CMU Garage figures show.
@@ -231,74 +315,46 @@ outdoors — which is what the CMU Garage figures show.
 
 The shipped configs set **`estimate_extrinsic: 0`**, not upstream's `1`. Online camera-IMU
 extrinsic estimation is right on live hardware; on a recorded sequence whose rig transform is
-already in the config it slowly corrupts the heading. Same bag, everything else identical:
+already in the config, fixing it is better. Same bag, everything else identical:
 
-| | xy span | end→start | Wightman loop closure |
-|---|---|---|---|
-| `estimate_extrinsic: 1` (upstream) | 430.0 m | 431.7 m | 6.14 m |
-| `estimate_extrinsic: 0` (here) | **228.3 m** | **227.0 m** | **4.54 m** |
-
-228.3 m is the tell: MIPO, which never touches the camera, independently reports 225.9 m on
-the same bag. With `0` the two agree; with `1` they do not. Restore upstream's behaviour with
-`OVERRIDES=estimate_extrinsic=1`.
-
-### The vertical channel drifts — unfixed
-
-`vilo-m` reaches z = −36.9 m over the 644 s CMU Garage run and the height panel looks like a
-clean ramp descent. It is not one, and I could not fix it. What the run's own CSV shows:
-
-- Regressing vertical rate on horizontal speed in 10 s buckets gives **slope −0.0779,
-  correlation −0.861**: the robot "descends" a constant **4.45° grade for exactly as long as
-  it is moving**, and stops descending when it stops. That is a fixed rotation applied to a
-  velocity, not terrain.
-- Body pitch ramps monotonically from −1° to **−27°**, which no trotting Go1 holds.
-
-The cause is identifiable in the code. `LOFactor` is a *displacement* constraint in VILO's
-world frame — residual `(Pj − Pi) − ∫v dt` — while the velocity it integrates is handed over as
-`mipo_x.segment<3>(3)`, MIPO's velocity in **MIPO's own world frame**. The two filters
-gravity-align their world frames independently and nothing relates them, so a constant ~4.45°
-offset becomes a steady fake grade.
-
-Two fixes were tried and **both are worse**, over the full bag:
-
-| | final z | grade |
+| | CMU Garage, RMSE vs GPS | Wightman loop closure |
 |---|---|---|
-| upstream as-is (`vilo_fusion_type: 1`, shipped) | −36.4 m | **+4.45°** |
-| rotate the velocity through the body frame with `R_vilo · R_mipo^T` | +60.5 m | −7.11° |
-| `vilo_fusion_type: 2`, tightly-coupled leg factor | −205.7 m | +27.81° |
+| `estimate_extrinsic: 1` (upstream) | 6.4 m | 6.14 m |
+| `estimate_extrinsic: 0` (here) | **4.6-4.7 m** | **4.54 m** |
 
-The rotation fails because `R_vilo · R_mipo^T` is the difference of two *drifting* attitude
-estimates rather than the constant offset. Type 2 looks better over a 140 s window (−1.01°) and
-is far worse over the full 644 s. Upstream's default is therefore kept as the least-bad option.
-The real fix is to make the leg preintegration accumulate `R_vilo(t)·v_body·dt` internally the
-way the IMU preintegration already does — estimator surgery, documented in
-[NOTES.md](NOTES.md), not attempted here.
+Restore upstream's behaviour with `OVERRIDES=estimate_extrinsic=1`.
 
-**Practical consequence:** trust the horizontal circuit, which is independently corroborated —
-VILO's 228.3 m xy span against MIPO's 225.9 m on the same bag — and treat outdoor z as
-unvalidated. Indoors, where mocap exists, full 3D ATE is 0.070 m over 11.7 m, so this is a
-long-run effect, not a broken vertical channel per se.
+### The vertical channel
+
+`vilo-m` ends the 644 s CMU Garage run at z = −9.5 m. Before patch 0002 it ended at −36.5 m,
+and regressing vertical rate on horizontal speed in 10 s buckets gave a constant 4.8° "grade
+while moving" (correlation −0.92): a tilted world frame from a bad initial gyro bias, turning
+forward motion into descent. With the patch the same regression gives **0.9°, correlation
+−0.19**. What is left is ordinary vertical drift, ~1.5 cm/s. The leg factor still integrates
+MIPO's world-frame velocity in VILO's world frame (`LOFactor`, see [NOTES.md](NOTES.md)), so
+treat outdoor z as unvalidated; indoors, full 3D ATE is 0.065 m over 11.7 m.
 
 ### Sequences that do not work
 
-**Mill19 Trail** — the one upstream's README showcases as a video — diverges ~22 s in, and so
-does **St Mary Cemetery** and the **93 s indoor square**. `MIPO`, the camera-free filter,
-fails first on Mill19: correct for 20 s at 0.5 m/s with base height pinned at 0.24 m, then
-velocity ramps linearly to 24 m/s. Ruled out by experiment: playback rate,
+**The 93 s indoor square** diverges with or without the patch. **Mill19 Trail** — the one
+upstream's README showcases as a video — used to diverge ~22 s in every time; with patch 0002
+3 of 5 120 s runs are clean, the other two and the full 419 s run still diverge ~35 s in, so a
+second problem remains there. `MIPO`, the camera-free filter, is the part that fails on
+Mill19: velocity ramps linearly to tens of m/s. Ruled out by experiment: playback rate,
 `init_base_height`, bag start offset, message gaps, foot-IMU units, the WT901→leg assignment,
-and the extrinsics. Each of those experiments, and the rest of the archaeology, is in
-[NOTES.md](NOTES.md).
+and the extrinsics. The details are in [NOTES.md](NOTES.md).
 
 ## Layout
 
 ```
 Dockerfile                    build from source, upstream pinned at main@d81c394
-patches/                      reinstates the landmark publishing upstream commented out
+patches/                      0001 reinstates the landmark publishing upstream commented out;
+                              0002 fixes the start-up bug that made runs diverge at random
 config/lecture/*.yaml         per-sequence configs + the two RealSense calibs
 launch/cerberus2_bag.launch   estimator, pose_to_path, leg robot_state_publisher, and the
                               rosparam topics upstream never sets
 rviz/cerberus2_vilo.rviz      landmarks, both trajectories, ground truth, legs, tracks
-scripts/run_demo.sh           play, screenshot, drain, plot
+scripts/run_demo.sh           pre-read, play, screenshot, drain, init-health lines, plot
 scripts/pose_to_path.py       pose streams -> nav_msgs/Path (upstream publishes none)
 scripts/plot_trajectory.py    figures, drift table, ATE against mocap
 ../download_cerberus2.py      dataset downloader
