@@ -43,16 +43,25 @@ RUN git clone https://github.com/strasdat/Sophus.git /tmp/Sophus && \
 ENV Sophus_DIR=/usr/local/share/sophus/cmake
 
 # Livox-SDK v1 (FAST-LIVO2 uses the original SDK + livox_ros_driver, NOT SDK2/driver2)
+# Upstream commits pinned (the versions verified on 2026-09-27).
+ARG LIVOX_SDK_COMMIT=9306596a2bf15c1343bc023b497465ed0a32909d
+ARG LIVOX_DRIVER_COMMIT=3d240d5666129e1a3052e78ee8487a04b08fdda3
+ARG VIKIT_COMMIT=6c886c8e5d83997806e00294826d528cea3581dd
+ARG FAST_LIVO2_COMMIT=0d2c0346107b75b59934975adec9a6eeeb913c64
+
 RUN git clone https://github.com/Livox-SDK/Livox-SDK.git /tmp/Livox-SDK && \
-    cd /tmp/Livox-SDK && \
+    cd /tmp/Livox-SDK && git checkout ${LIVOX_SDK_COMMIT} && \
     mkdir -p build && cd build && cmake .. && make -j$(nproc) && make install && ldconfig && \
     rm -rf /tmp/Livox-SDK
 
 # Build catkin workspace: livox_ros_driver + rpg_vikit (FAST-LIVO2 fork) + FAST-LIVO2
 RUN mkdir -p /catkin_ws/src && cd /catkin_ws/src && \
     git clone https://github.com/Livox-SDK/livox_ros_driver.git && \
+    git -C livox_ros_driver checkout ${LIVOX_DRIVER_COMMIT} && \
     git clone https://github.com/xuankuzcr/rpg_vikit.git && \
-    git clone https://github.com/hku-mars/FAST-LIVO2.git
+    git -C rpg_vikit checkout ${VIKIT_COMMIT} && \
+    git clone https://github.com/hku-mars/FAST-LIVO2.git && \
+    git -C FAST-LIVO2 checkout ${FAST_LIVO2_COMMIT}
 
 WORKDIR /catkin_ws
 RUN . /opt/ros/noetic/setup.sh && \
@@ -74,9 +83,21 @@ RUN sed -i "6i source \"/catkin_ws/devel/setup.bash\"" /ros_entrypoint.sh
 #     'raw_sub' is registered, so the republish node cannot subscribe and the image
 #     view stays empty on bags that ship compressed images.
 # Kept as its own layer after catkin_make so the GUI costs one cheap rebuild.
+# xvfb + x11-utils (xdpyinfo) + imagemagick (import): headless rviz screenshots
+#   via capture_rviz.sh, no host X server involved.
 RUN apt-get update -y && apt-get install -y \
-      ros-noetic-rviz ros-noetic-compressed-image-transport && \
+      ros-noetic-rviz ros-noetic-compressed-image-transport \
+      xvfb x11-utils imagemagick && \
     rm -rf /var/lib/apt/lists/*
+
+# Course-wide RViz mouse scheme: left drag rotates, right/middle drag pans, wheel zooms.
+COPY --from=localhost/slam_zero_to_hero:rviz_unified_controls /rviz_unified_controls /opt/rviz_unified_controls
+RUN /opt/rviz_unified_controls/install_ros1.sh /opt/rviz_unified_controls
+# Switch upstream's rviz configs to it. Only Views > Current is touched (6-space
+# indent, no list dash); the Saved views keep rviz/Orbit.
+RUN sed -i -E 's#^      Class: rviz/ThirdPersonFollower$#      Class: slam_zero_to_hero/UnifiedThirdPersonFollower#' \
+      /catkin_ws/src/FAST-LIVO2/rviz_cfg/*.rviz && \
+    test "$(grep -l 'Class: slam_zero_to_hero/UnifiedThirdPersonFollower' /catkin_ws/src/FAST-LIVO2/rviz_cfg/*.rviz | wc -l)" -eq 4
 
 WORKDIR /data
 

@@ -24,10 +24,11 @@ The image bakes:
 |---|---|
 | Base | `ros:noetic` |
 | Sophus | `strasdat/Sophus@a621ff` (non-templated; patched for `complex.real()` + adds `SophusConfig.cmake`) |
-| Livox-SDK (v1) | upstream HEAD |
-| `livox_ros_driver` (v1) | upstream HEAD — **not** SDK2/driver2; FAST-LIVO2 still expects v1 |
-| `rpg_vikit` (FAST-LIVO2 fork) | `xuankuzcr/rpg_vikit` HEAD |
-| `FAST-LIVO2` | `hku-mars/FAST-LIVO2` HEAD |
+| Livox-SDK (v1) | `Livox-SDK/Livox-SDK@9306596` |
+| `livox_ros_driver` (v1) | `Livox-SDK/livox_ros_driver@3d240d5` — **not** SDK2/driver2; FAST-LIVO2 still expects v1 |
+| `rpg_vikit` (FAST-LIVO2 fork) | `xuankuzcr/rpg_vikit@6c886c8` |
+| `FAST-LIVO2` | `hku-mars/FAST-LIVO2@0d2c034` (2026-03-08) |
+| GUI / capture | `ros-noetic-rviz`, `ros-noetic-compressed-image-transport`, `xvfb`, `x11-utils`, `imagemagick` |
 
 A post-build smoke test (`rospack find fast_livo` + `test -x fastlivo_mapping`) fails the image if the entrypoint binary is missing, so `podman build` succeeding implies the runtime exists.
 
@@ -55,17 +56,17 @@ timeout 1800 podman run --rm \
 
 Bag contents (135 s): `/livox/lidar` 1355 × `livox_ros_driver/CustomMsg`, `/livox/imu` 27,447 msgs (~203 Hz), `/left_camera/image` 1355 raw `sensor_msgs/Image` — matching `avia.yaml`'s topic names exactly.
 
-Last verified: Ryzen 9 7950X, 2026-08-05.
+Last verified: 2026-09-27 on a shared 32-core host (numbers below); first verified on an idle Ryzen 9 7950X, 2026-08-05 (timings in brackets).
 
 | Measured | Value |
 |---|---|
 | Poses | **1351** of 1355 scans (4 go to IMU/VIO init) |
 | Pose rate | 10.0155 Hz over a 135.000 s span |
-| Path length | **67.417 m** |
+| Path length | **67.433 m** (67.417 m on 2026-08-05; 67.458 m in the rviz run — runs are not bit-identical) |
 | Start → end | **0.040 m** — this sequence *is* a closed loop, so 4 cm over 67 m ≈ **0.06 % drift** |
-| Extent | x [−17.70, 1.36], y [−19.21, 3.10], z [−0.00, 1.08] m (a planar ~19 × 22 m walk) |
-| LIO cost | `Average Total Time` **14.12 ms**/frame |
-| VIO cost | `Average Total Time` **4.71 ms**/frame |
+| Extent | x [−17.71, 1.36], y [−19.22, 3.10], z [−0.00, 1.08] m — an out-and-back walk along one street (PCA std 9.36 m vs 0.61 m), farthest point 26.1 m from start |
+| LIO cost | `Average Total Time` **36.55 ms**/frame (14.12 ms idle 7950X) |
+| VIO cost | `Average Total Time` **7.81 ms**/frame (4.71 ms idle 7950X) |
 | Quaternion norms | 1.000000 ± 2.8e-07, zero NaNs |
 
 Because it returns to its start, this is the sequence to use when you want a drift number out of pure odometry — no ground truth or loop-closure module needed. Contrast Hilti below, where start and end are 21.4 m apart.
@@ -79,23 +80,9 @@ Two things to know about this configuration:
 
 ### Watching it run (GUI on your desktop)
 
-Add `RVIZ=true` plus the X11 + GPU flags to the command above. `mapping_avia.launch` starts rviz with the bundled `rviz_cfg/fast_livo2.rviz`, which shows the colourized map building up alongside the `/rgb_img` camera view — the clearest way to see that this is LiDAR-**visual** odometry and not LIO alone:
+The exact commands (live rviz on the desktop, and a headless Xvfb screenshot via `capture_rviz.sh`) are in the [README](README.md#visualization). `mapping_avia.launch` starts rviz with `rviz_cfg/fast_livo2.rviz`, which shows the colourized map building up alongside the `/rgb_img` camera view — the clearest way to see that this is LiDAR-**visual** odometry and not LIO alone. Upstream's view is a `ThirdPersonFollower` close-up locked to the `drone` frame, so the README mounts `config/fast_livo2_overview.rviz` over it: the same file with only the view changed to a fixed Orbit over the whole walk (focal point (−8, −8, 0), distance 42 m, pitch 1.05) and a 1920×1080 window. Both views use the course-wide mouse plugins (`slam_zero_to_hero/UnifiedOrbit` here, `UnifiedThirdPersonFollower` in the upstream files, switched by a `sed` in the Dockerfile that touches only `Views > Current`; the `Saved` views keep `rviz/Orbit`). A right drag pans. In the follower views the pan only acts when the drag starts on the ground plane, the same as a stock middle drag. Verified 2026-09-28: live on the host display at 31 fps, no plugin errors for any of the five configs, and `mouse_test.sh` passes for both classes on this image.
 
-```bash
-mkdir -p results/gui
-timeout 1800 podman run --rm \
-  --runtime=/usr/bin/nvidia-container-runtime \
-  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
-  -e DISPLAY=$DISPLAY -e XDG_RUNTIME_DIR=/tmp/runtime-root \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v ~/data/fast_livo2:/data:ro \
-  -v "$PWD/results/gui":/catkin_ws/src/FAST-LIVO2/Log/result:rw \
-  -v "$PWD/results/gui":/out:rw \
-  -v "$PWD/config/avia_retail_street.yaml":/catkin_ws/src/FAST-LIVO2/config/avia.yaml:ro \
-  -v "$PWD/run_avia.sh":/run.sh:ro \
-  -e RVIZ=true \
-  slam_zero_to_hero:fast_livo2 bash /run.sh
-```
+Headless capture notes: rviz runs on Xvfb with Mesa llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1`), which keeps up with the 10 Hz map at 1× playback. Set `DISABLE_ROS1_EOL_WARNINGS=1` — current Noetic rviz otherwise opens a modal "ROS Noetic goes end-of-life" dialog over the 3D view, which ends up in every screenshot.
 
 Two packages exist in the image purely for this and are not in `ros:noetic`: `ros-noetic-rviz`, and `ros-noetic-compressed-image-transport` — without the latter only the `raw` transport registers, the launch file's `republish compressed in:=… raw out:=…` node cannot subscribe, and the image view stays blank on bags that ship compressed images.
 
