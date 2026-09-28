@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>rviz_unified_controls</name>
+  <version>1.0.0</version>
+  <description>
+    RViz view controllers with the course-wide mouse scheme: left drag rotates,
+    wheel zooms, right (or middle) drag pans.
+  </description>
+  <maintainer email="user@example.com">User</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rviz</depend>
+  <depend>pluginlib</depend>
+
+  <export>
+    <rviz plugin="${prefix}/plugin_description.xml"/>
+  </export>
+</package>

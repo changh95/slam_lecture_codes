@@ -1,0 +1,13 @@
+# Test image: the plugin built into the cartographer (noetic) image.
+#   podman build -t slam_zero_to_hero:rviz_unified_controls .   # source image, once
+#   podman build -f test/Dockerfile.noetic -t localhost/rviz_controls_test:noetic .
+ARG BASE=localhost/slam_zero_to_hero:cartographer
+FROM ${BASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      xvfb xdotool x11-utils imagemagick python3-yaml && \
+    rm -rf /var/lib/apt/lists/*
+# The install snippet from ../README.md, verbatim.
+COPY --from=localhost/slam_zero_to_hero:rviz_unified_controls /rviz_unified_controls /opt/rviz_unified_controls
+RUN /opt/rviz_unified_controls/install_ros1.sh /opt/rviz_unified_controls
+ENTRYPOINT []
+CMD ["bash"]

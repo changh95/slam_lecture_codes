@@ -1,0 +1,16 @@
+# Test image: the plugin built into the GLIM (jazzy) image. That image ships
+# ROS 2 jazzy without rviz2, so rviz2 is added here first.
+#   podman build -t slam_zero_to_hero:rviz_unified_controls .   # source image, once
+#   podman build -f test/Dockerfile.jazzy -t localhost/rviz_controls_test:jazzy .
+ARG BASE=localhost/slam_zero_to_hero:glim
+FROM ${BASE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-jazzy-rviz2 ros-jazzy-rviz-default-plugins \
+      xvfb xdotool x11-utils imagemagick python3-yaml && \
+    rm -rf /var/lib/apt/lists/*
+ENV ROS_DISTRO=jazzy
+# The install snippet from ../README.md, verbatim.
+COPY --from=localhost/slam_zero_to_hero:rviz_unified_controls /rviz_unified_controls /opt/rviz_unified_controls
+RUN /opt/rviz_unified_controls/install_ros2.sh /opt/rviz_unified_controls
+ENTRYPOINT []
+CMD ["bash"]

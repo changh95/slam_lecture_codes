@@ -1,0 +1,17 @@
+<library path="lib/librviz_unified_controls">
+  <class name="slam_zero_to_hero/UnifiedOrbit"
+         type="slam_zero_to_hero::UnifiedOrbit"
+         base_class_type="rviz::ViewController">
+    <description>Orbit view. Left drag: rotate. Right or middle drag: pan. Wheel: zoom.</description>
+  </class>
+  <class name="slam_zero_to_hero/UnifiedThirdPersonFollower"
+         type="slam_zero_to_hero::UnifiedThirdPersonFollower"
+         base_class_type="rviz::ViewController">
+    <description>Third-person follower view. Left drag: rotate. Right or middle drag: pan. Wheel: zoom.</description>
+  </class>
+  <class name="slam_zero_to_hero/UnifiedTopDownOrtho"
+         type="slam_zero_to_hero::UnifiedTopDownOrtho"
+         base_class_type="rviz::ViewController">
+    <description>Top-down orthographic view. Left drag: rotate. Right or middle drag: pan. Wheel: zoom.</description>
+  </class>
+</library>
