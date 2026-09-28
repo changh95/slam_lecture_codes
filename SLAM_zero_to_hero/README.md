@@ -15,6 +15,9 @@ docker build . --tag slam:base --progress=plain
 echo "xhost +local:docker" >> ~/.profile
 ```
 
+**RViz controls:** every RViz demo uses the same mouse scheme: left drag rotates the view, the wheel zooms, and right drag pans.
+The view-controller plugins live in [`rviz_unified_controls/`](rviz_unified_controls) (ROS 1 Noetic and ROS 2 Humble/Jazzy).
+
 ## Libraries in Base Image
 
 | Library | Description |
@@ -144,13 +147,13 @@ echo "xhost +local:docker" >> ~/.profile
     - 3D LiDAR SLAM
     - Sensor fusion SLAM
   - Chapter 2: Hands-on classical SLAM
-    - [ORB-SLAM 2](orb_slam2)
-    - [Basalt-VIO](basalt)
-    - [Cartographer](cartographer)
-    - [KISS-SLAM](kiss_slam)
-    - [GLIM](glim)
-    - [FAST-LIO2](fast_lio2)
-    - [FAST-LIVO2](fast_livo2)
+    - [ORB-SLAM 2](orb_slam2) — TUM RGB-D fr1_desk
+    - [Basalt-VIO](basalt) — EuRoC MAV MH_01_easy
+    - [Cartographer](cartographer) — Hilti 2022 exp21_outside_building
+    - [KISS-SLAM](kiss_slam) — KITTI odometry 00 (LiDAR)
+    - [GLIM](glim) — Korea_drive ROS 2 bag (GPU)
+    - [FAST-LIO2](fast_lio2) — Hilti 2022 exp14_basement_2
+    - [FAST-LIVO2](fast_livo2) — FAST-LIVO2-Dataset Retail_Street
 - Chapter 5: Advanced SLAM - AI Integration and Hardware Optimization
   - Chapter 1: AI + SLAM
     - Part 5 introduction
@@ -170,13 +173,13 @@ echo "xhost +local:docker" >> ~/.profile
     - SLAM + Auto-encoder / diffusion
     - SLAM + Graph processor
   - Chapter 2: Hands on AI + SLAM
-    - [DSP-SLAM](dsp_slam)
-    - [Kimera](kimera)
-    - [ConceptFusion](concept_fusion)
-    - [Gaussian Splatting SLAM](gaussian_splatting_slam)
-    - [MASt3r-SLAM](mast3r_slam)
-    - [PIN-SLAM](pin_slam)
-    - [Suma++](suma_pp)
+    - [DSP-SLAM](dsp_slam) — KITTI odometry 07 (DSP-SLAM package)
+    - [Kimera](kimera) — uHumans2 office (Kimera-Semantics)
+    - [ConceptFusion](concept_fusion) — ICL-NUIM living room 2
+    - [Gaussian Splatting SLAM](gaussian_splatting_slam) — TUM RGB-D fr1_desk
+    - [MASt3r-SLAM](mast3r_slam) — TUM RGB-D fr1_room
+    - [PIN-SLAM](pin_slam) — KITTI odometry 00 (LiDAR)
+    - [Suma++](suma_pp) — KITTI odometry 00 (LiDAR)
   - Chapter 3: Hardware/Software optimization for SLAM performance
     - Differences between desktop, server, and embedded boards
     - Characteristics of real-time SLAM
@@ -187,16 +190,16 @@ echo "xhost +local:docker" >> ~/.profile
     - Introduction to NVIDIA Jetson
     - [CUDA acceleration hands-on](part5_ch03_08)
 - Final projects
-  - Project 1: [SLAM for autonomous driving](monolane_mapping)
-  - Project 2: [SLAM for drones](svo_pro_open)
-  - Project 3: [SLAM for mobile scanner systems](uamc)
-  - Project 4: [SLAM for quadruped robots](cerberus_2)
-  - Project 5: [SLAM for humanoid robots](nvblox)
-  - Project 6: [SLAM for VR/AR headsets](basalt)
+  - Project 1: [SLAM for autonomous driving](monolane_mapping) — OpenLane rosbags (curve segment 9041488218266405018)
+  - Project 2: [SLAM for drones](svo_pro_open) — UZH-FPV indoor_forward_3 (Snapdragon stereo)
+  - Project 3: [SLAM for mobile scanner systems](uamc) — UAMC COEX lvi_set_2_restamped
+  - Project 4: [SLAM for quadruped robots](cerberus_2) — Cerberus 2.0 Go1 CMU Garage
+  - Project 5: [SLAM for humanoid robots](nvblox) — Humanoid Everyday walk_towards_chair_and_rotate_the_chair ep0
+  - Project 6: [SLAM for VR/AR headsets](basalt) — Monado SLAM Valve Index MIPB07
 
 ## Acknowledgements
 
-ORB-SLAM 2/3 authors, Basalt-VIO authors, SVO/SVO Pro authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, Cerberus/Cerberus 2.0 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, nvblox authors, Humanoid Everyday authors, and all the authors of the libraries used in this repository.
+ORB-SLAM 2/3 authors, Basalt-VIO authors, SVO/SVO Pro authors, Cartographer authors, KISS-SLAM authors, GLIM authors, FAST-LIO2 authors, FAST-LIVO2 authors, Cerberus/Cerberus 2.0 authors, DSP-SLAM authors, Kimera authors, ConceptFusion authors, Gaussian Splatting SLAM (MonoGS) authors, MASt3r-SLAM authors, PIN-SLAM authors, Suma++ authors, MonoLaneMapping authors, nvblox authors, U-AMC FAST-LIVO2-ROS2 authors, Humanoid Everyday authors, the authors of the datasets used here (TUM RGB-D, EuRoC MAV, KITTI, Hilti SLAM Challenge 2022, FAST-LIVO2-Dataset, uHumans2, ICL-NUIM, OpenLane, UZH-FPV, UAMC, Cerberus 2.0, Monado SLAM), and all the authors of the libraries used in this repository.
 
 ## Contributors
 
