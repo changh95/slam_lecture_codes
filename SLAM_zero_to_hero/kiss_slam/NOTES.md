@@ -15,7 +15,7 @@ LiDAR SLAM built on KISS-ICP: point-to-point ICP odometry with an adaptive thres
 ## Build
 
 ```bash
-podman build -t slam_zero_to_hero:kiss_slam .
+podman build -t localhost/slam_zero_to_hero:kiss_slam .
 ```
 
 The image bundles `kiss-slam==0.0.2` plus the pure-Python [`rosbags`](https://gitlab.com/ternaris/rosbags) reader, so the `rosbag` dataloader works with **no ROS install, no roscore, no network, and no X11**. Worth stating explicitly: every other ROS-based system in this repo needs a `roscore`, and this one does not — so it never contends for port 11311.
@@ -27,7 +27,7 @@ mkdir -p results
 podman run --rm \
   -v ~/data/kitti_vo_slam/extracted/dataset:/data:ro \
   -v "$(pwd)/results":/out -w /out \
-  slam_zero_to_hero:kiss_slam \
+  localhost/slam_zero_to_hero:kiss_slam \
   kiss_slam_pipeline --dataloader kitti --sequence 00 /data
 ```
 
@@ -56,7 +56,7 @@ Seq 00 is the interesting one: **7 loop closures detected and optimized**, which
 
 Do **not** quote the tool's own `Absolute Rotational Error` for seq 04: it prints 0.620 rad (35.5°) while the same log reports 0.001 deg/m, and the actual per-frame quaternion deviation against GT is 0.044°. The translation metrics are sound; that one is not.
 
-`--dataloader kitti` needs `velodyne/` scans — present here for sequences 00 (4541) and 04 (271). Note that the claim `download_kitti.py` will fetch data on demand is **wrong**: that script ships in the kiss-icp GitHub repo, not the pip package, and is not in this image.
+`--dataloader kitti` needs `velodyne/` scans, which are present under `~/data/kitti_vo_slam/extracted/dataset/` for sequences 00 (4541) and 04 (271). Seq 00 was re-verified on 2026-09-27 with the rebuilt image: identical path, ATE, translation error and closure count. KISS-ICP's docs mention a `download_kitti.py` that fetches data on demand. That script ships in the kiss-icp GitHub repo, not in the pip package, so it is not in this image. The repo-root `../download_kitti.py` is a different script that downloads the full official zips (Velodyne is about 80 GB for all 22 sequences).
 
 ## Verified run — Hilti 2022 `exp14_basement_2.bag` (needs a tuned config)
 
@@ -69,7 +69,7 @@ podman run --rm \
   -v "$(pwd)/results":/out \
   -v "$(pwd)/config/hilti_indoor.yaml":/cfg.yaml:ro \
   -w /out \
-  slam_zero_to_hero:kiss_slam \
+  localhost/slam_zero_to_hero:kiss_slam \
   kiss_slam_pipeline --config /cfg.yaml --dataloader rosbag --topic /hesai/pandar /data/exp14_basement_2.bag
 ```
 
@@ -120,7 +120,7 @@ podman run --rm -it \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v ~/data/kitti_vo_slam/extracted/dataset:/data:ro \
   -v "$(pwd)/results":/out -w /out \
-  slam_zero_to_hero:kiss_slam \
+  localhost/slam_zero_to_hero:kiss_slam \
   kiss_slam_pipeline --visualize --dataloader kitti --sequence 00 /data
 ```
 
@@ -128,10 +128,12 @@ No extra packages are needed — Open3D 0.19.0 and its X11/GL dependencies are a
 
 Four things will confuse you if nobody says them first:
 
-- **It starts paused.** The window sits at `0/N` until you press `space`, and the instruction is printed only to stdout — so a student watching the window concludes it hung. Press `space` to run, `n` to step one frame, `esc` to quit.
+- **Upstream starts paused.** The window sits at `0/N` until you press `space`, and the instruction is printed only to stdout — so a student watching the window concludes it hung. v0.0.2 hard-codes `play_crun = False` with no option, so the Dockerfile seds it to read `KISS_SLAM_AUTOPLAY` (default `1` = play; `0` = upstream behaviour). `space` still pauses, `n` steps, `esc` quits.
 - **`--visualize`'s help text is wrong.** It claims "Visualize Ground Truth Loop Closures"; no ground truth and no closures are drawn. The closure-drawing code is dead in v0.0.2 — `RegistrationVisualizer.__init__` sets `self.closures = []` and nothing ever appends to it, so the red closure edges can never appear. Upstream bug, not something to fix here.
 - **The camera does not follow.** The viewpoint is set once at startup, so on a long sequence the map slides out of frame and the window looks frozen. Press `c` to re-centre.
 - **It costs ~60 % throughput** — 71 Hz headless versus ~28 Hz with the viewer on KITTI 00 — because every odometry pose is removed and re-added as an individual sphere mesh on each keypose update. Accuracy is unaffected, so keep runs you intend to measure headless.
+
+For unattended screenshots, `scripts/capture_viewer.py` (baked into the image as `/opt/kiss_slam/capture_viewer.py`) subclasses `RegistrationVisualizer`. It skips the pause, calls `reset_view_point` before each capture (which works around the camera not following), and writes `capture_screen_image` PNGs every `CAPTURE_EVERY` frames and on the last frame. When `DISPLAY` is unset it starts its own Xvfb, so Open3D renders through Mesa llvmpipe with no GPU. `xvfb-run` was tried first and hangs forever as the container's PID 1: it waits for Xvfb's SIGUSR1, and the Python process never starts. On KITTI 00 the capture run is CPU-rendered.
 
 To confirm the window mapped, use `xwininfo -root -tree | grep RegistrationVisualizer`; `-root -children` misses it because the window manager reparents the GLFW window.
 
