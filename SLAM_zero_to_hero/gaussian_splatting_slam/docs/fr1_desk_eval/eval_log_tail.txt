@@ -1,0 +1,9 @@
+Eval: Total FPS 1.9004205322461558
+Eval: RMSE ATE [m] 0.015593183505415293
+Eval: mean psnr: 18.919840755462648, ssim: 0.7151752042770386, lpips: 
+MonoGS: Starting color refinement
+MonoGS: Map refinement done
+Eval: mean psnr: 23.734922256469726, ssim: 0.7862526047229766, lpips: 
+MonoGS: Backend stopped and joined the main thread
+MonoGS: Done.
+WALL 406.08 s

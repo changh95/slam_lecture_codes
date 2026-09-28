@@ -1,0 +1,17 @@
+diff --git a/slam.py b/slam.py
+index 5f6ecc3..def22a7 100644
+--- a/slam.py
++++ b/slam.py
+@@ -187,6 +187,12 @@ class SLAM:
+             save_gaussians(self.gaussians, self.save_dir, "final_after_opt", final=True)
+ 
+         backend_queue.put(["stop"])
++        # Drain what the backend still sends, or its queue feeder thread keeps the
++        # process alive and join() never returns (the --eval path drains it above).
++        while backend_process.is_alive():
++            while not frontend_queue.empty():
++                frontend_queue.get()
++            backend_process.join(timeout=0.5)
+         backend_process.join()
+         Log("Backend stopped and joined the main thread")
+         if self.use_gui:
