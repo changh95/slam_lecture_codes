@@ -1,0 +1,57 @@
+diff --git a/dsp_slam.cc b/dsp_slam.cc
+index 2c4d085..e22cedd 100644
+--- a/dsp_slam.cc
++++ b/dsp_slam.cc
+@@ -20,6 +20,9 @@
+ #include<iomanip>
+ #include<chrono>
+ #include<opencv2/core/core.hpp>
++#include<opencv2/highgui/highgui.hpp>
++#include<thread>
++#include<cstdlib>
+ #include<System.h>
+ 
+ using namespace std;
+@@ -99,8 +102,13 @@ int main(int argc, char **argv)
+     }
+ 
+     SLAM.SaveEntireMap(string(argv[4]));
++    SLAM.SaveTrajectoryKITTI(string(argv[4]) + "/CameraTrajectory.txt");
++    cout << "Map and trajectory saved to " << argv[4] << endl;
+ 
+-    cv::waitKey(0);
++    // Upstream blocks here until a key is pressed in the OpenCV window so the
++    // final map stays on screen. DSP_SLAM_NO_WAIT=1 skips that for batch runs.
++    if(!getenv("DSP_SLAM_NO_WAIT"))
++        cv::waitKey(0);
+     // Stop all threads
+     SLAM.Shutdown();
+     // Tracking time statistics
+diff --git a/reconstruct/kitti_sequence.py b/reconstruct/kitti_sequence.py
+index 8dcef29..bf06cae 100644
+--- a/reconstruct/kitti_sequence.py
++++ b/reconstruct/kitti_sequence.py
+@@ -175,7 +175,7 @@ class FrameWithLiDAR:
+             return
+ 
+         # Occlusion masks
+-        occ_mask = np.full([img_h, img_w], False, dtype=np.bool)
++        occ_mask = np.full([img_h, img_w], False, dtype=bool)
+         prev_mask = None
+         for instance in self.instances:
+             if not instance.is_front:
+diff --git a/reconstruct/utils.py b/reconstruct/utils.py
+index ebbbde2..ecac9cf 100644
+--- a/reconstruct/utils.py
++++ b/reconstruct/utils.py
+@@ -127,8 +127,8 @@ def convert_sdf_voxels_to_mesh(pytorch_3d_sdf_tensor):
+     numpy_3d_sdf_tensor = pytorch_3d_sdf_tensor.cpu().detach().numpy()
+     voxels_dim = numpy_3d_sdf_tensor.shape[0]
+     voxel_size = 2.0 / (voxels_dim - 1)
+-    verts, faces, normals, values = measure.marching_cubes_lewiner(
+-        numpy_3d_sdf_tensor, level=0.0, spacing=[voxel_size] * 3
++    verts, faces, normals, values = measure.marching_cubes(
++        numpy_3d_sdf_tensor, level=0.0, spacing=[voxel_size] * 3, method="lewiner"
+     )
+     # transform from voxel coordinates to camera coordinates
+     # note x and y are flipped in the output of marching_cubes
