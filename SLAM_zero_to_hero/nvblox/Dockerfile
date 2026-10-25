@@ -71,6 +71,31 @@ RUN python3 -m venv /opt/venv \
 ENV PATH=/opt/venv/bin:${PATH}
 ENV VIRTUAL_ENV=/opt/venv
 
+# Online tracking + mapping (scripts/cuvslam_nvblox.py): cuVSLAM for the pose,
+# nvblox_torch to fuse each frame as it arrives. A second venv keeps torch out of
+# the one above.
+#  - The nvblox_torch wheel declares numpy < 1.27 ("Torch 2.3 requires numpy
+#    1.X", per its pyproject), which rerun-sdk 0.33 (numpy >= 2) cannot meet.
+#    Torch 2.9 is fine with numpy 2, so the wheel goes in with --no-deps and
+#    only what its core modules import (open3d, matplotlib, nvtx) is added.
+#  - torch 2.9.1 + cu128 is what nvblox v0.0.10's own torch_install_helper.py
+#    picks for CUDA 12, and cu128 is the first build with sm_120 kernels.
+#  - The nvblox_torch release wheel carries SASS for sm_75..sm_90 plus sm_90
+#    PTX; on an RTX 50-series the driver JIT-compiles that PTX on first use
+#    (a minute or so, then cached in ~/.nv/ComputeCache).
+#  - cuVSLAM v15's cp312 abi3 wheel needs glibc 2.39, i.e. this Ubuntu 24.04.
+ARG NVBLOX_TORCH_WHL=https://github.com/nvidia-isaac/nvblox/releases/download/v0.0.10/nvblox_torch-0.0.10%2Bcu12ubuntu24-py3-none-linux_x86_64.whl
+ARG CUVSLAM_WHL=https://github.com/nvidia-isaac/cuVSLAM/releases/download/v15.0.0/cuvslam-15.0.0%2Bcu12-cp312-abi3-manylinux_2_39_x86_64.whl
+RUN python3 -m venv /opt/slam_venv \
+    && /opt/slam_venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/slam_venv/bin/pip install --no-cache-dir \
+         torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128 \
+    && /opt/slam_venv/bin/pip install --no-cache-dir \
+         numpy==2.5.1 pillow==12.3.0 open3d==0.19.0 matplotlib==3.10.7 nvtx==0.2.13 \
+         rerun-sdk==${RERUN_VERSION} "${CUVSLAM_WHL}" \
+    && /opt/slam_venv/bin/pip install --no-cache-dir --no-deps "${NVBLOX_TORCH_WHL}" \
+    && /opt/slam_venv/bin/python -c "import torch, cuvslam, nvblox_torch; print('torch', torch.__version__, 'cuvslam', cuvslam.__version__)"
+
 # Scripts last: editing one of these must not invalidate the CUDA compile above.
 COPY scripts/ /nvblox_demo/scripts/
 COPY config/ /nvblox_demo/config/

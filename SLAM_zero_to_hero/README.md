@@ -194,7 +194,7 @@ The view-controller plugins live in [`rviz_unified_controls/`](rviz_unified_cont
   - Project 2: [SLAM for drones](svo_pro_open) — UZH-FPV indoor_forward_3 (Snapdragon stereo)
   - Project 3: [SLAM for mobile scanner systems](uamc) — UAMC COEX lvi_set_2_restamped
   - Project 4: [SLAM for quadruped robots](cerberus_2) — Cerberus 2.0 Go1 CMU Garage
-  - Project 5: [SLAM for humanoid robots](nvblox) — Humanoid Everyday walk_towards_chair_and_rotate_the_chair ep0
+  - Project 5: [SLAM for humanoid robots](nvblox) — cuVSLAM + nvblox online, Humanoid Everyday chair / outside_chair / trashbin (8 episodes)
   - Project 6: [SLAM for VR/AR headsets](basalt) — Monado SLAM Valve Index MIPB07
 
 ## Acknowledgements

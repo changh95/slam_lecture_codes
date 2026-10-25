@@ -26,6 +26,10 @@ ESDF; it has no tracker of its own. In the Isaac stack the poses come from
 cuVSLAM (`../cuvslam/` in this repo). Here they come from the recording, and
 where exactly is the interesting part — see [Poses](#poses-where-the-trajectory-comes-from).
 
+Two pipelines here: the original one computes poses offline (depth ICP or the
+robot's legged odometry) and then fuses; the second runs **cuVSLAM and nvblox
+online, frame by frame** — see [Online SLAM](#online-slam-cuvslam--nvblox).
+
 ## Build
 
 ```bash
@@ -40,7 +44,7 @@ on an RTX 5090, driver 580.
 ## Download the dataset
 
 ```bash
-python3 ../download_humanoid_everyday.py          # the two verified tasks, ~830 MB
+python3 ../download_humanoid_everyday.py          # the demo's three tasks, ~1.1 GB
 python3 ../download_humanoid_everyday.py --list    # all 259 tasks by category
 python3 ../download_humanoid_everyday.py --category loco_manipulation
 ```
@@ -160,6 +164,74 @@ podman run --rm \
 podman run --rm -v "$PWD/results":/results slam_zero_to_hero:nvblox \
   python3 /nvblox_demo/scripts/viz_nvblox.py /results/chair_ep0 --plot /results/chair_ep0_traj.png
 ```
+
+## Online SLAM: cuVSLAM + nvblox
+
+The pipeline above computes all the poses first and fuses afterwards. This one is
+the Isaac-style system the final project is about: [cuVSLAM](../cuvslam) tracks
+the head camera and nvblox fuses each frame **as it arrives**, in one Python
+process ([`scripts/cuvslam_nvblox.py`](scripts/cuvslam_nvblox.py), on
+[nvblox_torch](https://github.com/nvidia-isaac/nvblox/tree/main/nvblox_torch)).
+[`scripts/run_all.sh`](scripts/run_all.sh) runs it over the demo's 8 episodes,
+one after another — each with its own tracker, map and rerun recording, since
+separate recordings share no coordinate frame:
+
+| Task | Episodes |
+|---|---|
+| `walk_towards_chair_and_rotate_the_chair` | 0, 1, 2 |
+| `walk_towards_outside_chair_and_pull_it_out` | 0, 1, 2 |
+| `walk_towards_trashbin_and_throw_trash_inside` | 0, 1 |
+
+These are the three tasks [`../download_humanoid_everyday.py`](../download_humanoid_everyday.py)
+downloads by default.
+
+Per frame:
+
+1. **cuVSLAM, RGB-D mode**, tracks the colour camera. It needs depth registered
+   to that image, so the raw depth is warped into the colour camera and the holes
+   the warp leaves are filled.
+2. **nvblox** integrates the *raw* depth in the depth camera's own frame, and the
+   colour image in the colour camera's, at the pose cuVSLAM just returned.
+3. The pose, the image with cuVSLAM's tracked features, the trajectory against the
+   legged odometry and, every 15 frames, the colour mesh are streamed to rerun.
+
+The world frame is gravity-aligned with the floor at z = 0, anchored on the
+first frame by the robot IMU as in the ICP pipeline.
+
+```bash
+rerun &   # on the host, once; the demo streams to rerun+http://127.0.0.1:9876/proxy
+
+podman run --rm --network=host \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  -v ~/data/humanoid_everyday:/data:ro \
+  -v "$PWD/results":/results \
+  slam_zero_to_hero:nvblox \
+  /nvblox_demo/scripts/run_all.sh /data /results/cuvslam
+```
+
+With no viewer listening it says so and runs without streaming. Options, after the
+output directory: `--no-stream`, `--no-stream-images`, `--stream-url URL`,
+`--save-rrd` (one `.rrd` per episode under `rrd/` instead of streaming; ~160 MB for
+`chair/episode_0`, mostly meshes), `--slam` (cuVSLAM's loop-closing SLAM layer;
+these episodes have almost no revisits, so it changes little), `--voxel`,
+`--frames`. To run a subset: `-e TASKS="walk_towards_chair_and_rotate_the_chair"`,
+`-e EPISODES="episode_0"`.
+
+Per episode, `results/cuvslam/<task>/<episode>/` gets `traj_cuvslam.tum`,
+`traj_odom.tum` (legged odometry in the same world frame), `mesh.ply` and
+`stats.json`; `results/cuvslam/summary.md` has the table of all of them.
+
+On the first run on an RTX 50-series GPU nvblox_torch JIT-compiles its kernels
+(the release wheel ships sm_90 PTX, no sm_120 code), which takes about a minute.
+After that it runs at 32–39 fps on an RTX 5090 including meshing — faster than the
+30 Hz recording.
+
+`walk_towards_chair_and_rotate_the_chair/episode_0` — carpet, armchair and stool
+sharp, like the ICP map. Grey is surface the depth camera saw but the narrower
+colour camera did not:
+
+![cuVSLAM + nvblox, chair episode 0](docs/cuvslam_chair_ep0_mesh.png)
 
 ## Poses: where the trajectory comes from
 
@@ -298,6 +370,7 @@ episode. These are room-corner maps, not building tours.
 | Humanoid Everyday `walk_towards_chair_and_rotate_the_chair/episode_2` | same, `.../episode_2` | ✅ ICP path 3.79 m, 1.7° ground-plane tilt |
 | Humanoid Everyday `walk_towards_outside_chair_and_pull_it_out/episode_0` | same, `.../walk_towards_outside_chair_and_pull_it_out/episode_0` | ✅ ICP path 2.67 m, 1.0° tilt; café tabletop 0.735 m above the paving |
 | Humanoid Everyday `pick_up_a_caution_sign...`, `walk_towards_elevator...` | same | ❌ planar scenes, ICP drifts and the map collapses (see above) |
+| Humanoid Everyday, chair / outside_chair / trashbin (8 episodes), cuVSLAM + nvblox online | `run_all.sh /data /results/cuvslam` | ✅ verified 2026-10-21, 32–39 fps — see [Online SLAM](#online-slam-cuvslam--nvblox) |
 | Replica, Redwood, 3DMatch, cuSFM, PLY LiDAR | the fusers below, on their native layouts | Builds; not run in this demo |
 
 `fuse_replica` is one of five fusers the image builds; all of them are on the

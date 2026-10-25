@@ -12,11 +12,12 @@ Dropbox links, which live in a public spreadsheet.
 Reference: https://github.com/physical-superintelligence-lab/Humanoid-Everyday
 Paper:     https://arxiv.org/abs/2510.08807
 
-Default download is the two tasks the nvblox demo is verified on, both from the
-loco_manipulation category (the one where the robot actually walks):
+Default download is the three tasks the nvblox demo uses (8 episodes), all from
+the loco_manipulation category (the one where the robot actually walks):
 
     walk_towards_chair_and_rotate_the_chair              ~483 MB
     walk_towards_outside_chair_and_pull_it_out           ~347 MB
+    walk_towards_trashbin_and_throw_trash_inside         ~251 MB
 
 Examples:
     python3 download_humanoid_everyday.py
@@ -50,11 +51,12 @@ SHEET_CSV = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
 
 DEST_DIR = Path.home() / "data" / "humanoid_everyday"
 
-# Verified with nvblox/. Both are loco_manipulation, i.e. the robot walks up to
+# The nvblox/ demo's dataset. All loco_manipulation, i.e. the robot walks up to
 # the object before manipulating it.
 DEFAULT_TASKS = [
     "walk_towards_chair_and_rotate_the_chair",
     "walk_towards_outside_chair_and_pull_it_out",
+    "walk_towards_trashbin_and_throw_trash_inside",
 ]
 
 
