@@ -21,10 +21,11 @@ For every frame:
      and the colour image in the colour camera's, both at the pose cuVSLAM just
      returned.
   3. The pose, the image with the tracked features and, every few frames, the
-     parts of the colour mesh that changed (see Stream.mesh) are streamed, on the
-     same frame timeline, to a rerun viewer -- one already open on the host
-     (--stream-url), or, with --serve, a web viewer started next to this process
-     on ports 9090 / 9877 (the URL to open is printed first thing).
+     parts of the colour mesh and of the occupancy map that changed (see
+     Stream.mesh, Stream.occupancy) are streamed, on the same frame timeline, to
+     a rerun viewer -- one already open on the host (--stream-url), or, with
+     --serve, a web viewer started next to this process on ports 9090 / 9877
+     (the URL to open is printed first thing).
 
 The world frame is gravity-aligned with the floor at z = 0. On Humanoid Everyday
 the robot IMU anchors the first frame, exactly as he_to_nvblox.py does for depth
@@ -68,6 +69,10 @@ from he_to_nvblox import (DEPTH_H, DEPTH_W, align_depth_to_colour,  # noqa: E402
 DEFAULT_CALIB = Path(__file__).resolve().parent.parent / "config" / "humanoid_everyday_d435.json"
 MESH_CHUNK_M = 1.0   # the streamed mesh is cut into cubes this big; only changed ones are re-sent
 MESH_REFRESH = 16    # ...and one whose triangle count barely moved, every this many mesh calls
+# Occupied voxels are coloured by height over this range, metres: floor to a little above
+# table height, the band where the objects in both datasets are; higher saturates red.
+OCC_Z_RANGE = (-0.1, 1.2)
+OCC_MIN_WEIGHT = 1e-4      # TSDF weight a voxel needs to count as observed: nvblox' mesh_integrator_min_weight
 
 
 # --------------------------------------------------------------------------- #
@@ -152,6 +157,63 @@ def path_length(p: np.ndarray) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# occupancy
+# --------------------------------------------------------------------------- #
+def occupied_voxels(mapper):
+    """Centres of the occupied voxels of an nvblox_torch mapper's TSDF, N x 3 on the GPU.
+
+    A voxel is occupied when it is on the inside of the surface (signed distance <= 0)
+    and one of its six neighbours is observed free space (distance > 0); both observed
+    means weight above OCC_MIN_WEIGHT, the threshold nvblox meshes with. That is the
+    one-voxel shell where the distance changes sign. A band such as distance in
+    (-voxel, 0] is not enough: the projective TSDF measures distance along the camera
+    ray, which on a floor seen at a slant is 1 / cos(incidence) times the true one,
+    twice at 60 deg, so the sign change can skip the band and the floor came out full
+    of holes. The voxels further
+    inside, filled down to the truncation distance, are left out: they are hidden behind
+    the shell and three to four times as many. Unobserved voxels are never returned.
+    """
+    import torch
+    from nvblox_torch.mapper import QueryType
+    tsdf = mapper.tsdf_layer_view()
+    idx = tsdf.get_all_block_indices().cuda().long()
+    if not len(idx):
+        return torch.zeros((0, 3), device="cuda")
+    # Every voxel of every allocated block in one batched lookup: ~3 ms for the 53 k blocks
+    # of the TUM office, where get_all_blocks(), a Python list of one tensor per block,
+    # takes ~80 ms.
+    grid = torch.stack(torch.meshgrid(*[torch.arange(8, device="cuda")] * 3, indexing="ij"), -1)
+    centre = ((idx[:, None, None, None] * 8 + grid).float() + 0.5) * tsdf.voxel_size()
+    b = mapper.query_layer(QueryType.TSDF, centre.reshape(-1, 3), mapper_id=0).reshape(
+        len(idx), 8, 8, 8, 2)        # blocks x 8 x 8 x 8 (x, y, z) x [distance m, weight]
+    seen = b[..., 1] > OCC_MIN_WEIGHT
+    inside, free = seen & (b[..., 0] <= 0.0), seen & (b[..., 0] > 0.0)
+
+    # free, padded by one voxel with the touching face of each neighbouring block (false
+    # where that block is not allocated), so the six-neighbour test crosses block borders
+    def key(i):
+        i = i + (1 << 20)
+        return (i[:, 0] << 42) | (i[:, 1] << 21) | i[:, 2]
+    keys, perm = torch.sort(key(idx))
+    pad = torch.zeros((len(b), 10, 10, 10), dtype=torch.bool, device=b.device)
+    pad[:, 1:9, 1:9, 1:9] = free
+    for axis in range(3):
+        for step, src, dst in ((-1, 7, 0), (1, 0, 9)):
+            off = torch.zeros(3, dtype=torch.long, device=b.device)
+            off[axis] = step
+            nk = key(idx + off)
+            pos = torch.searchsorted(keys, nk).clamp(max=len(keys) - 1)
+            hit = keys[pos] == nk
+            face = free[perm[pos]].select(axis + 1, src) & hit[:, None, None]
+            inner = [slice(None)] + [slice(1, 9)] * 3
+            inner[axis + 1] = dst
+            pad[tuple(inner)] = face
+    near_free = (pad[:, :8, 1:9, 1:9] | pad[:, 2:, 1:9, 1:9] | pad[:, 1:9, :8, 1:9]
+                 | pad[:, 1:9, 2:, 1:9] | pad[:, 1:9, 1:9, :8] | pad[:, 1:9, 1:9, 2:])
+    return centre[inside & near_free]
+
+
+# --------------------------------------------------------------------------- #
 # rerun
 # --------------------------------------------------------------------------- #
 def viewer_reachable(url: str, timeout: float = 0.5) -> bool:
@@ -201,13 +263,15 @@ class Stream:
     def __init__(self, args, seq):
         self.on = False
         self.images = not args.no_stream_images
+        self.occupied = not args.no_occupancy
         self.ref_path = f"world/trajectory/{seq.ref[1]}"
         name, colour_intr = seq.name, seq.colour_intr
         if args.no_stream and not args.save_rrd:
             return
         import rerun as rr
         import rerun.blueprint as rrb
-        self.rr = rr
+        import torch
+        self.rr, self.torch = rr, torch
         # A recording object of its own, not rr.init's global one: if the viewer goes away
         # mid-episode, the next rr.init raises "gRPC connection severed" and the global
         # recording stays broken for every episode after it.
@@ -226,12 +290,20 @@ class Stream:
         self.rec = rec
         self.on = True
         rec.send_recording_name(name)  # the viewer lists recordings by start time otherwise
+        # The occupied voxels sit exactly where the mesh is, so each gets a tab of its own.
+        map_view = rrb.Spatial3DView(name="nvblox mesh + trajectory", origin="world",
+                                     contents=["+ $origin/**", "- /world/occupancy/**"])
+        if self.occupied:
+            map_view = rrb.Tabs(
+                rrb.Spatial3DView(name="occupancy voxels + trajectory", origin="world",
+                                  contents=["+ $origin/**", "- /world/mesh/**"]),
+                map_view)
         rec.send_blueprint(rrb.Blueprint(
             rrb.Horizontal(
                 rrb.Vertical(rrb.Spatial2DView(name="colour + cuVSLAM features",
                                                origin="world/camera/image"),
                              rrb.TimeSeriesView(name="features / gravity error (deg)", origin="plots")),
-                rrb.Spatial3DView(name="nvblox mesh + trajectory", origin="world"),
+                map_view,
                 column_shares=[1, 2]),
             rrb.TimePanel(state="collapsed")), make_active=True)
         rec.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
@@ -240,8 +312,10 @@ class Stream:
             principal_point=[colour_intr["cx"], colour_intr["cy"]],
             resolution=list(seq.size), image_plane_distance=0.2), static=True)
         self.track_colours = {}
-        self.chunks = {}                # chunk entity path -> (fingerprint, triangles, call) last sent
-        self.mesh_calls = 0
+        # per layer: chunk entity path -> (fingerprint, element count, call) last sent
+        self.chunks = {"mesh": {}, "occupancy": {}}
+        self.calls = {"mesh": 0, "occupancy": 0}
+        self.height_lut = None
 
     def frame(self, i, T_w_c, rgb, observations, traj, ref_traj, grav_err):
         if not self.on:
@@ -283,47 +357,98 @@ class Stream:
         """
         if not self.on:
             return
-        import torch
-        self.mesh_calls += 1
         v, tri, colours = mesh.vertices(), mesh.triangles().long(), mesh.vertex_colors()
-        seen = set()
-        if len(tri):
-            centre = v[tri].mean(dim=1)
+        # Whether a cube changed at all: the sums of its triangle centres and colours.
+        order, send = self._changed_cubes("mesh", v[tri].mean(dim=1),
+                                          colours[tri].sum(dim=(1, 2), dtype=self.torch.float64),
+                                          final)
+        if send:
+            tri_send = tri[order].cpu().numpy()
+            v, colours = v.cpu().numpy(), colours.cpu().numpy()
+            ends = np.cumsum([n for _, n in send])
+            for (path, _), t in zip(send, np.split(tri_send, ends[:-1])):
+                used, local = np.unique(t, return_inverse=True)
+                self.rec.log(path, self.rr.Mesh3D(
+                    vertex_positions=v[used], triangle_indices=local.reshape(-1, 3),
+                    vertex_colors=colours[used]))
+
+    def occupancy(self, mapper, final=False):
+        """Log the occupied voxels of the TSDF as solid cubes coloured by height, at the
+        current frame, in MESH_CHUNK_M cubes exactly as the mesh is (see mesh).
+
+        At the TSDF's own resolution: 1.5 cm by default, ~10^5 voxels on a Humanoid
+        Everyday episode and ~10^6 on the TUM office.
+        """
+        if not (self.on and self.occupied):
+            return
+        torch = self.torch
+        centre = occupied_voxels(mapper)
+        # Voxel centres sit on a grid, so moves inside a cube can cancel in their plain sum;
+        # the sum of squares as well tells those apart.
+        order, send = self._changed_cubes("occupancy", centre,
+                                          (centre.double() ** 2).sum(dim=1), final)
+        if send:
+            if self.height_lut is None:
+                from matplotlib import colormaps
+                self.height_lut = torch.as_tensor(
+                    colormaps["turbo"](np.linspace(0.0, 1.0, 256))[:, :3] * 255,
+                    dtype=torch.uint8, device=centre.device)
+            c = centre[order]
+            lo, hi = OCC_Z_RANGE
+            colours = self.height_lut[((c[:, 2] - lo) / (hi - lo) * 255).clamp(0, 255).long()]
+            c, colours = c.cpu().numpy(), colours.cpu().numpy()
+            half = 0.5 * mapper.tsdf_layer_view().voxel_size()
+            ends = np.cumsum([n for _, n in send])
+            for (path, _), p, col in zip(send, np.split(c, ends[:-1]), np.split(colours, ends[:-1])):
+                self.rec.log(path, self.rr.Boxes3D(centers=p, half_sizes=[[half, half, half]],
+                                                   colors=col, fill_mode="solid"))
+
+    def _changed_cubes(self, layer, centre, value, final):
+        """Cut a layer's elements into MESH_CHUNK_M cubes on the GPU and pick the cubes to
+        re-send: the new ones, those whose element count moved by more than 5 %, and those
+        whose content changed at all once their last copy is MESH_REFRESH calls old, or on
+        the final call. Cubes the layer no longer has are cleared here.
+
+        centre: N x 3 element positions; value: N numbers whose per-cube sum, with that of
+        the positions, fingerprints the cube's content. Returns the indices of the elements
+        to send, grouped by cube, and the (entity path, element count) of each cube in the
+        same order.
+        """
+        torch = self.torch
+        chunks = self.chunks[layer]
+        self.calls[layer] += 1
+        calls = self.calls[layer]
+        seen, send = set(), []
+        order = torch.zeros(0, dtype=torch.long, device=centre.device)
+        if len(centre):
             k = torch.floor(centre / MESH_CHUNK_M).long() + (1 << 20)
             keys, cube, count = torch.unique((k[:, 0] << 42) | (k[:, 1] << 21) | k[:, 2],
                                              return_inverse=True, return_counts=True)
-            # Whether a cube changed at all: the sums of its triangle centres and colours.
-            fp = torch.zeros(len(keys), 4, dtype=torch.float64, device=v.device)
-            fp.index_add_(0, cube, torch.cat(
-                [centre.double(), colours[tri].sum(dim=(1, 2), dtype=torch.float64)[:, None]], 1))
+            fp = torch.zeros(len(keys), 4, dtype=torch.float64, device=centre.device)
+            fp.index_add_(0, cube, torch.cat([centre.double(), value.double()[:, None]], 1))
             keys, count, fp = keys.cpu().numpy(), count.cpu().numpy(), fp.cpu().numpy()
             ijk = np.stack([keys >> 42, (keys >> 21) & 0x1FFFFF, keys & 0x1FFFFF], 1) - (1 << 20)
-            send = []
+            picked = []
             for c, label in enumerate(ijk):
-                path = "world/mesh/{}_{}_{}".format(*label)
+                path = "world/{}/{}_{}_{}".format(layer, *label)
                 seen.add(path)
-                last = self.chunks.get(path)
+                last = chunks.get(path)
                 # tolerances: the GPU sums in no fixed order, so equal cubes differ in the last bits
                 if last is not None and (np.allclose(fp[c], last[0], rtol=1e-9, atol=1e-6) or (
                         abs(count[c] - last[1]) <= 0.05 * last[1]
-                        and self.mesh_calls - last[2] < MESH_REFRESH and not final)):
+                        and calls - last[2] < MESH_REFRESH and not final)):
                     continue
-                send.append((c, path))
-            if send:
+                picked.append(c)
+                send.append((path, int(count[c])))
+                chunks[path] = (fp[c], count[c], calls)
+            if picked:
                 pick = torch.nonzero(torch.isin(cube, torch.as_tensor(
-                    [c for c, _ in send], device=cube.device))).squeeze(1)
-                tri_send = tri[pick[torch.argsort(cube[pick], stable=True)]].cpu().numpy()
-                v, colours = v.cpu().numpy(), colours.cpu().numpy()
-                ends = np.cumsum([count[c] for c, _ in send])
-                for (c, path), t in zip(send, np.split(tri_send, ends[:-1])):
-                    used, local = np.unique(t, return_inverse=True)
-                    self.rec.log(path, self.rr.Mesh3D(
-                        vertex_positions=v[used], triangle_indices=local.reshape(-1, 3),
-                        vertex_colors=colours[used]))
-                    self.chunks[path] = (fp[c], count[c], self.mesh_calls)
-        for path in self.chunks.keys() - seen:
+                    picked, device=cube.device))).squeeze(1)
+                order = pick[torch.argsort(cube[pick], stable=True)]
+        for path in chunks.keys() - seen:
             self.rec.log(path, self.rr.Clear(recursive=False))
-            del self.chunks[path]
+            del chunks[path]
+        return order, send
 
 
 # --------------------------------------------------------------------------- #
@@ -534,6 +659,7 @@ def run_episode(seq, out: Path, args) -> dict:
         if stream.on and i % args.mesh_every == 0:
             mapper.update_color_mesh()
             stream.mesh(mapper.get_color_mesh())
+            stream.occupancy(mapper)
         if (i + 1) % 100 == 0:
             print(f"    {i+1}/{len(seq)}  features {len(obs)}  "
                   f"{(i+1)/(time.time()-t_start):.1f} fps", flush=True)
@@ -542,6 +668,7 @@ def run_episode(seq, out: Path, args) -> dict:
     mapper.update_color_mesh()
     mesh = mapper.get_color_mesh()
     stream.mesh(mesh, final=True)
+    stream.occupancy(mapper, final=True)
     mesh.save(str(out / "mesh.ply"))
     write_tum(out / "traj_cuvslam.tum", times, poses)
     ref_T = []
@@ -561,7 +688,9 @@ def run_episode(seq, out: Path, args) -> dict:
         "path_m": round(path_length(p), 3), "net_m": round(float(np.linalg.norm(p[-1] - p[0])), 3) if len(p) else 0.0,
         "reference": ref_label, "ref_path_m": round(path_length(q), 3),
         "ref_net_m": round(float(np.linalg.norm(q[-1] - q[0])), 3) if len(q) else 0.0,
-        "mesh_vertices": int(mesh.vertices().shape[0]), "slam": bool(args.slam),
+        "mesh_vertices": int(mesh.vertices().shape[0]),
+        "occupied_voxels": int(len(occupied_voxels(mapper))),
+        "slam": bool(args.slam),
     }
     if grav:
         stats["gravity_err_median_deg"] = round(float(np.median(grav)), 2)
@@ -629,6 +758,8 @@ def main():
     ap.add_argument("--grpc-port", type=int, default=9877)
     ap.add_argument("--no-stream", action="store_true")
     ap.add_argument("--no-stream-images", action="store_true")
+    ap.add_argument("--no-occupancy", action="store_true",
+                    help="do not stream the occupied voxels (streamed with the mesh by default)")
     ap.add_argument("--save-rrd", action="store_true",
                     help="write <out>/rrd/<episode>.rrd instead of streaming")
     args = ap.parse_args()

@@ -195,11 +195,13 @@ Per frame:
 2. **nvblox** integrates the *raw* depth in the depth camera's own frame, and the
    colour image in the colour camera's, at the pose cuVSLAM just returned.
 3. The pose, the image with cuVSLAM's tracked features, the trajectory against the
-   legged odometry and, every 15 frames, the colour mesh are streamed to rerun. The
+   legged odometry and, every 15 frames, the colour mesh and the
+   [occupancy map](#occupancy-map) are streamed to rerun. The
    mesh goes in 1 m cubes and only the cubes that changed are re-sent, so the map
    grows on the timeline together with the trajectory: scrub back and it shows the
    map as it was at that frame. Sending the whole mesh each time made 1.6 GB for the
-   8 episodes, more than a browser tab keeps; this way it is ~570 MB. The cubes are
+   8 episodes, more than a browser tab keeps; this way it is ~570 MB, before the
+   occupancy map, which goes the same way and adds about a tenth. The cubes are
    cut on the GPU, where nvblox keeps the mesh, so a large map does not slow the
    frame rate down.
 
@@ -278,10 +280,12 @@ What the viewer shows, in either option:
 
 - **Left, top:** the colour image with the features cuVSLAM is tracking.
 - **Left, bottom:** the tracked-feature count and the gravity error over time.
-- **Right:** the nvblox colour mesh, the camera, cuVSLAM's trajectory (orange) and
-  the reference trajectory (blue): the legged odometry in demo A, the mocap ground
-  truth in demo B.
-- **Bottom:** the frame timeline. Scrub it back and the mesh shrinks to what had
+- **Right, two tabs:** **occupancy voxels**, the one that opens, with every occupied
+  voxel as a cube coloured by height (see [Occupancy map](#occupancy-map)), and
+  **nvblox mesh**, the colour mesh. Both show the camera, cuVSLAM's trajectory
+  (orange) and the reference trajectory (blue): the legged odometry in demo A, the
+  mocap ground truth in demo B.
+- **Bottom:** the frame timeline. Scrub it back and the map shrinks to what had
   been mapped by that frame.
 
 Each episode is its own recording in the **Sources** list on the left; click one to
@@ -296,16 +300,17 @@ if a viewer is back. Ctrl-C stops the sweep and still writes the summary of the
 episodes that finished.
 
 Options, after the output directory: `--serve` (with `--web-port` / `--grpc-port`,
-default 9090 / 9877), `--no-stream`, `--no-stream-images`, `--stream-url URL`,
-`--save-rrd` (one `.rrd` per episode under `rrd/` instead of streaming; ~61 MB for
-`chair/episode_1`, half of it mesh), `--mesh-every N`, `--slam` (cuVSLAM's loop-closing SLAM layer;
+default 9090 / 9877), `--no-stream`, `--no-stream-images`, `--no-occupancy`, `--stream-url URL`,
+`--save-rrd` (one `.rrd` per episode under `rrd/` instead of streaming; ~64 MB for
+`chair/episode_0`, 5 MB of it the occupancy map), `--mesh-every N`, `--slam` (cuVSLAM's loop-closing SLAM layer;
 these episodes have almost no revisits, so it changes little), `--voxel`,
 `--frames`. To run a subset: `-e TASKS="walk_towards_chair_and_rotate_the_chair"`,
 `-e EPISODES="episode_0"`.
 
 Per episode, `results/cuvslam/<task>/<episode>/` gets `traj_cuvslam.tum`,
 `traj_odom.tum` (legged odometry in the same world frame), `mesh.ply` and
-`stats.json`; `results/cuvslam/summary.md` has the table of all of them.
+`stats.json` (with the final map's occupied-voxel count); `results/cuvslam/summary.md`
+has the table of all of them.
 
 On the first run on an RTX 50-series GPU nvblox_torch JIT-compiles its kernels
 (the release wheel ships sm_90 PTX, no sm_120 code), which takes about a minute.
@@ -387,6 +392,49 @@ back to frame 0 and shows the map as it was then.
 This is the end of the loop, in a browser tab opened after the run. The two desks
 are in the middle; the orange line is cuVSLAM's trajectory around them and the blue
 line is the mocap's.
+
+### Occupancy map
+
+The first tab on the right shows the map as a 3D occupancy grid. Every occupied
+voxel is a solid cube at the TSDF's own resolution: 1.5 cm by default, and
+`--voxel` changes both maps. The cubes are coloured by height, from dark blue at
+the floor through green at seat height to red from 1.2 m up.
+
+The occupancy is read on the GPU from the TSDF nvblox is already building, every
+time the mesh is (`--mesh-every`), so no depth image is integrated twice. That
+makes it a different thing from nvblox' probabilistic occupancy integrator
+(`ProjectiveIntegratorType.OCCUPANCY`, log-odds as in OctoMap), which would need a
+second map. A voxel counts as **occupied** when it has been observed inside a
+surface (signed distance ≤ 0) and one of its six neighbours has been observed as
+free space (distance > 0). That is the one-voxel shell where the sign changes.
+Free space and unobserved voxels are not drawn.
+
+A simpler rule does not work. "Occupied if the distance is between −1 voxel and
+0" leaves the floor full of holes. nvblox' projective TSDF measures distance along
+the camera ray, and on a surface seen at a slant that is 1/cos(incidence) times the
+true distance, twice at 60°. The G1's head camera looks 56° down at the floor, so
+the sign change regularly jumps across a one-voxel band.
+
+The cubes are streamed in 1 m chunks, and only the chunks that changed are re-sent,
+the same way as the mesh. Measured back to back on an RTX 5090, with the stream
+written to a file (`--save-rrd`):
+
+| Sequence | Occupied voxels (final map) | fps, without / with | `.rrd`, without / with |
+|---|---|---|---|
+| `walk_towards_chair_and_rotate_the_chair/episode_0` | 98 k | 27.4 / 26.7 | 59 / 64 MB |
+| TUM `fr3/long_office_household` | 573 k | 35.4 / 34.2 | 425 / 470 MB |
+
+`--no-occupancy` turns it off.
+
+![occupancy map, chair episode 0](docs/cuvslam_chair_ep0_occupancy.jpg)
+
+`walk_towards_chair_and_rotate_the_chair/episode_0` at 1.5 cm: the armchair
+(yellow-green) and the round stool (cyan) on the carpet.
+
+![occupancy map, TUM office](docs/cuvslam_tum_occupancy.jpg)
+
+The TUM office: the two desks back to back, their tops orange at ~0.75 m and the
+monitors red, with cuVSLAM's loop (orange) and the mocap's (blue) overhead.
 
 ## Poses: where the trajectory comes from
 
@@ -526,8 +574,8 @@ walks through, see the [TUM office loop](#a-bigger-scene-tum-rgb-d-fr3long_offic
 | Humanoid Everyday `walk_towards_chair_and_rotate_the_chair/episode_2` | same, `.../episode_2` | ✅ ICP path 3.79 m, 1.7° ground-plane tilt |
 | Humanoid Everyday `walk_towards_outside_chair_and_pull_it_out/episode_0` | same, `.../walk_towards_outside_chair_and_pull_it_out/episode_0` | ✅ ICP path 2.67 m, 1.0° tilt; café tabletop 0.735 m above the paving |
 | Humanoid Everyday `pick_up_a_caution_sign...`, `walk_towards_elevator...` | same | ❌ planar scenes, ICP drifts and the map collapses (see above) |
-| Humanoid Everyday, chair / outside_chair / trashbin (8 episodes), cuVSLAM + nvblox online | `run_all.sh /data /results/cuvslam` | ✅ verified 2026-10-21; re-run 2026-10-26 with identical trajectories at 30–35 fps, browser viewer (`--serve`) verified — see [Online SLAM](#online-slam-cuvslam--nvblox) |
-| TUM RGB-D `fr3/long_office_household`, cuVSLAM + nvblox online | `run_all.sh /tum/rgbd_dataset_freiburg3_long_office_household /results/tum` | ✅ verified 2026-10-26: 2486 frames, ATE 6.6 cm vs mocap (5.6 cm with `--slam`), 33–39 fps while streaming — see [A bigger scene](#a-bigger-scene-tum-rgb-d-fr3long_office_household) |
+| Humanoid Everyday, chair / outside_chair / trashbin (8 episodes), cuVSLAM + nvblox online | `run_all.sh /data /results/cuvslam` | ✅ verified 2026-10-21; re-run 2026-10-26 with identical trajectories at 30–35 fps, browser viewer (`--serve`) verified; occupancy map verified 2026-10-27 on `chair/episode_0` (98 k voxels at 1.5 cm) — see [Online SLAM](#online-slam-cuvslam--nvblox) |
+| TUM RGB-D `fr3/long_office_household`, cuVSLAM + nvblox online | `run_all.sh /tum/rgbd_dataset_freiburg3_long_office_household /results/tum` | ✅ verified 2026-10-26: 2486 frames, ATE 6.6 cm vs mocap (5.6 cm with `--slam`), 33–39 fps while streaming; occupancy map verified 2026-10-27 (573 k voxels at 1.5 cm, same trajectory) — see [A bigger scene](#a-bigger-scene-tum-rgb-d-fr3long_office_household) |
 | Replica, Redwood, 3DMatch, cuSFM, PLY LiDAR | the fusers below, on their native layouts | Builds; not run in this demo |
 
 `fuse_replica` is one of five fusers the image builds; all of them are on the
