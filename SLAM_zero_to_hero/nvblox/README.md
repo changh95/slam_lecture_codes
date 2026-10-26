@@ -424,7 +424,46 @@ written to a file (`--save-rrd`):
 | `walk_towards_chair_and_rotate_the_chair/episode_0` | 98 k | 27.4 / 26.7 | 59 / 64 MB |
 | TUM `fr3/long_office_household` | 573 k | 35.4 / 34.2 | 425 / 470 MB |
 
-`--no-occupancy` turns it off.
+#### Run it
+
+The occupancy map is on by default, so the
+[demo commands above](#run-the-two-demos-with-a-gui) already show it in the first
+tab on the right. The scripts are baked into the image, so an image built before
+the occupancy map was added does not have it. This prints nothing on such an image:
+
+```bash
+podman run --rm slam_zero_to_hero:nvblox \
+  /opt/slam_venv/bin/python /nvblox_demo/scripts/cuvslam_nvblox.py --help | grep no-occupancy
+```
+
+In that case rebuild it with `podman build -t slam_zero_to_hero:nvblox .`, which only
+redoes the last layers.
+
+One Humanoid Everyday episode into a native viewer on the host, from this folder:
+
+```bash
+rerun &   # on the host, once; must be 0.33.0 like the image
+
+podman run --rm --network=host \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  -e TASKS="walk_towards_chair_and_rotate_the_chair" -e EPISODES="episode_0" \
+  -v ~/data/humanoid_everyday:/data:ro \
+  -v "$PWD/results":/results \
+  slam_zero_to_hero:nvblox \
+  /nvblox_demo/scripts/run_all.sh /data /results/occupancy
+```
+
+For the TUM office, run the demo B command above unchanged. Arguments after the
+output directory change the map:
+
+- `--voxel 0.01`: finer voxels, for the occupancy map and the mesh alike. On
+  `chair/episode_0` that is 242 k voxels instead of 98 k, at 21.7 fps streamed
+  live, which is slower than the 30 Hz recording.
+- `--mesh-every N`: how often the map is refreshed, every 15 frames by default.
+- `--no-occupancy`: the mesh only, as before the occupancy map was added.
+- `--serve`: a browser viewer instead of the native one, as in Option 1 above;
+  publish the ports with `-p 9090:9090 -p 9877:9877` instead of `--network=host`.
 
 ![occupancy map, chair episode 0](docs/cuvslam_chair_ep0_occupancy.jpg)
 
