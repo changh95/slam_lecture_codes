@@ -1,9 +1,63 @@
 # UAMC notes
 
-Findings from getting FAST-LIVO2-ROS2 to run on the COEX bag `lvi_set_2_restamped`
-(2026-09-27/28). Everything here was measured on this host; nothing is taken from upstream.
-No ground truth exists for these bags, so "works" means "does not diverge" plus a
-plausible map, not an ATE.
+Findings from getting FAST-LIVO2-ROS2 to run on the COEX recording: first on
+`lvi_set_2_restamped` (2026-09-27/28, the sections after this one), then on the same
+recording with its original stamps, `lvi_coex_set_2` (2026-10-26, the demo's default now).
+Everything here was measured on this host; nothing is taken from upstream. No ground truth
+exists for these bags, so "works" means "does not diverge" plus a plausible map, not an ATE.
+
+## `lvi_coex_set_2`: upstream's configs fit as they are
+
+Decoding messages at t = 5, 100 and 250 s (header stamp minus bag receive time, and the
+device time inside the message minus its header):
+
+| Stream | Header − receive | Inside the message |
+|---|---|---|
+| Avia `CustomMsg` | +1200.16 … +1200.18 s | `timebase` − header = 0.0000 s |
+| Mid-360 `PointCloud2` | +1200.17 … +1200.18 s | first point's `timestamp` − header = 0.0000 s |
+| Avia IMU | +1200.20 … +1200.24 s | — |
+| Mid-360 IMU | +1200.27 … +1200.29 s | — |
+| Oak-D image | −0.15 … −0.12 s | — |
+
+So both LiDARs and both IMUs are on the Livox clock, and the camera is on the host clock.
+Against `lvi_set_2_restamped`, the restamping moved the LiDAR headers by 1200.183 s and the
+Avia IMU by 1200.2527 s (upstream's `img_time_offset`), which is the −69.7 ms IMU error the
+sections below chase. Here `imu_time_offset: 0.0` is right, and the Mid-360 point times
+are consistent with their headers, so `mid360_handler` works without a code change.
+
+**Camera → LiDAR clock offset, measured.** The camera's rotation rate, from LK-tracked
+features between consecutive frames (rotation-only Kabsch on undistorted bearings; the
+essential matrix is degenerate for these near-pure rotations), cross-correlated with the
+Mid-360 gyro norm over 70 s windows:
+
+| Bag, window | Offset (image header → Mid-360 IMU clock) | Correlation |
+|---|---|---|
+| `lvi_coex_set_2`, 40–110 s | 1200.288 s | 0.962 |
+| `lvi_coex_set_2`, 180–250 s | 1200.298 s | 0.971 |
+| `lvi_ghm_set`, 20–90 s (control) | −0.004 s | 0.927 |
+
+The Gwanghwamun control comes out at zero, as its one-clock stamps predict. The coloured
+map uses 1200.293 s (`IMG_OFFSET`). Upstream's 1200.2527 is 40 ms short of it, and the LiDAR
+offset 1200.183 is 110 ms short.
+
+**Avia ↔ Mid-360 extrinsic.** `uamc_geom.R_IA` was estimated on `lvi_ghm_set` six weeks
+earlier. On COEX, a Kabsch fit of the Avia IMU gyro to the Mid-360 IMU gyro (8.5 k samples per
+window) lands 0.24° and 0.17° from it, with the same residual (0.020–0.021 rad/s), and the
+Mid-360 IMU lags the Avia IMU by 5 ms, as on Gwanghwamun. The rig did not change, so
+`uamc_geom.py` serves both bags.
+
+**Runs** (whole bag, real time; all configs upstream apart from outputs and `use_sim_time`):
+
+| Config | Result |
+|---|---|
+| `coex_mid360_lvi.yaml` | 6065 poses, 319.1 m path, start-end 0.03 m, fastest 0.5 s window 2.3 m/s. After one rigid alignment (89.5° yaw: the Mid-360 sits rotated from the Avia) it matches the September Avia LIO run on the restamped bag to 0.10 m RMSE over the first 90 s, and the September Avia LVI run to 0.70 m at 120 s |
+| `coex_mid360_lio.yaml` | 3342 poses, 318.2 m, start-end 0.03 m; at most 0.16 m (mean 0.03 m) from the LVI run |
+| `coex_mid360_lio.yaml` + `COLOR_MAP` | Avia 52.3 M + Mid-360 53.2 M points, 31.9 % inside the camera image, 7.44 M-point multi-resolution map (0.5–16 cm), built in 35 s |
+| `coex_avia_lvi.yaml` | follows the LIO runs for 45 s, then climbs 3–6 m on a flat floor, 7 m/s at 60.8 s, > 15 m/s at 218.7 s; stopped at 230 s, 505 m from the start. The same as `img +0.0697` on the restamped bag below, i.e. upstream's `img_time_offset` is the likely cause (not verified) |
+| `avia_lvi.yaml` with `img_en: 0` (Avia LIO, not kept in `config/`) | whole bag without diverging, 3320 poses, 335.0 m, but ends 18.3 m from its start and 11.3 m below it. For its first 90 s it is the September restamped run with `imu_time_offset: -0.0697` to 0.00 m, which confirms the two bags differ only in their stamps; then the same 5 m/s jump at 93.5 s, and from ~210 s a sink the September run did not have (not bit-reproducible across the two) |
+
+The LIO runs are deterministic: the same config rerun with RViz on the GPU instead of
+llvmpipe matched to 1.7 mm over 3169 poses.
 
 ## What "restamped" means, measured
 
@@ -22,6 +76,11 @@ it must go.
 
 `lvi_ghm_set` is different again: there the Avia header already equals `timebase` and the
 camera is on the same clock, so no offset is needed at all.
+Re-measured 2026-10-21 by decoding the first and 3000th messages: Avia `timebase` − header
+= 0.0000 s, and the IMU, LiDAR and camera headers all sit 0.03–0.13 s behind the bag
+receive time, so no offset is needed there. An Avia LiDAR-inertial run with
+`imu_time_offset: 0.0` gets through the whole 841.8 s bag (636.0 m path) but with speed spikes
+up to 15.4 m/s; the Mid-360 runs (README) never exceed 1.5 m/s.
 
 ## IMU runs 69.7 ms early
 
@@ -62,11 +121,11 @@ All with `imu_time_offset: -0.0697` unless noted, full bag at `-r 0.5`:
 | td estimate off only, `img +0.0697` | 45.0 s | diverged |
 | rolling shutter off only, `img 0.0` | 44.8 s | diverged |
 | rolling shutter on, td estimate off, `img 0.0` | 150.8 s | diverged |
-| **rolling shutter off, td estimate off, `img 0.0`** (`coex_avia_lvi.yaml`) | 154.6 s | 413 m path, start-end 69.7 m, 14.8 m vertical extent |
+| **rolling shutter off, td estimate off, `img 0.0`** (`coex_avia_lvi.yaml` as of September) | 154.6 s | 413 m path, start-end 69.7 m, 14.8 m vertical extent |
 | same, `img +0.0697` | 44.6 s | diverged |
 | same, `img_point_cov 5000` (rolling shutter + td on) | 57.2 s | diverged |
 
-So `coex_avia_lvi.yaml` is only trusted for the first ~150 s. Against the LIO run it
+So that config was only trusted for the first ~150 s. Against the LIO run it
 agrees to 0.34 m up to t = 90 s; then the LIO run takes a 3.6 m jump at 94 s and the two
 are 20.5 m apart by 146 s (README runs). Which is right cannot be told without ground truth.
 The README's coloured-map demo therefore plays 150 s.
@@ -118,3 +177,14 @@ happens after the last screenshot, and the trajectory, map and stats are still w
 It is not the course view controller: in an A/B of three 40 s runs each (2026-09-28, load
 average ~40), `UnifiedOrbit` crashed 2/3 and stock `rviz_default_plugins/Orbit` 2/3. On
 the private Xvfb display every shutdown was clean.
+
+Since 2026-10-26 `run_coex.sh` no longer sends RViz that SIGINT on a host display: it writes
+everything first and leaves RViz up with the final map until the user closes the window
+(`HOLD_RVIZ`), so the crash no longer shows up there.
+
+**GPU rendering needs `compute`.** With `NVIDIA_DRIVER_CAPABILITIES=graphics,utility`, the
+container gets `libGLX_nvidia.so` but not `libnvidia-gpucomp.so` (driver 580), which the NVIDIA
+toolkit only mounts with `compute`. `libGLX_nvidia` then fails to load, glvnd falls back to
+Mesa without an error, and RViz draws with llvmpipe even though `__GLX_VENDOR_LIBRARY_NAME=nvidia`
+is set and the GPU devices are in the container. With `graphics,compute,utility` `glxinfo -B` reports the RTX 5090,
+and RViz went from 10 to 31 fps on the COEX runs. `run.log` prints the renderer RViz got.

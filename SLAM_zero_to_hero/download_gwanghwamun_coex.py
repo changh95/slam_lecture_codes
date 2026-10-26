@@ -37,9 +37,10 @@ Three things to know before picking a sequence:
   * `lvi_coex_set_2` and `lvi_set_2_restamped` are the **same recording**: same
     334.7 s duration, same 129,083 messages, same start time (2026-05-13
     14:50 UTC), and `.db3` files of byte-identical length. The `_restamped` tar
-    was built three days later and is the one to use; the other is kept here
-    only so the pair can be compared. Do not download both expecting two
-    sequences -- that is 21.6 GB of duplicate data.
+    was built three days later with the headers moved to the host clock.
+    `lvi_coex_set_2` keeps the sensors' own stamps, which upstream's configs
+    and the Mid-360 pipeline expect, so it is the one to use. Do not download
+    both expecting two sequences -- that is 21.6 GB of duplicate data.
 
 The Avia topic's type is `livox_interfaces/msg/CustomMsg`, but FAST-LIVO2-ROS2
 builds against `livox_ros_driver2`, whose CustomMsg has a different type hash.
@@ -99,8 +100,9 @@ SEQUENCES = {
         dir="lvi_set_2_restamped",
         venue="COEX",
         duration=334.7, messages=129083, camera=7157,
-        note="LiDAR-visual-inertial, both LiDARs + Oak-D RGB at 21.4 Hz. "
-             "Timestamps rewritten; the COEX sequence to use.",
+        note="The SAME recording as lvi_coex_set_2, with the headers moved to "
+             "the host clock. Upstream's time offsets and the Mid-360 pipeline "
+             "do not fit it; use lvi_coex_set_2.",
     ),
     "lvi_coex_set_2": dict(
         file="lvi_coex_set_2.zst",
@@ -110,8 +112,8 @@ SEQUENCES = {
         dir="lvi_coex_set_2",
         venue="COEX",
         duration=334.7, messages=129083, camera=7157,
-        note="The SAME recording as lvi_set_2_restamped, before restamping. "
-             "Only for comparing the two; not a second sequence.",
+        note="LiDAR-visual-inertial, both LiDARs + both IMUs + Oak-D RGB at "
+             "21.4 Hz, with the sensors' own timestamps; the COEX sequence to use.",
     ),
     "multi_lidar_coex_set": dict(
         file="multi_lidar_coex_set.zst",
@@ -126,7 +128,7 @@ SEQUENCES = {
     ),
 }
 
-DEFAULT_SEQUENCES = ["lvi_set_2_restamped"]
+DEFAULT_SEQUENCES = ["lvi_coex_set_2"]
 
 DEST_DIR = Path.home() / "data" / "gwanghwamun_coex"
 
@@ -409,7 +411,7 @@ def main():
     if {"lvi_coex_set_2", "lvi_set_2_restamped"} <= set(sequences):
         print("\n  NOTE: lvi_coex_set_2 and lvi_set_2_restamped are the same recording")
         print("  (same duration, message counts and start time). Unless you want to")
-        print("  compare them, lvi_set_2_restamped alone is enough.")
+        print("  compare them, lvi_coex_set_2 alone is enough.")
     print()
 
     args.dest.mkdir(parents=True, exist_ok=True)

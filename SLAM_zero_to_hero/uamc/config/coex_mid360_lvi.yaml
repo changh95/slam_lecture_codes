@@ -1,30 +1,32 @@
-# FAST-LIVO2-ROS2 avia_lvi.yaml adapted for the UAMC COEX bag lvi_set_2_restamped,
-# LiDAR-inertial only (img_en: 0). Changes vs upstream: img_en, livox_msg_type,
-# imu_time_offset, img_time_offset, evo.*, pcd_save_en. See NOTES.md for the offsets.
+# Upstream FAST-LIVO2-ROS2 config/mid360_lvi.yaml (a09599a), for the COEX bag lvi_coex_set_2 (the original
+# timestamps, not lvi_set_2_restamped). Changes: seq_name, pose_output_en, pcd_save_en, use_sim_time
+# (run_coex.sh plays the bag with --clock). Upstream's time offsets fit this bag as they are: the Mid-360
+# points, both IMUs and the Avia share the Livox clock, and the camera is ~1200.2 s behind it (NOTES.md).
 /**:
   ros__parameters:
+    use_sim_time: true
     common:
       img_topic: "/oak/rgb/image_raw"
-      lid_topic: "/livox/lidar_3JEDM180010C211"
-      imu_topic: "/livox/imu_3JEDM180010C211"
-      img_en: 0
+      lid_topic: "/livox/lidar_192_168_1_150"
+      imu_topic: "/livox/imu_192_168_1_150"
+      img_en: 1
       lidar_en: 1
       ros_driver_bug_fix: false
-      livox_msg_type: "livox_ros_driver2"  # only livox_ros_driver2 is built in this image; bag metadata is type-patched
+      livox_msg_type: "livox_ros_driver2"
 
     extrin_calib:
-      extrinsic_T: [0.04165, 0.02326, -0.0284]
-      extrinsic_R: [1.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0,
-                    0.0, 0.0, 1.0]
-      Rcl: [0.00610193,-0.999863,-0.0154172,
-            -0.00615449,0.0153796,-0.999863,
-            0.999962,0.00619598,-0.0060598] 
-      Pcl: [0.0194384, 0.104689,-0.0251952]
+      extrinsic_T: [0.011, 0.02329, -0.04412]
+      extrinsic_R: [1., 0., 0.,
+                    0., 1., 0.,
+                    0., 0., 1.]
+      Rcl: [-0.99592574,  0.01558709,  0.08881982,
+            -0.07711178, -0.65783989, -0.74919988,
+            0.04675138, -0.75299650,  0.65636163]
+      Pcl: [-0.19803049, 0.12062488, 0.22892291]
 
     time_offset:
-      imu_time_offset: -0.0697   # IMU stamps run 69.7 ms early vs the restamped LiDAR (NOTES.md); 0.0 diverges at ~53 s
-      img_time_offset: 0.0   # upstream 1200.252661 assumes un-restamped headers; unused here (img_en: 0)
+      imu_time_offset: 0.0
+      img_time_offset: 1200.252661
       exposure_time_init: 0.0
 
     rolling_shutter:
@@ -41,14 +43,14 @@
     preprocess:
       point_filter_num: 1
       filter_size_surf: 0.1
-      lidar_type: 1 # Livox Avia LiDAR
-      scan_line: 6
-      blind: 1.0
+      lidar_type: 8 # 8 : Livox Mid-360 LiDAR
+      scan_line: 4
+      blind: 0.1
 
     vio:
       max_iterations: 5
       outlier_threshold: 1000
-      img_point_cov: 1000
+      img_point_cov: 100
       patch_size: 8
       patch_pyrimid_level: 4
       normal_en: true
@@ -60,22 +62,22 @@
     imu:
       imu_en: true
       imu_int_frame: 50
-      acc_cov: 0.8 
-      gyr_cov: 0.5 
-      b_acc_cov: 0.01 # 0.1
-      b_gyr_cov: 0.01 # 0.1
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.001
+      b_gyr_cov: 0.001
 
     lio:
       max_iterations: 5
       dept_err: 0.02
-      beam_err: 0.05
-      min_eigen_value: 0.0025 # 0.005
-      voxel_size: 0.4
+      beam_err: 0.15
+      min_eigen_value: 0.005
+      voxel_size: 0.5
       max_layer: 2
       max_points_num: 50
       layer_init_num: [5, 5, 5, 5, 5]
 
-    local_map:  
+    local_map:
       map_sliding_en: false
       half_map_size: 100
       sliding_thresh: 8.0
@@ -85,24 +87,22 @@
       gravity_align_en: true
 
     publish:
-      dense_map_en: false
-      pub_effect_point_en: false 
+      dense_map_en: true
+      pub_effect_point_en: false
       pub_plane_en: false
       pub_scan_num: 1
       blind_rgb_points: 0.0
 
     evo:
-      seq_name: "lvi_set_2_restamped_lio"
-      pose_output_en: true   # TUM trajectory -> Log/result/<seq_name>.txt
+      seq_name: "lvi_coex_set_2_mid360_lvi"
+      pose_output_en: true
 
     pcd_save:
-      pcd_save_en: true      # coloured map -> Log/pcd/all_*_points.pcd on shutdown
-      type: 0 # 0: World Frame, 1: Body Frame;
-      colmap_output_en: false # need to set interval = -1
+      pcd_save_en: true
+      type: 0
+      colmap_output_en: false
       filter_size_pcd: 0.15
       interval: -1
-      # how many LiDAR frames saved in each pcd file;
-      # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
 
     image_save:
       img_save_en: false

@@ -192,7 +192,7 @@ The view-controller plugins live in [`rviz_unified_controls/`](rviz_unified_cont
 - Final projects
   - Project 1: [SLAM for autonomous driving](monolane_mapping) — OpenLane rosbags (curve segment 9041488218266405018)
   - Project 2: [SLAM for drones](svo_pro_open) — UZH-FPV indoor_forward_3 (Snapdragon stereo)
-  - Project 3: [SLAM for mobile scanner systems](uamc) — UAMC COEX lvi_set_2_restamped
+  - Project 3: [SLAM for mobile scanner systems](uamc) — UAMC COEX lvi_coex_set_2: Mid-360 LiDAR-visual-inertial, LiDAR-inertial, and a camera-coloured map from both LiDARs (also Gwanghwamun lvi_ghm_set, LiDAR-visual-inertial and LiDAR-inertial)
   - Project 4: [SLAM for quadruped robots](cerberus_2) — Cerberus 2.0 Go1 CMU Garage
   - Project 5: [SLAM for humanoid robots](nvblox) — cuVSLAM + nvblox online, Humanoid Everyday chair / outside_chair / trashbin (8 episodes); TUM RGB-D fr3/long_office_household for a larger scene
   - Project 6: [SLAM for VR/AR headsets](basalt) — Monado SLAM Valve Index MIPB07
