@@ -68,7 +68,7 @@ Gwanghwamun has no public download link (see [The dataset](#the-dataset)). Once 
 is in `~/data/gwanghwamun_coex/`, unpack and type-patch it first:
 `python3 ../download_gwanghwamun_coex.py lvi_ghm_set --extract --patch-type`.
 
-**1. Gwanghwamun, LiDAR-visual-inertial** ([`config/ghm_mid360_lvi.yaml`](config/ghm_mid360_lvi.yaml)):
+**1. Gwanghwamun, LiDAR-visual-inertial** ([`config/ghm_mid360_lio.yaml`](config/ghm_mid360_lio.yaml) + `COLOR_MAP=true`):
 
 ```bash
 mkdir -p results/ghm_mid360_lvi
@@ -77,7 +77,7 @@ podman run --rm \
   -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
   -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v ~/data/gwanghwamun_coex:/data:ro -v "$PWD":/uamc:ro -v "$PWD/results/ghm_mid360_lvi":/out \
-  -e RVIZ=true -e BAG=/data/extracted/lvi_ghm_set -e CONFIG=/uamc/config/ghm_mid360_lvi.yaml \
+  -e RVIZ=true -e BAG=/data/extracted/lvi_ghm_set -e CONFIG=/uamc/config/ghm_mid360_lio.yaml -e COLOR_MAP=true \
   slam_zero_to_hero:uamc bash /uamc/scripts/run_coex.sh
 ```
 
@@ -107,8 +107,7 @@ podman run --rm \
   slam_zero_to_hero:uamc bash /uamc/scripts/run_coex.sh
 ```
 
-**4. COEX, LiDAR-visual-inertial** ([`config/coex_mid360_lvi.yaml`](config/coex_mid360_lvi.yaml);
-also what the script runs when no `BAG` or `CONFIG` is given):
+**4. COEX, LiDAR-visual-inertial** ([`config/coex_mid360_lio.yaml`](config/coex_mid360_lio.yaml) + `COLOR_MAP=true`):
 
 ```bash
 mkdir -p results/coex_mid360_lvi
@@ -117,7 +116,7 @@ podman run --rm \
   -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
   -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v ~/data/gwanghwamun_coex:/data:ro -v "$PWD":/uamc:ro -v "$PWD/results/coex_mid360_lvi":/out \
-  -e RVIZ=true -e CONFIG=/uamc/config/coex_mid360_lvi.yaml \
+  -e RVIZ=true -e CONFIG=/uamc/config/coex_mid360_lio.yaml -e COLOR_MAP=true \
   slam_zero_to_hero:uamc bash /uamc/scripts/run_coex.sh
 ```
 
@@ -161,7 +160,8 @@ at those bag seconds, and the container exits by itself:
 ```bash
 mkdir -p results/coex_mid360_lvi
 podman run --rm -v ~/data/gwanghwamun_coex:/data:ro -v "$PWD":/uamc:ro -v "$PWD/results/coex_mid360_lvi":/out \
-  -e RVIZ=true -e SHOTS="60 150 250 330" slam_zero_to_hero:uamc bash /uamc/scripts/run_coex.sh
+  -e RVIZ=true -e CONFIG=/uamc/config/coex_mid360_lio.yaml -e COLOR_MAP=true -e SHOTS="60 150 250 330" \
+  slam_zero_to_hero:uamc bash /uamc/scripts/run_coex.sh
 ```
 
 Leave out `RVIZ=true` too for no RViz at all.
@@ -195,7 +195,7 @@ Render a finished map from above, with its trajectory and the ceiling cut away
 
 ```bash
 podman run --rm -v "$PWD":/uamc:ro -v "$PWD/results/coex_mid360_lvi":/out -e VIEWS="top:1.45:4.0" -e ZOOM=1.3 \
-  slam_zero_to_hero:uamc bash /uamc/scripts/capture_map.sh lvi_coex_set_2_mid360_lvi
+  -e MAP=/out/pcd/color_map.pcd slam_zero_to_hero:uamc bash /uamc/scripts/capture_map.sh lvi_coex_set_2_mid360_lio
 podman run --rm -v "$PWD":/uamc:ro -v "$PWD/results/coex_color_map":/out -e VIEWS="top:1.45:4.0 oblique:0.6:3.9" -e ZOOM=1.3 \
   -e MAP=/out/pcd/color_map.pcd slam_zero_to_hero:uamc bash /uamc/scripts/capture_map.sh lvi_coex_set_2_mid360_lio
 ```
