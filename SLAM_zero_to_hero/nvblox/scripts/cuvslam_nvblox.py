@@ -21,8 +21,9 @@ For every frame:
      and the colour image in the colour camera's, both at the pose cuVSLAM just
      returned.
   3. The pose, the image with the tracked features and, every few frames, the
-     parts of the colour mesh and of the occupancy map that changed (see
-     Stream.mesh, Stream.occupancy) are streamed, on the same frame timeline, to
+     parts of the colour mesh, of the occupancy map and of a slice through the
+     ESDF that changed (see Stream.mesh, Stream.occupancy, Stream.esdf) are
+     streamed, on the same frame timeline, to
      a rerun viewer -- one already open on the host (--stream-url), or, with
      --serve, a web viewer started next to this process on ports 9090 / 9877
      (the URL to open is printed first thing).
@@ -73,6 +74,7 @@ MESH_REFRESH = 16    # ...and one whose triangle count barely moved, every this 
 # table height, the band where the objects in both datasets are; higher saturates red.
 OCC_Z_RANGE = (-0.1, 1.2)
 OCC_MIN_WEIGHT = 1e-4      # TSDF weight a voxel needs to count as observed: nvblox' mesh_integrator_min_weight
+ESDF_UNKNOWN = 100.0       # what nvblox returns for an ESDF voxel it has no distance for
 
 
 # --------------------------------------------------------------------------- #
@@ -213,6 +215,33 @@ def occupied_voxels(mapper):
     return centre[inside & near_free]
 
 
+def esdf_slice(mapper, height):
+    """The voxels of nvblox's 3D ESDF in the horizontal layer that holds `height`, where
+    the ESDF has a distance: centres N x 3 and signed distances N, metres, on the GPU.
+
+    The ESDF must be up to date (mapper.update_esdf()). Every allocated TSDF block the
+    layer crosses is queried in one batch, as in occupied_voxels.
+    """
+    import torch
+    from nvblox_torch.mapper import QueryType
+    tsdf = mapper.tsdf_layer_view()
+    v = tsdf.voxel_size()
+    k = int(np.floor(height / v))           # the voxel layer, and below its block
+    idx = tsdf.get_all_block_indices().cuda().long()
+    idx = idx[idx[:, 2] == k // 8]
+    if not len(idx):
+        return torch.zeros((0, 3), device="cuda"), torch.zeros(0, device="cuda")
+    grid = torch.stack(torch.meshgrid(*[torch.arange(8, device="cuda")] * 2, indexing="ij"), -1)
+    xy = ((idx[:, None, None, :2] * 8 + grid).float() + 0.5).reshape(-1, 2) * v
+    centre = torch.cat([xy, torch.full_like(xy[:, :1], (k + 0.5) * v)], 1)
+    # An ESDF query is x, y, z and a radius to subtract; N x 3 fails ("Inputs do not have
+    # the required sizes").
+    d = mapper.query_layer(QueryType.ESDF, torch.cat([centre, torch.zeros_like(xy[:, :1])], 1),
+                           mapper_id=0)[:, 0]
+    known = d < ESDF_UNKNOWN
+    return centre[known], d[known]
+
+
 # --------------------------------------------------------------------------- #
 # rerun
 # --------------------------------------------------------------------------- #
@@ -264,6 +293,7 @@ class Stream:
         self.on = False
         self.images = not args.no_stream_images
         self.occupied = not args.no_occupancy
+        self.esdf_height = None if args.no_esdf else args.esdf_height
         self.ref_path = f"world/trajectory/{seq.ref[1]}"
         name, colour_intr = seq.name, seq.colour_intr
         if args.no_stream and not args.save_rrd:
@@ -290,14 +320,17 @@ class Stream:
         self.rec = rec
         self.on = True
         rec.send_recording_name(name)  # the viewer lists recordings by start time otherwise
-        # The occupied voxels sit exactly where the mesh is, so each gets a tab of its own.
-        map_view = rrb.Spatial3DView(name="nvblox mesh + trajectory", origin="world",
-                                     contents=["+ $origin/**", "- /world/occupancy/**"])
+        # The occupied voxels sit exactly where the mesh is, so each gets a tab of its own;
+        # the ESDF slice goes over the mesh, as in nvblox_torch's ESDF example.
+        def view(name, hide):
+            return rrb.Spatial3DView(name=name, origin="world",
+                                     contents=["+ $origin/**"] + [f"- /world/{h}/**" for h in hide])
+        views = [view("nvblox mesh + trajectory", ("occupancy", "esdf"))]
         if self.occupied:
-            map_view = rrb.Tabs(
-                rrb.Spatial3DView(name="occupancy voxels + trajectory", origin="world",
-                                  contents=["+ $origin/**", "- /world/mesh/**"]),
-                map_view)
+            views.insert(0, view("occupancy voxels + trajectory", ("mesh", "esdf")))
+        if self.esdf_height is not None:
+            views.append(view(f"ESDF slice at z = {self.esdf_height:g} m + mesh", ("occupancy",)))
+        map_view = views[0] if len(views) == 1 else rrb.Tabs(*views)
         rec.send_blueprint(rrb.Blueprint(
             rrb.Horizontal(
                 rrb.Vertical(rrb.Spatial2DView(name="colour + cuVSLAM features",
@@ -313,9 +346,9 @@ class Stream:
             resolution=list(seq.size), image_plane_distance=0.2), static=True)
         self.track_colours = {}
         # per layer: chunk entity path -> (fingerprint, element count, call) last sent
-        self.chunks = {"mesh": {}, "occupancy": {}}
-        self.calls = {"mesh": 0, "occupancy": 0}
-        self.height_lut = None
+        self.chunks = {"mesh": {}, "occupancy": {}, "esdf": {}}
+        self.calls = {"mesh": 0, "occupancy": 0, "esdf": 0}
+        self.luts = {}
 
     def frame(self, i, T_w_c, rgb, observations, traj, ref_traj, grav_err):
         if not self.on:
@@ -381,27 +414,54 @@ class Stream:
         """
         if not (self.on and self.occupied):
             return
-        torch = self.torch
         centre = occupied_voxels(mapper)
         # Voxel centres sit on a grid, so moves inside a cube can cancel in their plain sum;
         # the sum of squares as well tells those apart.
         order, send = self._changed_cubes("occupancy", centre,
                                           (centre.double() ** 2).sum(dim=1), final)
         if send:
-            if self.height_lut is None:
-                from matplotlib import colormaps
-                self.height_lut = torch.as_tensor(
-                    colormaps["turbo"](np.linspace(0.0, 1.0, 256))[:, :3] * 255,
-                    dtype=torch.uint8, device=centre.device)
             c = centre[order]
-            lo, hi = OCC_Z_RANGE
-            colours = self.height_lut[((c[:, 2] - lo) / (hi - lo) * 255).clamp(0, 255).long()]
+            colours = self._colours("turbo", c[:, 2], *OCC_Z_RANGE)
             c, colours = c.cpu().numpy(), colours.cpu().numpy()
             half = 0.5 * mapper.tsdf_layer_view().voxel_size()
             ends = np.cumsum([n for _, n in send])
             for (path, _), p, col in zip(send, np.split(c, ends[:-1]), np.split(colours, ends[:-1])):
                 self.rec.log(path, self.rr.Boxes3D(centers=p, half_sizes=[[half, half, half]],
                                                    colors=col, fill_mode="solid"))
+
+    def esdf(self, mapper, final=False):
+        """Log a horizontal slice of nvblox's 3D ESDF at --esdf-height, at the current frame:
+        one flat tile per voxel, coloured by its distance to the nearest surface, in
+        MESH_CHUNK_M cubes as the mesh is (see mesh).
+
+        The colours run from 0 m (and inside surfaces) to the slice height, the distance
+        down to the floor: the floor is a surface too, so wherever it is mapped below the
+        slice nothing in the slice is further from a surface than that. What the slice
+        shows is the obstacles that come closer than the floor.
+        """
+        if not (self.on and self.esdf_height is not None):
+            return
+        mapper.update_esdf()
+        centre, dist = esdf_slice(mapper, self.esdf_height)
+        order, send = self._changed_cubes("esdf", centre, dist, final)
+        if send:
+            c = centre[order]
+            colours = self._colours("plasma", dist[order], 0.0, self.esdf_height)
+            c, colours = c.cpu().numpy(), colours.cpu().numpy()
+            half = 0.5 * mapper.tsdf_layer_view().voxel_size()
+            ends = np.cumsum([n for _, n in send])
+            for (path, _), p, col in zip(send, np.split(c, ends[:-1]), np.split(colours, ends[:-1])):
+                self.rec.log(path, self.rr.Boxes3D(centers=p, half_sizes=[[half, half, 0.001]],
+                                                   colors=col, fill_mode="solid"))
+
+    def _colours(self, cmap, x, lo, hi):
+        """RGB uint8 on the GPU of matplotlib's colour map cmap at x, scaled from [lo, hi]."""
+        torch = self.torch
+        if cmap not in self.luts:
+            from matplotlib import colormaps
+            self.luts[cmap] = torch.as_tensor(colormaps[cmap](np.linspace(0.0, 1.0, 256))[:, :3] * 255,
+                                              dtype=torch.uint8, device=x.device)
+        return self.luts[cmap][((x - lo) / (hi - lo) * 255).clamp(0, 255).long()]
 
     def _changed_cubes(self, layer, centre, value, final):
         """Cut a layer's elements into MESH_CHUNK_M cubes on the GPU and pick the cubes to
@@ -660,6 +720,7 @@ def run_episode(seq, out: Path, args) -> dict:
             mapper.update_color_mesh()
             stream.mesh(mapper.get_color_mesh())
             stream.occupancy(mapper)
+            stream.esdf(mapper)
         if (i + 1) % 100 == 0:
             print(f"    {i+1}/{len(seq)}  features {len(obs)}  "
                   f"{(i+1)/(time.time()-t_start):.1f} fps", flush=True)
@@ -669,6 +730,7 @@ def run_episode(seq, out: Path, args) -> dict:
     mesh = mapper.get_color_mesh()
     stream.mesh(mesh, final=True)
     stream.occupancy(mapper, final=True)
+    stream.esdf(mapper, final=True)
     mesh.save(str(out / "mesh.ply"))
     write_tum(out / "traj_cuvslam.tum", times, poses)
     ref_T = []
@@ -760,6 +822,10 @@ def main():
     ap.add_argument("--no-stream-images", action="store_true")
     ap.add_argument("--no-occupancy", action="store_true",
                     help="do not stream the occupied voxels (streamed with the mesh by default)")
+    ap.add_argument("--no-esdf", action="store_true",
+                    help="do not compute and stream the ESDF slice (streamed with the mesh by default)")
+    ap.add_argument("--esdf-height", type=float, default=0.5,
+                    help="height of the streamed ESDF slice above the floor, metres")
     ap.add_argument("--save-rrd", action="store_true",
                     help="write <out>/rrd/<episode>.rrd instead of streaming")
     args = ap.parse_args()

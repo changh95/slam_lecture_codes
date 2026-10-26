@@ -195,13 +195,15 @@ Per frame:
 2. **nvblox** integrates the *raw* depth in the depth camera's own frame, and the
    colour image in the colour camera's, at the pose cuVSLAM just returned.
 3. The pose, the image with cuVSLAM's tracked features, the trajectory against the
-   legged odometry and, every 15 frames, the colour mesh and the
-   [occupancy map](#occupancy-map) are streamed to rerun. The
+   legged odometry and, every 15 frames, the colour mesh, the
+   [occupancy map](#occupancy-map) and a [slice of the ESDF](#esdf-slice) are
+   streamed to rerun. The
    mesh goes in 1 m cubes and only the cubes that changed are re-sent, so the map
    grows on the timeline together with the trajectory: scrub back and it shows the
    map as it was at that frame. Sending the whole mesh each time made 1.6 GB for the
-   8 episodes, more than a browser tab keeps; this way it is ~570 MB, before the
-   occupancy map, which goes the same way and adds about a tenth. The cubes are
+   8 episodes, more than a browser tab keeps; this way it is ~385 MB, before the
+   occupancy map and the ESDF slice, which go the same way and add about a tenth
+   and 2 % to that. The cubes are
    cut on the GPU, where nvblox keeps the mesh, so a large map does not slow the
    frame rate down.
 
@@ -216,6 +218,11 @@ The same image and script run two demos; only the data changes:
 |---|---|---|
 | **A. Humanoid Everyday** | a Unitree G1's head camera, 8 short episodes one after another | `~/data/humanoid_everyday`, [download](#download-the-dataset) |
 | **B. TUM RGB-D office loop** | a hand-held Kinect walked 22 m round an office, one sequence | `~/data/tum_rgbd`, [download](#a-bigger-scene-tum-rgb-d-fr3long_office_household) |
+| **A + B** | both in one command: the 8 episodes, then the office loop, in one viewer | both of the above |
+
+`run_all.sh` takes the data root as its first argument. For A + B that argument
+holds both roots, quoted and separated by a space; they run in that order, into one
+output folder and one `summary.md`.
 
 The GUI is the [Rerun](https://rerun.io) viewer. It can run in a browser or as a
 native window on the host.
@@ -241,9 +248,19 @@ podman run --rm -p 9090:9090 -p 9877:9877 \
   -v "$PWD/results":/results \
   slam_zero_to_hero:nvblox \
   /nvblox_demo/scripts/run_all.sh /tum/rgbd_dataset_freiburg3_long_office_household /results/tum --serve
+
+# Demo A + B: the 8 Humanoid Everyday episodes, then the TUM office
+podman run --rm -p 9090:9090 -p 9877:9877 \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  -v ~/data/humanoid_everyday:/data:ro \
+  -v ~/data/tum_rgbd:/tum:ro \
+  -v "$PWD/results":/results \
+  slam_zero_to_hero:nvblox \
+  /nvblox_demo/scripts/run_all.sh "/data /tum/rgbd_dataset_freiburg3_long_office_household" /results/all --serve
 ```
 
-The first thing either one prints is the URL to open,
+The first thing each one prints is the URL to open,
 **`http://localhost:9090/?url=rerun+http://localhost:9877/proxy`**. The server
 buffers the stream, so a browser opened late still gets everything sent so far.
 After the last episode the viewer keeps serving until Ctrl-C. To watch from another
@@ -274,17 +291,28 @@ podman run --rm --network=host \
   -v "$PWD/results":/results \
   slam_zero_to_hero:nvblox \
   /nvblox_demo/scripts/run_all.sh /tum/rgbd_dataset_freiburg3_long_office_household /results/tum
+
+# Demo A + B: the 8 Humanoid Everyday episodes, then the TUM office
+podman run --rm --network=host \
+  --runtime=/usr/bin/nvidia-container-runtime \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  -v ~/data/humanoid_everyday:/data:ro \
+  -v ~/data/tum_rgbd:/tum:ro \
+  -v "$PWD/results":/results \
+  slam_zero_to_hero:nvblox \
+  /nvblox_demo/scripts/run_all.sh "/data /tum/rgbd_dataset_freiburg3_long_office_household" /results/all
 ```
 
 What the viewer shows, in either option:
 
 - **Left, top:** the colour image with the features cuVSLAM is tracking.
 - **Left, bottom:** the tracked-feature count and the gravity error over time.
-- **Right, two tabs:** **occupancy voxels**, the one that opens, with every occupied
-  voxel as a cube coloured by height (see [Occupancy map](#occupancy-map)), and
-  **nvblox mesh**, the colour mesh. Both show the camera, cuVSLAM's trajectory
-  (orange) and the reference trajectory (blue): the legged odometry in demo A, the
-  mocap ground truth in demo B.
+- **Right, three tabs:** **occupancy voxels**, the one that opens, with every
+  occupied voxel as a cube coloured by height (see [Occupancy map](#occupancy-map));
+  **nvblox mesh**, the colour mesh; and **ESDF slice**, the distance to the nearest
+  surface 0.5 m above the floor, over the mesh (see [ESDF slice](#esdf-slice)). All
+  three show the camera, cuVSLAM's trajectory (orange) and the reference trajectory
+  (blue): the legged odometry in demo A, the mocap ground truth in demo B.
 - **Bottom:** the frame timeline. Scrub it back and the map shrinks to what had
   been mapped by that frame.
 
@@ -300,7 +328,8 @@ if a viewer is back. Ctrl-C stops the sweep and still writes the summary of the
 episodes that finished.
 
 Options, after the output directory: `--serve` (with `--web-port` / `--grpc-port`,
-default 9090 / 9877), `--no-stream`, `--no-stream-images`, `--no-occupancy`, `--stream-url URL`,
+default 9090 / 9877), `--no-stream`, `--no-stream-images`, `--no-occupancy`, `--no-esdf`,
+`--esdf-height H`, `--stream-url URL`,
 `--save-rrd` (one `.rrd` per episode under `rrd/` instead of streaming; ~64 MB for
 `chair/episode_0`, 5 MB of it the occupancy map), `--mesh-every N`, `--slam` (cuVSLAM's loop-closing SLAM layer;
 these episodes have almost no revisits, so it changes little), `--voxel`,
@@ -347,6 +376,7 @@ tar xzf rgbd_dataset_freiburg3_long_office_household.tgz && rm rgbd_dataset_frei
 Then run demo B from [Run the two demos with a GUI](#run-the-two-demos-with-a-gui):
 `run_all.sh` takes the sequence directory where it otherwise takes the data root.
 The results land in `results/tum/rgbd_dataset_freiburg3_long_office_household/`.
+The demo A + B command runs it after the Humanoid Everyday episodes.
 
 What changes against Humanoid Everyday:
 
@@ -383,9 +413,9 @@ earlier frames at the poses cuVSLAM gave at the time.
 The final map is 1.74 M triangles. The run keeps up with the 30 Hz recording while
 it streams: 38.6 fps when the stream goes to a file, and 32.9 fps when it is served
 to a browser on the same machine. With `--no-stream`, which also skips meshing until
-the end, it runs at 86 fps (measured with `--slam`). The recording is ~670 MB, small
-enough for a browser tab to hold all of it: a tab opened after the run still scrubs
-back to frame 0 and shows the map as it was then.
+the end, it runs at 86 fps (measured with `--slam`). The recording is ~470 MB, 45 MB
+of it the occupancy map, small enough for a browser tab to hold all of it: a tab
+opened after the run still scrubs back to frame 0 and shows the map as it was then.
 
 ![cuVSLAM + nvblox on fr3/long_office_household](docs/cuvslam_tum_long_office.jpg)
 
@@ -474,6 +504,26 @@ output directory change the map:
 
 The TUM office: the two desks back to back, their tops orange at ~0.75 m and the
 monitors red, with cuVSLAM's loop (orange) and the mocap's (blue) overhead.
+
+### ESDF slice
+
+The third tab on the right shows nvblox' ESDF, the Euclidean signed distance
+field: for every voxel, the distance to the nearest surface, negative inside one.
+It is what a planner checks a robot's body against. nvblox_torch builds it in 3D
+from the TSDF (`mapper.update_esdf()`, out to 2 m from a surface). The tab shows
+the horizontal layer of it at `--esdf-height`, 0.5 m by default, laid over the mesh
+as in nvblox_torch's own ESDF example. Every voxel of the layer is a flat tile,
+coloured from dark purple at a surface (or inside one) to yellow at 0.5 m.
+
+The floor is a surface too. Wherever it has been mapped, no point 0.5 m above it
+is further than 0.5 m from a surface, so open floor comes out yellow and anything
+darker is something closer than the floor. `--esdf-height` moves the cut.
+
+The ESDF is updated, and the layer streamed, together with the mesh: every
+`--mesh-every` frames, in 1 m chunks, only the chunks that changed. On
+`chair/episode_0` with `--save-rrd` that is 25.7 fps against 26.7 with the
+occupancy map alone, and 1.2 MB more in the 64 MB recording. `--no-esdf` turns it
+off.
 
 ## Poses: where the trajectory comes from
 
@@ -614,6 +664,7 @@ walks through, see the [TUM office loop](#a-bigger-scene-tum-rgb-d-fr3long_offic
 | Humanoid Everyday `walk_towards_outside_chair_and_pull_it_out/episode_0` | same, `.../walk_towards_outside_chair_and_pull_it_out/episode_0` | ✅ ICP path 2.67 m, 1.0° tilt; café tabletop 0.735 m above the paving |
 | Humanoid Everyday `pick_up_a_caution_sign...`, `walk_towards_elevator...` | same | ❌ planar scenes, ICP drifts and the map collapses (see above) |
 | Humanoid Everyday, chair / outside_chair / trashbin (8 episodes), cuVSLAM + nvblox online | `run_all.sh /data /results/cuvslam` | ✅ verified 2026-10-21; re-run 2026-10-26 with identical trajectories at 30–35 fps, browser viewer (`--serve`) verified; occupancy map verified 2026-10-27 on all 8 episodes in one `--serve` sweep (8/8 ok, 41–100 k voxels at 1.5 cm, 24–30 fps), viewed in a browser on hardware WebGL2 — see [Online SLAM](#online-slam-cuvslam--nvblox) |
+| Humanoid Everyday 8 episodes + TUM `fr3/long_office_household`, one command | `run_all.sh "/data /tum/rgbd_dataset_freiburg3_long_office_household" /results/all` | ✅ verified 2026-10-27 with `--serve`: 9/9 ok with the same trajectories as the separate runs, 24–31 fps with the occupancy map and the ESDF slice streamed to one browser — see [Run the two demos with a GUI](#run-the-two-demos-with-a-gui) |
 | TUM RGB-D `fr3/long_office_household`, cuVSLAM + nvblox online | `run_all.sh /tum/rgbd_dataset_freiburg3_long_office_household /results/tum` | ✅ verified 2026-10-26: 2486 frames, ATE 6.6 cm vs mocap (5.6 cm with `--slam`), 33–39 fps while streaming; occupancy map verified 2026-10-27 (573 k voxels at 1.5 cm, same trajectory) — see [A bigger scene](#a-bigger-scene-tum-rgb-d-fr3long_office_household) |
 | Replica, Redwood, 3DMatch, cuSFM, PLY LiDAR | the fusers below, on their native layouts | Builds; not run in this demo |
 

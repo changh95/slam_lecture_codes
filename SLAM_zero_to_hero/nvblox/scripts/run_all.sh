@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run cuVSLAM + nvblox over the demo's Humanoid Everyday episodes, one after another,
-# or over one TUM RGB-D sequence.
+# and/or over TUM RGB-D sequences.
 #
 #   run_all.sh [data-root] [output-dir] [extra cuvslam_nvblox.py flags...]
 #
@@ -9,7 +9,10 @@
 # its own tracker, map and rerun recording; results land in
 # <output-dir>/<task>/episode_N/ and the table of all of them in <output-dir>/summary.md.
 # If data-root is itself a TUM RGB-D sequence (it holds rgb.txt and depth.txt), that one
-# sequence is run instead and lands in <output-dir>/<sequence>/.
+# sequence is run instead and lands in <output-dir>/<sequence>/. data-root can also be
+# several of these, space-separated in one argument, e.g.
+# "/data /tum/rgbd_dataset_freiburg3_long_office_household": they run in that order, into
+# one summary and, with --serve, one browser.
 #
 # Pass --serve to watch it in a browser: the web viewer is hosted in the container
 # (publish ports 9090 and 9877, or use --network=host), its URL is printed first thing,
@@ -21,7 +24,7 @@
 #   EPISODES=""     space-separated episode names, e.g. "episode_0" (default: all)
 set -euo pipefail
 
-ROOT="${1:-/data}"
+ROOTS="${1:-/data}"
 OUT="${2:-/results/cuvslam}"
 if [[ $# -gt 1 ]]; then shift 2; elif [[ $# -gt 0 ]]; then shift 1; fi
 TASKS="${TASKS:-walk_towards_chair_and_rotate_the_chair walk_towards_outside_chair_and_pull_it_out walk_towards_trashbin_and_throw_trash_inside}"
@@ -31,9 +34,11 @@ EPISODES="${EPISODES:-}"
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 list=()
-if [[ -f "$ROOT/rgb.txt" && -f "$ROOT/depth.txt" ]]; then
-  list=("$ROOT")
-else
+for ROOT in $ROOTS; do
+  if [[ -f "$ROOT/rgb.txt" && -f "$ROOT/depth.txt" ]]; then
+    list+=("$ROOT")
+    continue
+  fi
   for ep in $(find "$ROOT" -mindepth 2 -maxdepth 2 -type d -name 'episode_*' | sort); do
     task="$(basename "$(dirname "$ep")")"
     [[ -n "$TASKS" && " $TASKS " != *" $task "* ]] && continue
@@ -41,8 +46,8 @@ else
     [[ -f "$ep/robot_data.jsonl" || -f "$ep/data.json" ]] || continue
     list+=("$ep")
   done
-fi
-[[ ${#list[@]} -gt 0 ]] || { echo "[run_all] no episodes under $ROOT"; exit 1; }
+done
+[[ ${#list[@]} -gt 0 ]] || { echo "[run_all] no episodes under $ROOTS"; exit 1; }
 
 echo "[run_all] ${#list[@]} episodes -> $OUT"
 mkdir -p "$OUT"
