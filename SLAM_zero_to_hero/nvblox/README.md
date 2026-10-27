@@ -193,7 +193,9 @@ Per frame:
    to that image, so the raw depth is warped into the colour camera and the holes
    the warp leaves are filled.
 2. **nvblox** integrates the *raw* depth in the depth camera's own frame, and the
-   colour image in the colour camera's, at the pose cuVSLAM just returned.
+   colour image in the colour camera's, at the pose cuVSLAM just returned. The
+   pixels that see the robot's own body are left out of both: see
+   [The robot's own body](#the-robots-own-body).
 3. The pose, the image with cuVSLAM's tracked features, the trajectory against the
    legged odometry and, every 15 frames, the colour mesh, the
    [occupancy map](#occupancy-map) and a [slice of the ESDF](#esdf-slice) are
@@ -203,7 +205,7 @@ Per frame:
    map as it was at that frame. Sending the whole mesh each time made 1.6 GB for the
    8 episodes, more than a browser tab keeps; this way it is ~385 MB, before the
    occupancy map and the ESDF slice, which go the same way and add about a tenth
-   and 2 % to that. The cubes are
+   and 2 % to that, and the [drawn robot](#the-robots-own-body). The cubes are
    cut on the GPU, where nvblox keeps the mesh, so a large map does not slow the
    frame rate down.
 
@@ -312,7 +314,8 @@ What the viewer shows, in either option:
   **nvblox mesh**, the colour mesh; and **ESDF slice**, the distance to the nearest
   surface 0.5 m above the floor, over the mesh (see [ESDF slice](#esdf-slice)). All
   three show the camera, cuVSLAM's trajectory (orange) and the reference trajectory
-  (blue): the legged odometry in demo A, the mocap ground truth in demo B.
+  (blue): the legged odometry in demo A, the mocap ground truth in demo B. In demo A
+  they also show the G1 itself, its URDF posed by the recorded joint angles.
 - **Bottom:** the frame timeline. Scrub it back and the map shrinks to what had
   been mapped by that frame.
 
@@ -328,17 +331,18 @@ if a viewer is back. Ctrl-C stops the sweep and still writes the summary of the
 episodes that finished.
 
 Options, after the output directory: `--serve` (with `--web-port` / `--grpc-port`,
-default 9090 / 9877), `--no-stream`, `--no-stream-images`, `--no-occupancy`, `--no-esdf`,
+default 9090 / 9877), `--no-stream`, `--no-stream-images`, `--no-occupancy`, `--no-esdf`, `--no-body-mask`,
 `--esdf-height H`, `--stream-url URL`,
-`--save-rrd` (one `.rrd` per episode under `rrd/` instead of streaming; ~64 MB for
-`chair/episode_0`, 5 MB of it the occupancy map), `--mesh-every N`, `--slam` (cuVSLAM's loop-closing SLAM layer;
+`--save-rrd` (one `.rrd` per episode under `rrd/` instead of streaming; ~77 MB for
+`chair/episode_0`, 5 MB of it the occupancy map and 12 MB the drawn robot), `--mesh-every N`, `--slam` (cuVSLAM's loop-closing SLAM layer;
 these episodes have almost no revisits, so it changes little), `--voxel`,
 `--frames`. To run a subset: `-e TASKS="walk_towards_chair_and_rotate_the_chair"`,
 `-e EPISODES="episode_0"`.
 
 Per episode, `results/cuvslam/<task>/<episode>/` gets `traj_cuvslam.tum`,
 `traj_odom.tum` (legged odometry in the same world frame), `mesh.ply` and
-`stats.json` (with the final map's occupied-voxel count); `results/cuvslam/summary.md`
+`stats.json` (with the final map's occupied-voxel count and the share of depth pixels
+masked as the robot's body); `results/cuvslam/summary.md`
 has the table of all of them.
 
 On the first run on an RTX 50-series GPU nvblox_torch JIT-compiles its kernels
@@ -525,6 +529,61 @@ The ESDF is updated, and the layer streamed, together with the mesh: every
 occupancy map alone, and 1.2 MB more in the 64 MB recording. `--no-esdf` turns it
 off.
 
+### The robot's own body
+
+The G1's head camera looks 56° down, and its depth camera sees 79° across where
+the colour camera sees 56°. Most depth images have the robot's own hands and
+thighs along their bottom edge, and an arm across them whenever it reaches for
+something. Fused into the map, they leave a trail of blobs at hand height along the
+path, and the arm the robot turns the chair with stays in front of the chair (top
+image below).
+
+So they are taken out before nvblox gets the frame. Every Humanoid Everyday frame
+records the G1's joint angles (`arm_state`, `hand_state`, `leg_state`), and
+[`config/g1_body_model.json`](config/g1_body_model.json) holds the G1's kinematic
+tree with its Dex3 hands, from unitree_ros' `g1_29dof_with_hand.urdf`, and 194
+spheres around its link meshes ([`config/g1_visual_mesh.npz`](config/g1_visual_mesh.npz)
+has the meshes themselves, simplified to 84 k triangles, for the viewer). Each frame poses the spheres with the recorded
+angles, and every depth pixel whose point lies within 3 cm of one is set to 0, so
+nvblox neither fills nor clears anything along it. The same test on the registered
+depth gives nvblox a colour mask, so the arm's colour is not painted onto the floor
+behind it either. cuVSLAM still tracks on the unmasked depth: the trajectories are
+the same as without the mask.
+
+Where the depth camera sits on the torso is not in the dataset.
+[`scripts/make_g1_body_model.py`](scripts/make_g1_body_model.py) fits it: starting
+from the pelvis-to-camera calibration (see [Poses](#poses-where-the-trajectory-comes-from)),
+it aligns the camera-facing faces of the posed arm and hand meshes with the depth
+points by ICP, over 377 frames of the 8 episodes. That leaves a median residual of
+1.6 cm, and puts the camera 1.3 cm from the URDF's `d435_link` but pitched 52.6°
+down where the URDF has 47.6°.
+
+Over the 8 episodes the mask takes 2.6–5.5 % of the depth pixels. The trail and the
+arm are gone, the chair and the stool are untouched, and the occupancy map loses up
+to 13 % of its voxels (`outside_chair/episode_0`, where both arms pull the chair).
+On `chair/episode_0` with `--save-rrd` the run goes from 25.7 to 24.8 fps, the
+drawn robot included:
+
+![occupancy map without and with the body mask, chair episode 0](docs/cuvslam_chair_ep0_body_mask.jpg)
+
+`walk_towards_chair_and_rotate_the_chair/episode_0` at frame 414, as the robot turns
+the chair: top without the mask, with the arm fused into the chair and the hands
+along the path; bottom with it, and the G1 drawn where it is.
+
+The viewer draws the G1's URDF, posed by the recorded joint angles: the torso every
+frame, the joints at 10 Hz. That is ~3 MB a recording in the viewer; the `.rrd` file
+grows more, by 12 MB on `chair/episode_0`, because rerun writes every small pose
+separately and only compacts them when it loads the file. `--no-body-mask` turns
+the mask and the drawn robot off; the H1 has no model, so its arms still get mapped.
+To rebuild the model (14 s, numpy, SciPy and Pillow):
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://github.com/unitreerobotics/unitree_ros /tmp/unitree_ros
+git -C /tmp/unitree_ros sparse-checkout set robots/g1_description
+python3 scripts/make_g1_body_model.py /tmp/unitree_ros/robots/g1_description/g1_29dof_with_hand.urdf \
+  ~/data/humanoid_everyday/{walk_towards_chair_and_rotate_the_chair,walk_towards_outside_chair_and_pull_it_out,walk_towards_trashbin_and_throw_trash_inside}/episode_*
+```
+
 ## Poses: where the trajectory comes from
 
 The recording carries the G1's own legged odometry, so the obvious thing is to
@@ -558,7 +617,9 @@ that is **not** in the dataset and was measured here: the rotation by hand-eye
 between the ICP trajectory and the odometry orientation (1.4° median residual
 over 10-frame steps), the height from a RANSAC floor plane. It comes out as a
 forward-looking camera pitched **56.1° down** — which is why so much of every
-frame is floor and tabletop, and why sequence choice matters so much below.
+frame is floor and tabletop, and why sequence choice matters so much below. The
+online pipeline's body mask needs the camera against the torso more precisely than
+that, and fits it separately: see [The robot's own body](#the-robots-own-body).
 
 ## Output
 
@@ -664,7 +725,7 @@ walks through, see the [TUM office loop](#a-bigger-scene-tum-rgb-d-fr3long_offic
 | Humanoid Everyday `walk_towards_outside_chair_and_pull_it_out/episode_0` | same, `.../walk_towards_outside_chair_and_pull_it_out/episode_0` | ✅ ICP path 2.67 m, 1.0° tilt; café tabletop 0.735 m above the paving |
 | Humanoid Everyday `pick_up_a_caution_sign...`, `walk_towards_elevator...` | same | ❌ planar scenes, ICP drifts and the map collapses (see above) |
 | Humanoid Everyday, chair / outside_chair / trashbin (8 episodes), cuVSLAM + nvblox online | `run_all.sh /data /results/cuvslam` | ✅ verified 2026-10-21; re-run 2026-10-26 with identical trajectories at 30–35 fps, browser viewer (`--serve`) verified; occupancy map verified 2026-10-27 on all 8 episodes in one `--serve` sweep (8/8 ok, 41–100 k voxels at 1.5 cm, 24–30 fps), viewed in a browser on hardware WebGL2 — see [Online SLAM](#online-slam-cuvslam--nvblox) |
-| Humanoid Everyday 8 episodes + TUM `fr3/long_office_household`, one command | `run_all.sh "/data /tum/rgbd_dataset_freiburg3_long_office_household" /results/all` | ✅ verified 2026-10-27 with `--serve`: 9/9 ok with the same trajectories as the separate runs, 24–31 fps with the occupancy map and the ESDF slice streamed to one browser — see [Run the two demos with a GUI](#run-the-two-demos-with-a-gui) |
+| Humanoid Everyday 8 episodes + TUM `fr3/long_office_household`, one command | `run_all.sh "/data /tum/rgbd_dataset_freiburg3_long_office_household" /results/all` | ✅ verified 2026-10-27 with `--serve`: 9/9 ok with the same trajectories as the separate runs, 24–30 fps on Humanoid Everyday (body mask and drawn robot included) and 33 fps on TUM, streamed to one browser. GPU memory peaks at 31 GB of the RTX 5090's 32 GB during the TUM loop; one of three runs ran out of it there, with a browser tab on the same GPU — see [Run the two demos with a GUI](#run-the-two-demos-with-a-gui) |
 | TUM RGB-D `fr3/long_office_household`, cuVSLAM + nvblox online | `run_all.sh /tum/rgbd_dataset_freiburg3_long_office_household /results/tum` | ✅ verified 2026-10-26: 2486 frames, ATE 6.6 cm vs mocap (5.6 cm with `--slam`), 33–39 fps while streaming; occupancy map verified 2026-10-27 (573 k voxels at 1.5 cm, same trajectory) — see [A bigger scene](#a-bigger-scene-tum-rgb-d-fr3long_office_household) |
 | Replica, Redwood, 3DMatch, cuSFM, PLY LiDAR | the fusers below, on their native layouts | Builds; not run in this demo |
 

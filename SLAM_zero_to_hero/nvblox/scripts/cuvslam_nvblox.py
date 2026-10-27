@@ -19,7 +19,8 @@ For every frame:
   2. nvblox (through nvblox_torch) integrates the depth in the depth camera's
      own frame -- for Humanoid Everyday the *raw* depth, no warp needed there --
      and the colour image in the colour camera's, both at the pose cuVSLAM just
-     returned.
+     returned. On the G1, the pixels that see the robot's own body are left out
+     of both: its joint states pose a sphere model of it (see BodyModel).
   3. The pose, the image with the tracked features and, every few frames, the
      parts of the colour mesh, of the occupancy map and of a slice through the
      ESDF that changed (see Stream.mesh, Stream.occupancy, Stream.esdf) are
@@ -75,6 +76,13 @@ MESH_REFRESH = 16    # ...and one whose triangle count barely moved, every this 
 OCC_Z_RANGE = (-0.1, 1.2)
 OCC_MIN_WEIGHT = 1e-4      # TSDF weight a voxel needs to count as observed: nvblox' mesh_integrator_min_weight
 ESDF_UNKNOWN = 100.0       # what nvblox returns for an ESDF voxel it has no distance for
+G1_BODY_MODEL = Path(__file__).resolve().parent.parent / "config" / "g1_body_model.json"
+G1_VISUAL_MESH = G1_BODY_MODEL.with_name("g1_visual_mesh.npz")
+# Depth points this close to a body sphere are the body: the fitted camera pose leaves
+# 1.6 cm of median residual, and the D435 is noisy at arm's length.
+BODY_MARGIN = 0.03
+BODY_RANGE = 1.6           # metres; no part of the G1 is further than this from its head camera
+ROBOT_JOINTS_EVERY = 3     # the drawn robot's joints move at 10 Hz; its torso every frame
 
 
 # --------------------------------------------------------------------------- #
@@ -243,6 +251,106 @@ def esdf_slice(mapper, height):
 
 
 # --------------------------------------------------------------------------- #
+# the robot's own body
+# --------------------------------------------------------------------------- #
+def matrix_from_rpy(r: float, p: float, y: float) -> np.ndarray:
+    """URDF's fixed-axis roll, pitch, yaw: Rz(y) Ry(p) Rx(r)."""
+    cr, sr, cp, sp, cy, sy = np.cos(r), np.sin(r), np.cos(p), np.sin(p), np.cos(y), np.sin(y)
+    return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+                     [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+                     [-sp, cp * sr, cp * cr]])
+
+
+def matrix_from_axis_angle(axis, angle: float) -> np.ndarray:
+    a = np.asarray(axis, dtype=np.float64) / np.linalg.norm(axis)
+    K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
+
+
+class BodyModel:
+    """The Unitree G1's own body as spheres, posed by a Humanoid Everyday frame's joint
+    states: config/g1_body_model.json, written by make_g1_body_model.py, which also
+    writes the URDF's meshes, simplified, for the viewer to draw the robot with.
+
+    The G1's head camera looks 56 deg down, and the depth camera sees more than the
+    colour camera does: most depth images show the robot's own hands and thighs, and
+    an arm whenever it reaches for something. Integrated, they leave a trail of blobs
+    along the path and an arm-shaped wall wherever the robot touched something.
+    """
+
+    def __init__(self, model: dict, visual: dict = None):
+        self.state_joints = model["state_joints"]   # states key -> joint names, in order
+        self.joints = []                             # parents before children
+        for j in model["joints"]:
+            T = np.eye(4)
+            T[:3, :3] = matrix_from_rpy(*j["rpy"])
+            T[:3, 3] = j["xyz"]
+            self.joints.append((j["name"], j["parent"], j["child"], T, j["axis"]))
+        self.link_spheres = {link: np.asarray(s, dtype=np.float64) for link, s in model["spheres"].items()}
+        self.T_torso_depth = transform_from_dict(model["torso_to_depth_camera"])
+        self.visual = visual or {}   # link -> (vertices, triangles, rgb), for drawing
+
+    @classmethod
+    def load(cls, path: Path, visual_path: Path = None) -> "BodyModel":
+        visual = {}
+        if visual_path is not None and visual_path.exists():
+            with np.load(visual_path) as z:
+                for key in z.files:
+                    if key.endswith("/vertices"):
+                        link = key.rsplit("/", 1)[0]
+                        visual[link] = (z[key], z[f"{link}/triangles"], z[f"{link}/colour"])
+        return cls(json.loads(path.read_text()), visual)
+
+    def link_poses(self, rec: dict) -> dict:
+        """T_torso_link of every link. The head camera is fixed to the torso, so this is
+        all the depth mask needs, whatever the waist joints do."""
+        q = {}
+        for key, names in self.state_joints.items():
+            q.update(zip(names, rec["states"][key]))
+        T = {self.joints[0][1]: np.eye(4)}            # the root, the pelvis
+        for name, parent, child, T_origin, axis in self.joints:
+            M = T[parent] @ T_origin
+            if axis is not None:
+                M[:3, :3] = M[:3, :3] @ matrix_from_axis_angle(axis, q.get(name, 0.0))
+            T[child] = M
+        T_torso_root = np.linalg.inv(T["torso_link"])
+        return {link: T_torso_root @ M for link, M in T.items()}
+
+    def spheres(self, poses: dict, T_frame_torso: np.ndarray):
+        """Centres (N x 3) and radii (N) of the spheres at link_poses() poses, in the given frame."""
+        centres, radii = [], []
+        for link, s in self.link_spheres.items():
+            M = T_frame_torso @ poses[link]
+            centres.append(s[:, :3] @ M[:3, :3].T + M[:3, 3])
+            radii.append(s[:, 3])
+        return np.concatenate(centres), np.concatenate(radii)
+
+
+def camera_rays(intr: dict, W: int, H: int):
+    """H x W x 3 rays on the GPU, z = 1: a depth image times them is its points."""
+    import torch
+    v, u = torch.meshgrid(torch.arange(H, device="cuda"), torch.arange(W, device="cuda"),
+                          indexing="ij")
+    return torch.stack([(u - intr["cx"]) / intr["fx"], (v - intr["cy"]) / intr["fy"],
+                        torch.ones_like(u, dtype=torch.float32)], -1)
+
+
+def body_pixels(depth, rays, centres, radii):
+    """The pixels of a depth image (metres, H x W on the GPU) whose point is within
+    BODY_MARGIN of a body sphere (centres N x 3, radii N, in that camera's frame)."""
+    import torch
+    near = (depth > 0) & (depth < BODY_RANGE)
+    idx = near.nonzero(as_tuple=True)
+    p = rays[idx] * depth[idx][:, None]
+    hit = torch.zeros(len(p), dtype=torch.bool, device=depth.device)
+    for s in range(0, len(p), 1 << 16):     # ~150 k near points x ~200 spheres, in parts
+        hit[s:s + (1 << 16)] = (torch.cdist(p[s:s + (1 << 16)], centres) < radii + BODY_MARGIN).any(1)
+    out = torch.zeros_like(near)
+    out[idx] = hit
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # rerun
 # --------------------------------------------------------------------------- #
 def viewer_reachable(url: str, timeout: float = 0.5) -> bool:
@@ -349,6 +457,7 @@ class Stream:
         self.chunks = {"mesh": {}, "occupancy": {}, "esdf": {}}
         self.calls = {"mesh": 0, "occupancy": 0, "esdf": 0}
         self.luts = {}
+        self.robot_calls = 0
 
     def frame(self, i, T_w_c, rgb, observations, traj, ref_traj, grav_err):
         if not self.on:
@@ -369,6 +478,29 @@ class Stream:
                 rec.log("world/camera/image/features", rr.Points2D(
                     [[o.u, o.v] for o in observations], radii=3,
                     colors=[self.track_colours[o.id] for o in observations]))
+
+    def robot(self, model, T_w_torso, poses):
+        """Draw the G1 from its URDF meshes, posed as in this frame: the meshes once per
+        recording, the torso every frame, and the links on it every ROBOT_JOINTS_EVERY
+        frames. A rerun row costs ~400 bytes, so 50 link poses every frame added 12 MB
+        to a 64 MB recording."""
+        if not (self.on and model.visual):
+            return
+        rr, rec = self.rr, self.rec
+        if self.robot_calls == 0:
+            for link, (v, tri, rgb) in model.visual.items():
+                n = np.zeros_like(v)
+                for k in range(3):   # area-weighted vertex normals, for shading
+                    np.add.at(n, tri[:, k], np.cross(v[tri[:, 1]] - v[tri[:, 0]], v[tri[:, 2]] - v[tri[:, 0]]))
+                n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+                rec.log(f"world/robot/{link}", rr.Mesh3D(vertex_positions=v, triangle_indices=tri,
+                                                         vertex_normals=n, albedo_factor=rgb), static=True)
+        rec.log("world/robot", rr.Transform3D(translation=T_w_torso[:3, 3], mat3x3=T_w_torso[:3, :3]))
+        if self.robot_calls % ROBOT_JOINTS_EVERY == 0:
+            for link in model.visual:
+                T = poses[link]
+                rec.log(f"world/robot/{link}", rr.Transform3D(translation=T[:3, 3], mat3x3=T[:3, :3]))
+        self.robot_calls += 1
 
     def mesh(self, mesh, final=False):
         """Log the parts of the mesh that changed, at the current frame, so the map grows
@@ -521,6 +653,7 @@ class Frame(NamedTuple):
     depth_map: np.ndarray     # float32 metres, in the depth camera's own frame: for nvblox
     R_up: np.ndarray          # camera orientation in a z-up frame, from a sensor cuVSLAM never sees
     T_ref: np.ndarray         # camera pose on the reference trajectory, in that trajectory's frame
+    body: dict = None         # the robot's link poses in its torso frame (BodyModel.link_poses)
 
 
 class HumanoidEpisode:
@@ -540,6 +673,14 @@ class HumanoidEpisode:
         self.recs = read_records(path)[args.start:]
         if args.frames > 0:
             self.recs = self.recs[:args.frames]
+        self.body = None
+        if not args.no_body_mask:
+            if args.robot == "g1":
+                self.body = BodyModel.load(G1_BODY_MODEL, G1_VISUAL_MESH)
+                self.T_depth_torso = np.linalg.inv(self.body.T_torso_depth)
+            else:
+                print(f"[{self.name}] no body model for the {args.robot}: its own arms get mapped",
+                      flush=True)
 
     def __len__(self):
         return len(self.recs)
@@ -554,7 +695,8 @@ class HumanoidEpisode:
             yield Frame(rec["time"], rgb, depth_c, raw.astype(np.float32) / 1000.0,
                         matrix_from_quat_wxyz(rec["states"]["imu"]["quaternion"])
                         @ self.T_pelvis_colour[:3, :3],
-                        odom_pose(rec) @ self.T_pelvis_colour)
+                        odom_pose(rec) @ self.T_pelvis_colour,
+                        self.body.link_poses(rec) if self.body else None)
 
     def first_pose(self, f: Frame) -> np.ndarray:
         return gravity_aligned_first_pose(self.recs[0], self.T_pelvis_colour, f.depth_track,
@@ -680,9 +822,14 @@ def run_episode(seq, out: Path, args) -> dict:
     colour_sensor = Sensor.from_camera(colour_intr["fx"], colour_intr["fy"], colour_intr["cx"],
                                        colour_intr["cy"], W, H)
 
+    depth_rays, colour_rays = camera_rays(depth_intr, W, H), camera_rays(colour_intr, W, H)
+    R_cd = torch.from_numpy(seq.T_colour_depth[:3, :3]).float().cuda()
+    t_cd = torch.from_numpy(seq.T_colour_depth[:3, 3]).float().cuda()
+
     T0 = None                       # world <- cuVSLAM start frame (gravity alignment)
     T_ref0_inv = None
     times, poses, ref, n_obs, grav = [], [], [], [], []
+    body_share = torch.zeros((), device="cuda")    # summed share of depth pixels masked
     lost = 0
     t_start = time.time()
     for i, f in enumerate(seq.frames()):
@@ -704,10 +851,21 @@ def run_episode(seq, out: Path, args) -> dict:
             T_ref0_inv = np.linalg.inv(f.T_ref)
         ref.append((T0 @ T_ref0_inv @ f.T_ref)[:3, 3])
 
-        mapper.add_depth_frame(torch.from_numpy(f.depth_map).cuda(),
-                               torch.from_numpy(T_w_c @ seq.T_colour_depth).float(), depth_sensor)
-        mapper.add_color_frame(torch.from_numpy(f.rgb).cuda(),
-                               torch.from_numpy(T_w_c).float(), colour_sensor)
+        depth = torch.from_numpy(f.depth_map).cuda()
+        colour_mask = None
+        if f.body is not None:
+            # Leave the robot out of the map: no depth where it is, and no colour from it
+            # (the colour camera's own depth is the registered one cuVSLAM tracks with).
+            centres, radii = (torch.from_numpy(a).float().cuda()
+                              for a in seq.body.spheres(f.body, seq.T_depth_torso))
+            body = body_pixels(depth, depth_rays, centres, radii)
+            depth[body] = 0.0
+            body_share += body.float().mean()
+            colour_mask = (~body_pixels(torch.from_numpy(f.depth_track).cuda().float() / seq.depth_scale,
+                                        colour_rays, centres @ R_cd.T + t_cd, radii)).to(torch.uint8)
+        mapper.add_depth_frame(depth, torch.from_numpy(T_w_c @ seq.T_colour_depth).float(), depth_sensor)
+        mapper.add_color_frame(torch.from_numpy(f.rgb).cuda(), torch.from_numpy(T_w_c).float(),
+                               colour_sensor, colour_mask)
 
         times.append(f.time)
         poses.append(T_w_c)
@@ -716,6 +874,8 @@ def run_episode(seq, out: Path, args) -> dict:
         n_obs.append(len(obs))
         stream.frame(i, T_w_c, f.rgb, obs, np.array([T[:3, 3] for T in poses]), np.array(ref),
                      grav[-1])
+        if f.body is not None:
+            stream.robot(seq.body, T_w_c @ seq.T_colour_depth @ seq.T_depth_torso, f.body)
         if stream.on and i % args.mesh_every == 0:
             mapper.update_color_mesh()
             stream.mesh(mapper.get_color_mesh())
@@ -754,6 +914,8 @@ def run_episode(seq, out: Path, args) -> dict:
         "occupied_voxels": int(len(occupied_voxels(mapper))),
         "slam": bool(args.slam),
     }
+    if getattr(seq, "body", None) is not None:
+        stats["body_masked_pct"] = round(100.0 * body_share.item() / max(len(poses), 1), 2)
     if grav:
         stats["gravity_err_median_deg"] = round(float(np.median(grav)), 2)
         stats["gravity_err_max_deg"] = round(float(np.max(grav)), 2)
@@ -822,6 +984,8 @@ def main():
     ap.add_argument("--no-stream-images", action="store_true")
     ap.add_argument("--no-occupancy", action="store_true",
                     help="do not stream the occupied voxels (streamed with the mesh by default)")
+    ap.add_argument("--no-body-mask", action="store_true",
+                    help="map the G1's own body too (masked out of depth and colour by default)")
     ap.add_argument("--no-esdf", action="store_true",
                     help="do not compute and stream the ESDF slice (streamed with the mesh by default)")
     ap.add_argument("--esdf-height", type=float, default=0.5,
