@@ -1,9 +1,9 @@
 /**
  * @file profile_summary.hpp
- * @brief Read an easy_profiler capture back and print per-block timing statistics
+ * @brief Read an easy_profiler capture back and print the comparison tables
  *
  * The benchmarks time every call with EASY_BLOCK and dump the capture to a
- * .prof file. The table printed here is computed from that same file, so the
+ * .prof file. The tables printed here are computed from that same file, so the
  * numbers are easy_profiler's own measurements, the same ones profiler_gui shows.
  */
 
@@ -16,7 +16,6 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
-#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -97,42 +96,72 @@ inline double median(std::vector<double> values) {
 }
 
 /**
- * @brief Print median/mean/min per block and the speed-up over the plain C/C++ baseline
+ * @brief Print the two comparison tables: single-threaded and multi-threaded
  *
- * Block names follow "<kernel>/<variant>_<threads>", e.g. "FAST/KFAST_MT".
- * Every block is compared with "<kernel>/plain_O3_1T", the plain code built
- * with -O3. Speed-up = baseline median / block median.
+ * Block names follow "<kernel>/<variant>_<threads>", e.g. "RGB2Y/komrad36_MT8":
+ * variant is plain_O3, plain_native, OpenCV or komrad36; threads is 1T or MT<n>.
+ * Every cell is the median over all calls, in microseconds, with the speed-up
+ * over the kernel's single-threaded -O3 block in parentheses.
  */
 inline void printSummary(const std::string& path, const std::vector<BlockTimes>& blocks) {
-    auto kernel_of = [](const std::string& name) { return name.substr(0, name.find('/')); };
-
     std::map<std::string, double> medians;
-    for (const auto& block : blocks) medians[block.name] = median(block.us);
+    std::vector<std::string> kernels;               // in the order they were run
+    std::map<std::string, std::vector<int>> mt_counts;  // kernel -> thread counts of its _MT blocks
+    size_t calls = 0;
+    for (const auto& block : blocks) {
+        const size_t slash = block.name.find('/');
+        const size_t underscore = block.name.rfind('_');
+        if (slash == std::string::npos || underscore == std::string::npos || underscore < slash) continue;
+        const std::string kernel = block.name.substr(0, slash);
+        const std::string threads = block.name.substr(underscore + 1);
+
+        medians[block.name] = median(block.us);
+        calls = std::max(calls, block.us.size());
+        if (std::find(kernels.begin(), kernels.end(), kernel) == kernels.end()) kernels.push_back(kernel);
+        if (threads.rfind("MT", 0) == 0) {
+            auto& counts = mt_counts[kernel];
+            const int n = std::stoi(threads.substr(2));
+            if (std::find(counts.begin(), counts.end(), n) == counts.end()) counts.push_back(n);
+        }
+    }
+
+    auto cell = [&](const std::string& kernel, const std::string& name) {
+        const auto it = medians.find(name);
+        if (it == medians.end()) return std::string("-");
+        std::ostringstream text;
+        text << std::fixed << std::setprecision(1) << it->second;
+        const auto baseline = medians.find(kernel + "/plain_O3_1T");
+        if (baseline != medians.end()) text << " (" << std::setprecision(2) << baseline->second / it->second << "x)";
+        return text.str();
+    };
 
     std::cout << "\n=== easy_profiler summary: " << path << " ===" << std::endl;
-    std::cout << std::left << std::setw(30) << "Block" << std::right << std::setw(7) << "calls" << std::setw(14)
-              << "median [us]" << std::setw(12) << "mean [us]" << std::setw(12) << "min [us]" << std::setw(16)
-              << "vs plain_O3" << std::endl;
-    std::cout << std::string(91, '-') << std::endl;
+    std::cout << "median of " << calls << " calls in us; (x) = speed-up over single-threaded -O3" << std::endl;
 
-    std::string last_kernel;
-    for (const auto& block : blocks) {
-        if (block.name.find('/') == std::string::npos) continue;  // not a benchmark block
-        if (!last_kernel.empty() && kernel_of(block.name) != last_kernel) std::cout << std::endl;
-        last_kernel = kernel_of(block.name);
+    std::cout << "\n[1] Single thread" << std::endl;
+    std::cout << std::left << std::setw(8) << "Kernel" << std::right << std::setw(20) << "-O3" << std::setw(20)
+              << "-O3 -march=native" << std::setw(20) << "OpenCV" << std::setw(20) << "komrad36" << std::endl;
+    std::cout << std::string(88, '-') << std::endl;
+    for (const auto& kernel : kernels) {
+        std::cout << std::left << std::setw(8) << kernel << std::right;
+        for (const char* variant : {"plain_O3", "plain_native", "OpenCV", "komrad36"})
+            std::cout << std::setw(20) << cell(kernel, kernel + "/" + variant + "_1T");
+        std::cout << std::endl;
+    }
 
-        const double mean = std::accumulate(block.us.begin(), block.us.end(), 0.0) / block.us.size();
-        const double min = *std::min_element(block.us.begin(), block.us.end());
-        const auto reference = medians.find(last_kernel + "/plain_O3_1T");
-
-        std::ostringstream speedup;
-        if (reference != medians.end()) {
-            speedup << std::fixed << std::setprecision(2) << reference->second / medians[block.name] << "x";
+    std::cout << "\n[2] Multi thread" << std::endl;
+    std::cout << std::left << std::setw(8) << "Kernel" << std::right << std::setw(8) << "Threads" << std::setw(20)
+              << "OpenCV" << std::setw(20) << "komrad36" << std::endl;
+    std::cout << std::string(56, '-') << std::endl;
+    for (const auto& kernel : kernels) {
+        auto counts = mt_counts[kernel];
+        std::sort(counts.begin(), counts.end());
+        for (const int n : counts) {
+            const std::string suffix = "_MT" + std::to_string(n);
+            std::cout << std::left << std::setw(8) << kernel << std::right << std::setw(8) << n << std::setw(20)
+                      << cell(kernel, kernel + "/OpenCV" + suffix) << std::setw(20)
+                      << cell(kernel, kernel + "/komrad36" + suffix) << std::endl;
         }
-
-        std::cout << std::left << std::setw(30) << block.name << std::right << std::setw(7) << block.us.size()
-                  << std::fixed << std::setprecision(1) << std::setw(14) << medians[block.name] << std::setw(12)
-                  << mean << std::setw(12) << min << std::setw(16) << speedup.str() << std::endl;
     }
 }
 

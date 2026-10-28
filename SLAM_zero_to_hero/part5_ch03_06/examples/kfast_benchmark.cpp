@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
 
     simd_bench::warmup(args, kfast_1t);
     for (int i = 0; i < args.iterations; ++i) {
-        EASY_BLOCK("FAST/KFAST_1T", profiler::colors::Orange500);
+        EASY_BLOCK("FAST/komrad36_1T", profiler::colors::Orange500);
         kfast_1t();
     }
 
@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
     bool mt_identical = true;
     std::vector<std::pair<int, double>> idle_cores;
     for (const int threads : simd_bench::threadCounts()) {
-        const std::string block = "FAST/KFAST_MT" + std::to_string(threads);
+        const std::string block = "FAST/komrad36_MT" + std::to_string(threads);
         simd_bench::FastParallelFor pool(threads);
         // KFAST needs a few rows per stripe for its 4-row margins (its own split uses rows / 16 at most)
         num_stripes = std::max(1, std::min(threads, gray.rows / 16));
