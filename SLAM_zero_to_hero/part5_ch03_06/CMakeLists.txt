@@ -29,9 +29,9 @@ endif()
 find_package(easy_profiler REQUIRED)
 find_package(Threads REQUIRED)
 
-# Plain C/C++ baselines (naive BGR->gray, Rosten's FAST-9, ORB's IC_Angle loop).
+# Plain C/C++ baselines (per-pixel BGR->gray, Rosten's FAST-9, ORB's IC_Angle loop).
 # The same code is compiled twice, so the tables show what the compiler alone does with it:
-#   plain_o3     -O3                 portable x86-64 Release build: the reference ("vs plain_O3")
+#   plain_o3     -O3                 portable x86-64 Release build: the reference (the -O3 column)
 #   plain_native -O3 -march=native   GCC may use every extension of the build CPU (AVX2, AVX-512, ...)
 # Rosten's functions get a per-copy prefix (include/rosten_prefix.h) so both copies link together.
 set(PLAIN_FLAGS_o3 -O3)
@@ -65,7 +65,7 @@ foreach(example ${EXAMPLES})
     endif()
 endforeach()
 
-# Re-print the timing table of any .prof file (e.g. one recorded on another machine)
+# Re-print the comparison tables of any .prof file (e.g. one recorded on another machine)
 add_executable(prof_summary examples/prof_summary.cpp)
 target_include_directories(prof_summary PRIVATE include)
 target_link_libraries(prof_summary easy_profiler)
@@ -77,7 +77,7 @@ message(STATUS "Executables:")
 message(STATUS "  - rgb2y_benchmark: BGR->gray, plain loop vs cv::cvtColor vs RGB2Y (AVX2)")
 message(STATUS "  - kfast_benchmark: FAST-9 + NMS, Rosten (plain C) vs cv::FAST vs KFAST (AVX2)")
 message(STATUS "  - feature_angle_benchmark: keypoint angle, ORB IC_Angle loop vs FeatureAngle (SSE)")
-message(STATUS "  - prof_summary: timing table from any .prof file")
+message(STATUS "  - prof_summary: comparison tables from any .prof file")
 message(STATUS "")
 message(STATUS "Build with: mkdir build && cd build && cmake .. && make -j")
 message(STATUS "")

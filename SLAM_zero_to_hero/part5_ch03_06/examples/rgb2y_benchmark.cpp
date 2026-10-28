@@ -29,6 +29,7 @@
 #include <opencv2/imgproc.hpp>
 #include <easy/profiler.h>
 
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -76,12 +77,25 @@ int main(int argc, char** argv) {
     // RGB2Y's 'stride' is in pixels and the output is written with a row pitch of 'cols'
     auto komrad_1t = [&] { RGB2Y<false, true>(bgr.data, cols, rows, cols, gray_k1.data); };
 
-    // Multi-threaded: stripe s converts its band of rows with RGB2Y's row-range worker
+    // Multi-threaded: stripe s converts its band of rows with RGB2Y's row-range worker.
+    // RGB2Y's 16-byte stores run up to 5 bytes into the next row when cols % 10 is 1..5. Inside a
+    // stripe that row is rewritten later by the same thread, but a stripe's last row would spill
+    // into the next stripe's first row while another thread owns it. So that row is converted
+    // into a scratch row and copied back.
     int num_stripes = 1;
+    std::vector<std::vector<uint8_t>> scratch_rows;
     auto komrad_stripe = [&](int stripe) {
         const int first = rows * stripe / num_stripes;
         const int last = rows * (stripe + 1) / num_stripes;
-        if (last > first) _RGB2Y<true>(bgr.data, cols, first, last - first, cols, gray_k_mt.data);
+        if (last <= first) return;
+        if (stripe == num_stripes - 1) {  // the image's last row: its spill lands in the padding
+            _RGB2Y<true>(bgr.data, cols, first, last - first, cols, gray_k_mt.data);
+            return;
+        }
+        if (last - 1 > first) _RGB2Y<true>(bgr.data, cols, first, last - 1 - first, cols, gray_k_mt.data);
+        uint8_t* scratch = scratch_rows[stripe].data();
+        processRow<true, true>(bgr.data + 3 * (last - 1) * cols, cols, scratch);
+        std::memcpy(gray_k_mt.data + (last - 1) * cols, scratch, cols);
     };
 
     // ---- Single thread ----
@@ -130,6 +144,7 @@ int main(int argc, char** argv) {
         {
             simd_bench::FastParallelFor pool(threads);
             num_stripes = threads;
+            scratch_rows.assign(num_stripes, std::vector<uint8_t>(cols + 32));
             auto komrad_mt = [&] { pool.run(num_stripes, komrad_stripe); };
 
             simd_bench::warmup(args, komrad_mt);

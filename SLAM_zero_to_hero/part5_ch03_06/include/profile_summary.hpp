@@ -13,6 +13,7 @@
 #include <easy/reader.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -119,9 +120,11 @@ inline void printSummary(const std::string& path, const std::vector<BlockTimes>&
         calls = std::max(calls, block.us.size());
         if (std::find(kernels.begin(), kernels.end(), kernel) == kernels.end()) kernels.push_back(kernel);
         if (threads.rfind("MT", 0) == 0) {
+            char* end = nullptr;
+            const long n = std::strtol(threads.c_str() + 2, &end, 10);
+            if (n <= 0 || *end != '\0') continue;  // not "MT<n>", e.g. a capture from an older version
             auto& counts = mt_counts[kernel];
-            const int n = std::stoi(threads.substr(2));
-            if (std::find(counts.begin(), counts.end(), n) == counts.end()) counts.push_back(n);
+            if (std::find(counts.begin(), counts.end(), n) == counts.end()) counts.push_back(static_cast<int>(n));
         }
     }
 

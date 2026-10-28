@@ -32,9 +32,11 @@ the hardware thread count):
 - **`komrad36_MT<n>`**: komrad36's kernels split into `n` stripes (rows for RGB2Y
   and FAST, keypoints for the angle) on komrad36's
   [FastThreadPool](https://github.com/komrad36/FastThreadPool). `include/fast_parallel_for.hpp`
-  wraps it with persistent workers that spin while they wait. The kernels' own built-in
-  multi-threaded mode is not used, because it starts new threads on every call (see
-  [third_party/komrad36/README.md](third_party/komrad36/README.md#multi-threading)).
+  wraps it with persistent workers that spin while they wait. KFAST's stripes overlap by 4 rows
+  so that non-max suppression is exact at the seams, and they are capped at one per 16 rows.
+  RGB2Y converts each stripe's last row into a scratch row (see "Things to know" below). The
+  kernels' own built-in multi-threaded mode is not used, because it starts new threads on every
+  call (see [third_party/komrad36/README.md](third_party/komrad36/README.md#multi-threading)).
 
 ---
 
@@ -54,14 +56,14 @@ part5_ch03_06/
 │   ├── komrad36_compat.hpp           # GCC shims for komrad36's MSVC-era headers
 │   ├── plain_kernels.hpp             # plain C/C++ baselines (plain_o3 / plain_native)
 │   ├── rosten_prefix.h               # per-copy symbol names for Rosten's C code
-│   └── profile_summary.hpp           # reads a .prof back and prints the timing table
+│   └── profile_summary.hpp           # reads a .prof back and prints the two comparison tables
 ├── src/
 │   └── plain_kernels.cpp             # plain loops, compiled with -O3 and with -O3 -march=native
 ├── examples/
 │   ├── rgb2y_benchmark.cpp           # plain loop vs cv::cvtColor vs RGB2Y
 │   ├── kfast_benchmark.cpp           # Rosten vs cv::FAST vs KFAST
 │   ├── feature_angle_benchmark.cpp   # ORB IC_Angle loop vs FeatureAngle
-│   └── prof_summary.cpp              # timing table for any .prof file
+│   └── prof_summary.cpp              # comparison tables for any .prof file
 └── third_party/komrad36/             # vendored kernels, FastThreadPool + licenses (see its README)
 ```
 
@@ -99,7 +101,8 @@ unprofiled warm-up calls.
 Each demo records every call in an `EASY_BLOCK`, writes `<demo>.prof` to the current directory,
 reads that file back, and prints:
 
-1. **Verification**: every variant's output compared with the plain `-O3` result
+1. **Verification**: every variant's output compared with the plain `-O3` result. FeatureAngle MT is
+   compared with FeatureAngle 1T, because its `atan2` approximation differs slightly from OpenCV's.
 2. **Cores busy while idle**: what FastThreadPool's spinning workers cost
 3. **Two comparison tables** of easy_profiler's medians in µs, with the speed-up over single-threaded
    `-O3` in parentheses
@@ -144,15 +147,15 @@ median of 200 calls in us; (x) = speed-up over single-threaded -O3
 [1] Single thread
 Kernel                   -O3   -O3 -march=native              OpenCV            komrad36
 ----------------------------------------------------------------------------------------
-RGB2Y         2890.3 (1.00x)       889.8 (3.25x)       315.8 (9.15x)      206.3 (14.01x)
+RGB2Y         2903.1 (1.00x)       889.3 (3.26x)       314.1 (9.24x)      208.9 (13.90x)
 
 [2] Multi thread
 Kernel   Threads              OpenCV            komrad36
 --------------------------------------------------------
-RGB2Y          4       87.8 (32.93x)       55.0 (52.58x)
-RGB2Y          8       51.4 (56.25x)       39.6 (72.94x)
-RGB2Y         16       50.0 (57.86x)      23.4 (123.26x)
-RGB2Y         32       47.2 (61.29x)       54.0 (53.48x)
+RGB2Y          4       87.3 (33.25x)       55.2 (52.59x)
+RGB2Y          8       50.3 (57.70x)       40.4 (71.90x)
+RGB2Y         16       49.0 (59.20x)      26.0 (111.84x)
+RGB2Y         32       45.6 (63.60x)       53.6 (54.20x)
 
 Profile saved to: rgb2y_benchmark.prof (open with profiler_gui)
 ```
@@ -179,9 +182,9 @@ Verification (reference: plain -O3, 6821 corners):
 
 FastThreadPool workers spin even without work. Cores busy while idle:
   4 threads: 3.0 cores
-  8 threads: 7.0 cores
+  8 threads: 6.9 cores
   16 threads: 15.0 cores
-  32 threads: 31.0 cores
+  32 threads: 30.8 cores
 
 === easy_profiler summary: kfast_benchmark.prof ===
 median of 200 calls in us; (x) = speed-up over single-threaded -O3
@@ -189,15 +192,15 @@ median of 200 calls in us; (x) = speed-up over single-threaded -O3
 [1] Single thread
 Kernel                   -O3   -O3 -march=native              OpenCV            komrad36
 ----------------------------------------------------------------------------------------
-FAST          6543.6 (1.00x)      6583.6 (0.99x)      1293.6 (5.06x)      1014.8 (6.45x)
+FAST          6540.4 (1.00x)      6536.6 (1.00x)      1282.2 (5.10x)      1055.0 (6.20x)
 
 [2] Multi thread
 Kernel   Threads              OpenCV            komrad36
 --------------------------------------------------------
-FAST           4                   -      396.0 (16.52x)
-FAST           8                   -      188.7 (34.68x)
-FAST          16                   -      113.7 (57.56x)
-FAST          32                   -       96.1 (68.11x)
+FAST           4                   -      374.1 (17.48x)
+FAST           8                   -      205.4 (31.84x)
+FAST          16                   -      120.6 (54.25x)
+FAST          32                   -       99.9 (65.47x)
 
 Profile saved to: kfast_benchmark.prof (open with profiler_gui)
 ```
@@ -226,7 +229,7 @@ FastThreadPool workers spin even without work. Cores busy while idle:
   4 threads: 3.0 cores
   8 threads: 7.0 cores
   16 threads: 15.0 cores
-  32 threads: 31.2 cores
+  32 threads: 31.0 cores
 
 === easy_profiler summary: feature_angle_benchmark.prof ===
 median of 200 calls in us; (x) = speed-up over single-threaded -O3
@@ -234,15 +237,15 @@ median of 200 calls in us; (x) = speed-up over single-threaded -O3
 [1] Single thread
 Kernel                   -O3   -O3 -march=native              OpenCV            komrad36
 ----------------------------------------------------------------------------------------
-Angle          181.4 (1.00x)       189.2 (0.96x)                   -        48.1 (3.77x)
+Angle          151.9 (1.00x)       185.2 (0.82x)                   -        48.4 (3.14x)
 
 [2] Multi thread
 Kernel   Threads              OpenCV            komrad36
 --------------------------------------------------------
-Angle          4                   -       15.2 (11.92x)
-Angle          8                   -        9.7 (18.76x)
-Angle         16                   -       10.4 (17.49x)
-Angle         32                   -       17.4 (10.41x)
+Angle          4                   -       14.3 (10.62x)
+Angle          8                   -       12.6 (12.02x)
+Angle         16                   -       11.1 (13.69x)
+Angle         32                   -        16.9 (9.01x)
 
 Profile saved to: feature_angle_benchmark.prof (open with profiler_gui)
 ```
@@ -252,6 +255,9 @@ Profile saved to: feature_angle_benchmark.prof (open with profiler_gui)
 ```bash
 # Any image, 500 calls per variant
 docker run --rm -v /path/to/images:/images:ro slam_zero_to_hero:part5_ch03_06 ./kfast_benchmark /images/frame.png 500
+
+# Keep the .prof files: run in a mounted folder (--rm deletes the container's own files)
+docker run --rm -v "$PWD":/out -w /out slam_zero_to_hero:part5_ch03_06 /workspace/part5_ch03_06/build/rgb2y_benchmark
 
 # Print the tables of a .prof again, e.g. one recorded on another machine
 ./build/prof_summary rgb2y_benchmark.prof kfast_benchmark.prof
@@ -271,28 +277,28 @@ single-threaded `-O3` in parentheses.
 
 | Kernel | `-O3` | `-O3 -march=native` | OpenCV | komrad36 |
 |---|---:|---:|---:|---:|
-| RGB2Y | 2890.3 (1.00x) | 889.8 (3.25x) | 315.8 (9.15x) | **206.3 (14.01x)** |
-| FAST | 6543.6 (1.00x) | 6583.6 (0.99x) | 1293.6 (5.06x) | **1014.8 (6.45x)** |
-| Angle | 181.4 (1.00x) | 189.2 (0.96x) | - (`cv::ORB` runs the `-O3` loop) | **48.1 (3.77x)** |
+| RGB2Y | 2903.1 (1.00x) | 889.3 (3.26x) | 314.1 (9.24x) | **208.9 (13.90x)** |
+| FAST | 6540.4 (1.00x) | 6536.6 (1.00x) | 1282.2 (5.10x) | **1055.0 (6.20x)** |
+| Angle | 151.9 (1.00x) | 185.2 (0.82x) | - (`cv::ORB` runs the `-O3` loop) | **48.4 (3.14x)** |
 
 **[2] Multi thread** (OpenCV: `cv::cvtColor` on its own threads; komrad36: FastThreadPool)
 
 | Kernel | Threads | OpenCV | komrad36 |
 |---|---:|---:|---:|
-| RGB2Y | 4 | 87.8 (32.93x) | 55.0 (52.58x) |
-| RGB2Y | 8 | 51.4 (56.25x) | 39.6 (72.94x) |
-| RGB2Y | 16 | 50.0 (57.86x) | **23.4 (123.26x)** |
-| RGB2Y | 32 | 47.2 (61.29x) | 54.0 (53.48x) |
-| FAST | 4 | - | 396.0 (16.52x) |
-| FAST | 8 | - | 188.7 (34.68x) |
-| FAST | 16 | - | 113.7 (57.56x) |
-| FAST | 32 | - | **96.1 (68.11x)** |
-| Angle | 4 | - | 15.2 (11.92x) |
-| Angle | 8 | - | **9.7 (18.76x)** |
-| Angle | 16 | - | 10.4 (17.49x) |
-| Angle | 32 | - | 17.4 (10.41x) |
+| RGB2Y | 4 | 87.3 (33.25x) | 55.2 (52.59x) |
+| RGB2Y | 8 | 50.3 (57.70x) | 40.4 (71.90x) |
+| RGB2Y | 16 | 49.0 (59.20x) | **26.0 (111.84x)** |
+| RGB2Y | 32 | 45.6 (63.60x) | 53.6 (54.20x) |
+| FAST | 4 | - | 374.1 (17.48x) |
+| FAST | 8 | - | 205.4 (31.84x) |
+| FAST | 16 | - | 120.6 (54.25x) |
+| FAST | 32 | - | **99.9 (65.47x)** |
+| Angle | 4 | - | 14.3 (10.62x) |
+| Angle | 8 | - | 12.6 (12.02x) |
+| Angle | 16 | - | **11.1 (13.69x)** |
+| Angle | 32 | - | 16.9 (9.01x) |
 
-While idle, FastThreadPool's workers kept 3.0, 7.0, 15.0, and 31.0–31.2 cores busy at 4, 8, 16,
+While idle, FastThreadPool's workers kept 3.0, 6.9–7.0, 15.0, and 30.8–31.0 cores busy at 4, 8, 16,
 and 32 threads.
 
 Verification printed by the same runs:
@@ -303,34 +309,37 @@ Verification printed by the same runs:
 - **Angle**: `-O3 -march=native` matches `-O3` exactly, and FeatureAngle is within 3.1e-5°. The two
   `atan2` polynomial approximations account for the difference. FeatureAngle MT matches its 1T run.
 
-Single-threaded medians repeat within a few percent between runs. Multi-threaded medians vary by up
-to a third: in three runs of `rgb2y_benchmark`, komrad36's fastest thread count was 8 or 16 threads
-(23–30 µs), and OpenCV's was 32 threads (41–47 µs).
+Single-threaded medians repeat within about 5% between runs, except the `-O3` angle loop
+(152–181 µs over three runs). Multi-threaded medians vary by up to a third: in four runs of
+`rgb2y_benchmark`, komrad36's fastest thread count was 8 or 16 threads (23–30 µs), and OpenCV's was
+32 threads (41–47 µs).
 
 ### What the numbers say
 
-1. **Hand-written SIMD vs plain `-O3` C/C++: 14.0x, 6.5x, 3.8x on one thread.** At `-O3`, GCC leaves
+1. **Hand-written SIMD vs plain `-O3` C/C++: 13.9x, 6.2x, 3.1x on one thread.** At `-O3`, GCC leaves
    the RGB2Y loop scalar. `-fopt-info-vec-optimized` reports only `IC_Angle`'s two inner loops,
    vectorized with 16-byte SSE2 vectors.
 2. **The compiler alone gets part of the way, and only on simple loops.** With `-march=native`,
    GCC vectorizes the RGB2Y loop with 32- and 64-byte (AVX-512) vectors, a 3.3x gain. Rosten's
-   decision tree gains nothing, and `IC_Angle`'s short 3–7 pixel loops get slightly slower. Even with
+   decision tree gains nothing, and `IC_Angle`'s short 3–7 pixel loops get slower (0.82x). Even with
    AVX-512, the plain RGB2Y loop is 4.3x slower than komrad36's AVX2 kernel. The loop widens
    every channel to `double`, 8 per 512-bit register, while RGB2Y works in `int16`, 16 per 256-bit
    register.
-3. **komrad36 vs OpenCV on one thread: 1.5x (RGB2Y) and 1.3x (FAST).** OpenCV is already
+3. **komrad36 vs OpenCV on one thread: 1.5x (RGB2Y) and 1.2x (FAST).** OpenCV is already
    vectorized, so the remaining gain comes from data layout tricks (see below). For orientation,
-   `cv::ORB` runs the plain `IC_Angle` loop, so FeatureAngle's 3.8x is also its gain over OpenCV.
+   `cv::ORB` runs the plain `IC_Angle` loop, so FeatureAngle's 3.1x is also its gain over OpenCV.
 4. **With threads, komrad36 still wins, at a price.**
-   - **RGB2Y**: komrad36 on 16 threads (23.4 µs) is 2.0x faster than OpenCV's best (47.2 µs on 32
-     threads), with half the threads. Across three runs, the gap was 1.4–2.0x.
-   - **FAST**: komrad36's KFAST keeps scaling up to 32 threads. At 96.1 µs it is 10.6x faster than
-     its single thread and 13.5x faster than `cv::FAST`, which has no multi-threaded version.
-   - **Angle**: 48.1 µs of single-threaded work is too little to split far. 8 threads are fastest
-     (9.7 µs), and more threads only add dispatch overhead.
+   - **RGB2Y**: komrad36 on 16 threads (26.0 µs) is 1.8x faster than OpenCV's best (45.6 µs on 32
+     threads), with half the threads. Across four runs, the gap was 1.4–2.0x.
+   - **FAST**: komrad36's KFAST keeps scaling up to 32 threads. At 99.9 µs it is 10.6x faster than
+     its single thread and 12.8x faster than `cv::FAST`, which has no multi-threaded version.
+   - **Angle**: 48.4 µs of single-threaded work is too little to split far. 8–16 threads are
+     fastest (11–13 µs), and 32 threads are slower again.
    - **Past 16 threads**, the 7950X has no more physical cores, and RGB2Y and the angle get slower.
-     A likely cause is that spinning workers on the same physical core take execution resources from
-     the working ones.
+     Two likely causes: spinning workers on the same physical core take execution resources from
+     the working ones, and `run()` puts the `n` tasks on the queue one at a time, so dispatch cost
+     grows with `n`. In a separate measurement, dispatching empty stripes took 5.5 µs on 16 threads
+     and 15.6 µs on 32.
    - **The price**: FastThreadPool's workers spin, so a pool of `n` threads keeps `n - 1` cores at
      100% even with no work ("Cores busy while idle").
 5. **Why `-O3` and not `-O0` as the baseline.** In a separate run on the same image, a `-O0` build of the plain code
@@ -358,12 +367,18 @@ accumulate both moments `m10` and `m01` without branches or a `u_max` table. `_m
 reduces the lanes, and a polynomial `atan2` returns radians. ORB's `IC_Angle` walks the same
 circular patch pixel by pixel. It returns the same moments.
 
-### Two things to know before using these kernels
+### Things to know before using these kernels
 
 - **They read and write past the end of the image.** Loads and stores are 16 or 32 bytes wide, so
   the last pixels of the last row pull in bytes beyond the buffer. `createPadded()` in
   `include/benchmark_common.hpp` gives every image one spare row for this. Exercise 1 shows what
   happens without it.
+- **RGB2Y's rows spill into the next row.** It stores 16 bytes for every 10 output pixels, so when
+  the width modulo 10 is 1 to 5, each row writes up to 5 zero bytes into the start of the next row.
+  One thread overwrites them when it converts that row. When two threads split the image, a
+  stripe's last row would clobber the next stripe's first row, so `rgb2y_benchmark` converts that
+  row into a scratch row and copies it back. komrad36's own multi-threaded RGB2Y has no such
+  guard ([details](third_party/komrad36/README.md#multi-threading)).
 - **FastThreadPool's workers never sleep.** They spin on the queue, so a pool of `n` threads keeps
   `n - 1` cores at 100% for as long as it exists, with or without work. Each benchmark prints this
   ("Cores busy while idle"). In a SLAM system, these spinning workers would take cores away from
@@ -387,12 +402,16 @@ circular patch pixel by pixel. It returns the same moments.
    without finding work, and wake it in `run()` (e.g. with a `std::condition_variable`).
    Compare the `_MT` medians and "Cores busy while idle" before and after.
 4. **ORB's real patch size.** ORB uses a 31x31 patch (`half_k = 15`). Change `kHalfPatch` in
-   `feature_angle_benchmark.cpp`. `IC_Angle` scales directly. Then write an AVX2 version of
+   `feature_angle_benchmark.cpp`, and drop keypoints closer than 15 pixels to the border (FAST
+   only keeps 3), or the patch reads leave the image. `IC_Angle` scales directly. Then write an AVX2 version of
    FeatureAngle for 31 columns. Note that the moments no longer fit in `int16` at that size, so
    accumulate them in 32-bit lanes.
 5. **ARM.** Port FeatureAngle to NEON (`arm_neon.h`). `vmovl_u8`, `vmulq_s16`, and `vaddvq_s16`
-   map closely to the SSE calls. Run it on a Jetson or DGX Spark, and compare the `.prof` files
-   with `prof_summary`.
+   map closely to the SSE calls. The build is x86-only, so also: drop the x86 check and
+   `SIMD_FLAGS` in `CMakeLists.txt` and build only `feature_angle_benchmark`, replace `_mm_pause()`
+   in `fast_parallel_for.hpp` (e.g. with `std::this_thread::yield()`), and skip
+   `exitIfUnsupportedCpu()`. Run it on a Jetson or DGX Spark, and compare the `.prof` files with
+   `prof_summary`.
 
 ---
 

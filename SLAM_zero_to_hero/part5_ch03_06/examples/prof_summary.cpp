@@ -1,6 +1,6 @@
 /**
  * @file prof_summary.cpp
- * @brief Print the timing table of one or more easy_profiler captures
+ * @brief Print the comparison tables of one or more easy_profiler captures
  *
  * Useful for .prof files recorded on another machine (e.g. a Jetson or a
  * laptop) without re-running the benchmarks:

@@ -21,7 +21,7 @@
 namespace simd_bench {
 
 struct BenchmarkArgs {
-    std::string image_path = std::string(SIMD_DATA_DIR) + "/img_rgb.png";  // KITTI odometry 07, image_2/000000.png
+    std::string image_path = std::string(SIMD_DATA_DIR) + "/img_rgb.png";  // 1920x1080, see data/README.md
     int iterations = 200;  // profiled calls per variant
     int warmup = 20;       // unprofiled calls per variant (page faults, caches, thread pools)
 };

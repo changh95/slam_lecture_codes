@@ -2,16 +2,17 @@
  * @file fast_parallel_for.hpp
  * @brief A minimal parallel-for on komrad36's FastThreadPool (the multi-threaded variants)
  *
- * FastThreadPool is only a lock-free queue of captureless function pointers
- * (AddWork / RemoveWork). It has no worker threads, no way to pass arguments,
- * and no way to wait for completion. This wrapper adds the three:
+ * FastThreadPool is only a queue of captureless function pointers (AddWork /
+ * RemoveWork). It has no worker threads, no way to pass arguments, and no way
+ * to wait for completion. This wrapper adds the three:
  * - N-1 persistent workers that spin on RemoveWork(); the calling thread is the N-th
  * - the current job and the next stripe index live in statics, since a task is a plain void(*)()
  * - a counter of unfinished stripes that run() waits on
  *
  * The workers never sleep, so they keep N-1 cores busy for as long as the
  * FastParallelFor object lives, even with no work (see idleCoresBusy()).
- * Only one FastParallelFor may exist at a time, because the job state is static.
+ * Only one FastParallelFor may exist at a time, because the job state is static;
+ * the constructor throws if another one is alive.
  */
 
 #pragma once
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -32,12 +34,14 @@ namespace simd_bench {
 class FastParallelFor {
 public:
     explicit FastParallelFor(int threads) {
+        if (s_alive.exchange(true)) throw std::logic_error("only one FastParallelFor may exist at a time");
         for (int i = 0; i < threads - 1; ++i) workers_.emplace_back([this] { workerLoop(); });
     }
 
     ~FastParallelFor() {
         stop_.store(true, std::memory_order_relaxed);
         for (auto& worker : workers_) worker.join();
+        s_alive.store(false);
     }
 
     FastParallelFor(const FastParallelFor&) = delete;
@@ -50,20 +54,23 @@ public:
     void run(int num_stripes, F& body) {
         s_job = &body;
         s_call = [](void* job, int stripe) { (*static_cast<F*>(job))(stripe); };
-        s_next_stripe.store(0, std::memory_order_relaxed);
+        s_num_stripes = num_stripes;
         s_remaining.store(num_stripes, std::memory_order_relaxed);
+        // Release store last: each task's acquire fetch_add on s_next_stripe then sees the job state
+        // above, whichever thread runs it, without relying on the queue's own memory ordering
+        s_next_stripe.store(0, std::memory_order_release);
 
-        // AddWork's release CAS publishes the job state above to whichever thread removes the task
         for (int i = 0; i < num_stripes; ++i) s_pool.AddWork(&runOneStripe);
 
         // The calling thread works too, then waits for stripes still running on the workers
         while (auto task = s_pool.RemoveWork()) task();
-        while (s_remaining.load(std::memory_order_acquire) != 0) _mm_pause();
+        while (s_remaining.load(std::memory_order_acquire) > 0) _mm_pause();
     }
 
 private:
     static void runOneStripe() {
-        s_call(s_job, s_next_stripe.fetch_add(1, std::memory_order_relaxed));
+        const int stripe = s_next_stripe.fetch_add(1, std::memory_order_acquire);
+        if (stripe < s_num_stripes) s_call(s_job, stripe);
         s_remaining.fetch_sub(1, std::memory_order_release);
     }
 
@@ -77,6 +84,8 @@ private:
     static inline FastThreadPool s_pool;
     static inline void* s_job = nullptr;
     static inline void (*s_call)(void*, int) = nullptr;
+    static inline int s_num_stripes = 0;
+    static inline std::atomic<bool> s_alive{false};
     static inline std::atomic<int> s_next_stripe{0};
     static inline std::atomic<int> s_remaining{0};
 

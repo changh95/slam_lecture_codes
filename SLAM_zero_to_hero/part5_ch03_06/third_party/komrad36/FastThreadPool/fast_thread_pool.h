@@ -155,7 +155,9 @@ public:
             FastThreadPoolItem* pNext = pTail == pHead ? nullptr : pHead->m_next.load(std::memory_order_acquire);
 
             // S9
-            m_pHead.store(pNext, std::memory_order_relaxed);
+            // [SLAM zero-to-hero patch] release, was relaxed: the next RemoveWork() on another thread
+            // acquires m_pHead and must see the item AddWork() wrote (ThreadSanitizer flags it otherwise)
+            m_pHead.store(pNext, std::memory_order_release);
 
             // L6
             delete pHead;
