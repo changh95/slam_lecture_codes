@@ -162,10 +162,7 @@ void RGB2Y(const uint8_t* const __restrict image, const int width, const int hei
 			std::vector<std::future<void>> fut(hw_concur);
 			const int thread_stride = (height - 1) / hw_concur + 1;
 			int i = 0, start = 0;
-			// [SLAM zero-to-hero patch] stop before a chunk would run past the last row.
-			// Upstream always launched hw_concur - 1 full chunks: a 370-row image on 32 threads
-			// got 22 chunks of 17 rows (= 374 rows), and the last thread started at row 374.
-			for (; i < std::min(height - 1, hw_concur - 1) && start + thread_stride < height; ++i, start += thread_stride) {
+			for (; i < std::min(height - 1, hw_concur - 1); ++i, start += thread_stride) {
 				fut[i] = std::async(std::launch::async, _RGB2Y<weight>, image, width, start, thread_stride, stride, out);
 			}
 			fut[i] = std::async(std::launch::async, _RGB2Y<weight>, image, width, start, height - start, stride, out);

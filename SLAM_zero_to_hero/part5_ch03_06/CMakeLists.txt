@@ -25,7 +25,7 @@ else()
     message(FATAL_ERROR "OpenCV not found. Please install OpenCV 4.x")
 endif()
 
-# Find easy_profiler (timing) and threads (komrad36's multi-threaded variants use std::async)
+# Find easy_profiler (timing) and threads (the FastThreadPool workers of the _MT variants)
 find_package(easy_profiler REQUIRED)
 find_package(Threads REQUIRED)
 

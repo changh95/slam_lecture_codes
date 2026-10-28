@@ -4,8 +4,9 @@
  *
  * This example demonstrates:
  * 1. A plain per-pixel loop built with -O3 (the baseline) and with -O3 -march=native
- * 2. OpenCV cv::cvtColor(COLOR_BGR2GRAY), single-threaded and with OpenCV's thread pool
- * 3. komrad36's RGB2Y, single-threaded and multi-threaded
+ * 2. OpenCV cv::cvtColor(COLOR_BGR2GRAY), single-threaded and on OpenCV's own threads
+ * 3. komrad36's RGB2Y, single-threaded and split into row stripes on komrad36's
+ *    FastThreadPool (include/fast_parallel_for.hpp), for 4, 8, 16, ... threads
  * 4. Timing every call with easy_profiler and checking the outputs agree
  *
  * How RGB2Y works:
@@ -17,6 +18,7 @@
  */
 
 #include "benchmark_common.hpp"
+#include "fast_parallel_for.hpp"
 #include "komrad36_compat.hpp"
 #include "plain_kernels.hpp"
 #include "profile_summary.hpp"
@@ -27,8 +29,11 @@
 #include <opencv2/imgproc.hpp>
 #include <easy/profiler.h>
 
+#include <iomanip>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 /**
  * @brief Print how many pixels differ between two gray images, and by how much
@@ -70,7 +75,14 @@ int main(int argc, char** argv) {
     auto opencv = [&](cv::Mat& out) { cv::cvtColor(bgr, out, cv::COLOR_BGR2GRAY); };
     // RGB2Y's 'stride' is in pixels and the output is written with a row pitch of 'cols'
     auto komrad_1t = [&] { RGB2Y<false, true>(bgr.data, cols, rows, cols, gray_k1.data); };
-    auto komrad_mt = [&] { RGB2Y<true, true>(bgr.data, cols, rows, cols, gray_k_mt.data); };
+
+    // Multi-threaded: stripe s converts its band of rows with RGB2Y's row-range worker
+    int num_stripes = 1;
+    auto komrad_stripe = [&](int stripe) {
+        const int first = rows * stripe / num_stripes;
+        const int last = rows * (stripe + 1) / num_stripes;
+        if (last > first) _RGB2Y<true>(bgr.data, cols, first, last - first, cols, gray_k_mt.data);
+    };
 
     // ---- Single thread ----
     cv::setNumThreads(1);
@@ -99,30 +111,52 @@ int main(int argc, char** argv) {
         komrad_1t();
     }
 
-    // ---- Multi-thread: OpenCV's thread pool vs komrad36's std::async split ----
-    cv::setNumThreads(default_threads);
+    // ---- Multi-thread: OpenCV's own threads vs komrad36's RGB2Y on FastThreadPool ----
+    int komrad_mt_differing = 0;
+    std::vector<std::pair<int, double>> idle_cores;
+    for (const int threads : simd_bench::threadCounts()) {
+        const std::string opencv_block = "RGB2Y/OpenCV_MT" + std::to_string(threads);
+        const std::string komrad_block = "RGB2Y/komrad36_MT" + std::to_string(threads);
 
-    simd_bench::warmup(args, [&] { opencv(gray_cv_mt); });
-    for (int i = 0; i < args.iterations; ++i) {
-        EASY_BLOCK("RGB2Y/OpenCV_MT", profiler::colors::Blue800);
-        opencv(gray_cv_mt);
-    }
+        cv::setNumThreads(threads);
+        simd_bench::warmup(args, [&] { opencv(gray_cv_mt); });
+        for (int i = 0; i < args.iterations; ++i) {
+            EASY_BLOCK(opencv_block.c_str(), profiler::colors::Blue800);
+            opencv(gray_cv_mt);
+        }
 
-    simd_bench::warmup(args, komrad_mt);
-    for (int i = 0; i < args.iterations; ++i) {
-        EASY_BLOCK("RGB2Y/komrad36_MT", profiler::colors::Orange800);
-        komrad_mt();
+        cv::setNumThreads(1);  // keep OpenCV's threads asleep while the pool's workers spin
+        gray_k_mt.setTo(0);
+        {
+            simd_bench::FastParallelFor pool(threads);
+            num_stripes = threads;
+            auto komrad_mt = [&] { pool.run(num_stripes, komrad_stripe); };
+
+            simd_bench::warmup(args, komrad_mt);
+            for (int i = 0; i < args.iterations; ++i) {
+                EASY_BLOCK(komrad_block.c_str(), profiler::colors::Orange800);
+                komrad_mt();
+            }
+            idle_cores.emplace_back(threads, simd_bench::idleCoresBusy());
+        }
+        komrad_mt_differing += cv::countNonZero(gray_k_mt != gray_o3);
     }
 
     // ---- Verification against the plain -O3 loop ----
     std::cout << "\nVerification (reference: plain -O3 loop):" << std::endl;
     compareGray("plain native", gray_native, gray_o3);
     compareGray("komrad36 1T ", gray_k1, gray_o3);
-    compareGray("komrad36 MT ", gray_k_mt, gray_o3);
     compareGray("OpenCV 1T   ", gray_cv, gray_o3);
     compareGray("OpenCV MT   ", gray_cv_mt, gray_o3);
+    std::cout << "  komrad36 MT : " << komrad_mt_differing << " pixels differ (summed over all thread counts)"
+              << std::endl;
     std::cout << "  (OpenCV rounds B*w_b + G*w_g + R*w_r once; the others round each product, so +-1 is expected)"
               << std::endl;
+
+    std::cout << "\nFastThreadPool workers spin even without work. Cores busy while idle:" << std::endl;
+    for (const auto& [threads, cores] : idle_cores)
+        std::cout << "  " << threads << " threads: " << std::fixed << std::setprecision(1) << cores << " cores"
+                  << std::endl;
 
     const std::string profile_path = "rgb2y_benchmark.prof";
     profiler::dumpBlocksToFile(profile_path.c_str());
