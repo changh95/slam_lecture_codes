@@ -64,7 +64,7 @@ part5_ch03_06/
 │   ├── kfast_benchmark.cpp           # Rosten vs cv::FAST vs KFAST
 │   ├── feature_angle_benchmark.cpp   # ORB IC_Angle loop vs FeatureAngle
 │   └── prof_summary.cpp              # comparison tables for any .prof file
-└── third_party/komrad36/             # vendored kernels, FastThreadPool + licenses (see its README)
+└── third_party/komrad36/             # komrad36's 4 repos, kernel headers commented (see its README)
 ```
 
 ---
@@ -90,6 +90,9 @@ make -j4
 docker build . -t slam_zero_to_hero:part5_ch03_06
 ```
 
+The Dockerfile copies this folder into the image, including komrad36's code in `third_party/komrad36/`.
+Nothing is cloned or downloaded at build time.
+
 ---
 
 ## Run
@@ -102,7 +105,7 @@ Each demo records every call in an `EASY_BLOCK`, writes `<demo>.prof` to the cur
 reads that file back, and prints:
 
 1. **Verification**: every variant's output compared with the plain `-O3` result. FeatureAngle MT is
-   compared with FeatureAngle 1T, because its `atan2` approximation differs slightly from OpenCV's.
+   compared with FeatureAngle 1T, because its angles differ from OpenCV's by float rounding.
 2. **Cores busy while idle**: what FastThreadPool's spinning workers cost
 3. **Two comparison tables** of easy_profiler's medians in µs, with the speed-up over single-threaded
    `-O3` in parentheses
@@ -223,7 +226,7 @@ Verification (reference: plain -O3 IC_Angle):
   plain native: mean |diff| = 0 deg, max |diff| = 0 deg
   komrad36    : mean |diff| = 5.13992e-06 deg, max |diff| = 3.05176e-05 deg
   komrad36 MT : identical to komrad36 1T at every thread count
-  (cv::fastAtan2 and komrad36's atan2 are different polynomial approximations)
+  (same atan2 polynomial as cv::fastAtan2, in radians instead of degrees: the difference is float rounding)
 
 FastThreadPool workers spin even without work. Cores busy while idle:
   4 threads: 3.0 cores
@@ -306,8 +309,9 @@ Verification printed by the same runs:
   exactly. OpenCV differs by ±1 on 31% of the pixels, because it rounds `B·w_b + G·w_g + R·w_r`
   once, while the others round each product.
 - **FAST**: every detector, at every thread count, returns the same 6821 corners.
-- **Angle**: `-O3 -march=native` matches `-O3` exactly, and FeatureAngle is within 3.1e-5°. The two
-  `atan2` polynomial approximations account for the difference. FeatureAngle MT matches its 1T run.
+- **Angle**: `-O3 -march=native` matches `-O3` exactly, and FeatureAngle is within 3.1e-5° (one float ulp at
+  256–512°). Both use the same `atan2` polynomial, FeatureAngle in radians and `cv::fastAtan2` in degrees, so
+  the difference is float rounding. FeatureAngle MT matches its 1T run.
 
 Single-threaded medians repeat within about 5% between runs, except the `-O3` angle loop
 (152–181 µs over three runs). Multi-threaded medians vary by up to a third: in four runs of
@@ -350,6 +354,10 @@ Single-threaded medians repeat within about 5% between runs, except the `-O3` an
 
 ## How the kernels work
 
+A summary of each kernel follows. The headers in `third_party/komrad36/` explain each design decision where it
+is made, in comments that start with `[SLAM zero-to-hero]`: a "Design notes" block at the top of each file,
+then notes next to the code.
+
 **RGB2Y**: Loads 30 bytes (10 BGR pixels) and widens them to 16-bit lanes. `_mm256_mulhrs_epi16`
 multiplies by Q15 fixed-point weights with rounding, so no float math is needed. `_mm256_shuffle_epi8`
 (`pshufb`) gathers each pixel's B, G, and R products into one lane, and saturating adds produce
@@ -364,7 +372,7 @@ Survivors run the full 16-pixel circle test as a branch-free run-length count. `
 **FeatureAngle**: A 7x7 patch row is 7 bytes, so one 8-byte load widened to 8 x `int16` holds a
 whole row. The circular mask's x and y weights are constant vectors, so `_mm_mullo_epi16` plus adds
 accumulate both moments `m10` and `m01` without branches or a `u_max` table. `_mm_hadd_epi16`
-reduces the lanes, and a polynomial `atan2` returns radians. ORB's `IC_Angle` walks the same
+reduces the lanes, and a polynomial `atan2` (the one `cv::fastAtan2` uses) returns radians. ORB's `IC_Angle` walks the same
 circular patch pixel by pixel. It returns the same moments.
 
 ### Things to know before using these kernels
@@ -397,7 +405,7 @@ circular patch pixel by pixel. It returns the same moments.
    `PLAIN_FLAGS_o3` and `PLAIN_FLAGS_native` in `CMakeLists.txt` to see which loops GCC
    vectorized, and with how wide vectors. Then add a third copy built with `-O3 -mavx2`, the
    instruction set komrad36 uses, for a like-for-like comparison with RGB2Y.
-3. **Workers that sleep.** FastThreadPool's README lists "sleep instead of spin after a while" as
+3. **Workers that sleep.** FastThreadPool's [README](third_party/komrad36/FastThreadPool/README.md) lists "sleep instead of spin after a while" as
    a TODO. In `FastParallelFor::workerLoop()`, put a worker to sleep after it has spun for a while
    without finding work, and wake it in `run()` (e.g. with a `std::condition_variable`).
    Compare the `_MT` medians and "Cores busy while idle" before and after.

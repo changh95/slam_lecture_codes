@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
     compareAngles("komrad36    ", angles_k_deg, angles_o3);
     std::cout << "  komrad36 MT : " << (mt_identical ? "identical to komrad36 1T at every thread count"
                                                    : "DIFFERENT from komrad36 1T") << std::endl;
-    std::cout << "  (cv::fastAtan2 and komrad36's atan2 are different polynomial approximations)" << std::endl;
+    std::cout << "  (same atan2 polynomial as cv::fastAtan2, in radians instead of degrees: the difference is float rounding)" << std::endl;
 
     std::cout << "\nFastThreadPool workers spin even without work. Cores busy while idle:" << std::endl;
     for (const auto& [threads, cores] : idle_cores)

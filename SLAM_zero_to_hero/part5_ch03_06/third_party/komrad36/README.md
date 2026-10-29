@@ -1,23 +1,36 @@
 # komrad36 SIMD kernels (vendored)
 
-Header-only CPU code by Kareem Omar ([komrad36](https://github.com/komrad36)), copied from upstream with the licenses.
-All files are byte-identical to upstream except one line in FastThreadPool (see [Local changes](#local-changes)).
+CPU code by Kareem Omar ([komrad36](https://github.com/komrad36)): full copies of four upstream repositories, with
+their licenses. The Dockerfile copies this folder into the image with the rest of the exercise, so nothing is
+downloaded at build time.
 
 | Folder | Upstream commit | License | Used by |
 |---|---|---|---|
-| `KFAST/KFAST.h` | [komrad36/KFAST@8f90e44](https://github.com/komrad36/KFAST/tree/8f90e441833510a90c6e4486131d670d79fd06d5) | MIT | `kfast_benchmark` |
+| `KFAST/` | [komrad36/KFAST@8f90e44](https://github.com/komrad36/KFAST/tree/8f90e441833510a90c6e4486131d670d79fd06d5) | MIT | `KFAST.h`: `kfast_benchmark` |
 | `KFAST/Rosten/` | shipped in the same KFAST commit (Edward Rosten's FAST C code) | BSD-3-Clause | plain C baseline: `fast_9.c` and `nonmax.c` are built into `plain_o3` / `plain_native` |
-| `RGB2Y/RGB2Y.h` | [komrad36/RGB2Y@953aa22](https://github.com/komrad36/RGB2Y/tree/953aa22547dd363b6674f9637455866eeaa67c5d) | MIT | `rgb2y_benchmark` |
-| `FeatureAngle/FeatureAngle.h` | [komrad36/FeatureAngle@282653c](https://github.com/komrad36/FeatureAngle/tree/282653cedf045abba737bdc2bf3ba989225ed613) | MIT | `feature_angle_benchmark` |
-| `FastThreadPool/fast_thread_pool.h` | [komrad36/FastThreadPool@55670cf](https://github.com/komrad36/FastThreadPool/tree/55670cfcc6f11b8994eb5f058b03ab04084d67b1) | MIT | `include/fast_parallel_for.hpp` (every komrad36 `_MT` variant) |
+| `RGB2Y/` | [komrad36/RGB2Y@953aa22](https://github.com/komrad36/RGB2Y/tree/953aa22547dd363b6674f9637455866eeaa67c5d) | MIT | `RGB2Y.h`: `rgb2y_benchmark` |
+| `FeatureAngle/` | [komrad36/FeatureAngle@282653c](https://github.com/komrad36/FeatureAngle/tree/282653cedf045abba737bdc2bf3ba989225ed613) | MIT | `FeatureAngle.h`: `feature_angle_benchmark` |
+| `FastThreadPool/` | [komrad36/FastThreadPool@55670cf](https://github.com/komrad36/FastThreadPool/tree/55670cfcc6f11b8994eb5f058b03ab04084d67b1) | MIT | `fast_thread_pool.h`: `include/fast_parallel_for.hpp` (every komrad36 `_MT` variant) |
 
-Upstream demo drivers (`main.cpp`), Makefiles, and test images are not included.
+Every file the upstream commits track is here except the `.gitignore` files. Those ignore everything (`*`) and
+whitelist upstream's own files, so inside this repository they would silently hide any file added next to them.
+
+`CMakeLists.txt` only uses the headers (and Rosten's two C files). Upstream's demo drivers (`RGB2Y/main.cpp`,
+`KFAST/main.cpp`), Makefiles, and `test.jpg` / `results.jpg` are kept for reference only. They do not build in
+`slam:base` as published: `RGB2Y/main.cpp` hits MSVC's `__forceinline` in `RGB2Y.h`, and `KFAST/main.cpp` uses
+OpenCV 2/3 constants (`CV_LOAD_IMAGE_GRAYSCALE`, `CV_WINDOW_NORMAL`) that OpenCV 4 removed.
 
 GCC needs a few definitions and includes that the kernel headers take from MSVC (`__forceinline`, `<cstring>`,
-`<thread>`, `<vector>`). These come from `include/komrad36_compat.hpp`, so the headers need no edits.
+`<thread>`, `<vector>`). These come from `include/komrad36_compat.hpp`, so the headers' code needs no edits.
 
 ## Local changes
 
+- **Design comments in `RGB2Y/RGB2Y.h`, `KFAST/KFAST.h`, and `FeatureAngle/FeatureAngle.h`**: added for the course.
+  They explain why each kernel is built the way it is (lane widths, fixed-point math, shuffle layout, branch-free
+  tests, memory over-reads and over-writes). Every added comment starts with `[SLAM zero-to-hero]`, and only comment
+  lines were added: no line of upstream code was changed or removed, so `diff` against the upstream commit shows
+  additions only. Each header opens with a "Design notes" block, and notes inside the code mark the decisions as
+  they occur. `RGB2Y.h` and `KFAST.h` keep upstream's CRLF line endings.
 - **`FastThreadPool/fast_thread_pool.h`, `RemoveWork()`**: the store that hands the queue head to the next consumer
   (`S9`) is `memory_order_release` instead of `memory_order_relaxed`. Without it, under the C++ memory model, a worker
   that removes the next item has no happens-before edge to the `AddWork()` that wrote it, and ThreadSanitizer reports

@@ -58,6 +58,27 @@
 // 	SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
+// [SLAM zero-to-hero] Design notes, added for the course. Comments that start with
+// [SLAM zero-to-hero] are ours; the code itself is upstream's, unchanged.
+//
+// FAST-9: pixel p is a corner if 9 contiguous pixels of the 16-pixel circle of radius 3 around it
+// are all brighter than p + t, or all darker than p - t. Rosten's C code (Rosten/fast_9.c) decides
+// this with a machine-learned decision tree, thousands of lines of nested ifs: few comparisons per
+// pixel, but every pixel takes its own path, which SIMD lanes cannot follow. KFAST instead runs one
+// branch-free test on 32 pixels at a time:
+//  1. One candidate per byte lane. Circle point k of 32 adjacent pixels is itself 32 adjacent
+//     bytes (ptr + offsets[k]), so one unaligned 32-byte load fetches it for all 32 candidates.
+//     The image row is already laid out as a "structure of arrays": no gather, no transpose.
+//  2. Everything stays in 8 bits, so all 32 lanes are used: saturating p + t and p - t keep the
+//     test exact, and an XOR with 0x80 turns AVX2's signed byte compare into an unsigned one.
+//  3. An exact pre-test on Rosten's compass points 1, 5, 9, 13 rejects most pixels. movemask packs
+//     the 32 verdicts into one integer, so there is one branch per 32 pixels.
+//  4. The full test counts run lengths with AND/SUB/MAX and no branches, over the 16 points plus
+//     the first 8 again (24), so arcs that wrap around are seen without modulo indexing.
+//  5. Scores are computed in a tzcnt/blsr (BMI1) loop that visits only the corners, and non-max
+//     suppression loops over the recorded corners, so both run once per corner, not per pixel.
+//  6. Non-max suppression runs while the rows stream by, with only 3 rows of scores kept.
+
 #pragma once
 
 #include <algorithm>
@@ -77,6 +98,9 @@ struct Keypoint {
 // Yes, this function MUST be inlined.
 // Even if your compiler thinks otherwise.
 // 2000 -> 2600 microseconds without forced inlining.
+// [SLAM zero-to-hero] Likely why: num_corners, ptr and j are passed by reference and the constant
+// vectors by const reference. Inlined into the column loop, they all live in registers. As a real call,
+// they would go through memory on every 32-pixel step.
 template<const bool full, const bool nonmax_suppression>
 #ifdef _MSC_VER
 __forceinline
@@ -90,6 +114,10 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 	// ppt is an integer vector that now holds 32 of point p
 	__m256i ppt = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ptr));
 
+	// [SLAM zero-to-hero] Saturating 8-bit add/sub keep the test exact without widening to 16 bits,
+	// which would halve the lanes to 16. If p + t would pass 255, no pixel can be brighter than it,
+	// and 255 gives the same answer; p - t below 0 becomes 0 with the same effect. Both bounds are
+	// then XORed with 0x80 (ushft) for the signed compares below.
 	// we subtract (and clamp) the threshold value from all 32 pixels
 	// pmt represents p - t
 	__m256i pmt = _mm256_xor_si256(_mm256_subs_epu8(ppt, t), ushft);
@@ -98,6 +126,8 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 	// ppt represents p + t
 	ppt = _mm256_xor_si256(_mm256_adds_epu8(ppt, t), ushft);
 
+	// [SLAM zero-to-hero] One unaligned 32-byte load per circle point covers all 32 candidates.
+	// offsets[0], [4], [8], [12] are Rosten's compass points 9, 5, 1, 13 (below, right, above, left).
 	// Rosten's point 9 for all 32 pixels in consideration
 	__m256i p9 = _mm256_xor_si256(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(ptr + *offsets)), ushft);
 
@@ -110,6 +140,10 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 	// Rosten's point 13
 	__m256i p13 = _mm256_xor_si256(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(ptr + offsets[12])), ushft);
 
+	// [SLAM zero-to-hero] Exact pre-test. The compass points are 4 apart, so any arc of 9 contiguous
+	// circle points contains two neighbouring ones: 9-5, 5-1, 1-13 or 13-9. A pixel with no such pair
+	// both brighter (or both darker) than its bounds cannot be a corner, so this rejects pixels
+	// without ever losing a corner, for 4 loads and 8 different compares (each written twice below).
 	// compare p's against p9's
 	// compare p's against p5's
 	// AND the result into ppt_accum
@@ -158,6 +192,8 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 	uint32_t last_cols_mask;
 	if (!full) last_cols_mask = (1 << (cols - j - 3)) - 1;
 
+	// [SLAM zero-to-hero] movemask_epi8 collects the top bit of each byte lane: bit x is column j + x.
+	// From here on, 32 pixels are decided by scalar tests on one integer.
 	// 'mask' now contains one bit for each element
 	// which is SET if that element COULD be a corner based on the 2 consective cardinal point test
 	// CAREFUL - returns signed int32_t but you NEED all 32 bits so cast immediately to unsigned
@@ -168,6 +204,10 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 	// if none of the elements can be corners, bail
 	if (m == 0) return;
 
+	// [SLAM zero-to-hero] The 24-step test below costs the same whether 1 or 32 lanes are candidates.
+	// If the left 16 lanes are all rejected, the window advances by only 16 columns, so the right
+	// half's candidates share the expensive test with 16 new columns instead of 16 dead lanes. The
+	// surviving right half gets the cheap pre-test a second time, which costs far less.
 	// if none of the left half can be corners, retreat 16 pixels to the left and bail,
 	// so that after the 'continue' the total change will be forward by 16 pixels
 	if (full) {
@@ -184,6 +224,11 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 	__m256i ppt_max = _mm256_setzero_si256();
 	__m256i pmt_max = _mm256_setzero_si256();
 
+	// [SLAM zero-to-hero] Branch-free run-length count per lane, for brighter and darker separately.
+	// A compare yields 0xFF (-1) where the circle point passes and 0 where it fails, so
+	// (cnt - mask) & mask adds 1 to a streak that continues and resets a broken one to 0, and
+	// max_epu8 keeps the longest streak. The 24 points (the 16, then the first 8 again) contain every
+	// 9-arc, including those that wrap past the end of the list. Streaks are at most 24: bytes suffice.
 	// for each of the 24 pixels in the circle (wrapping around extra 8 at the end)
 	for (int32_t k = 0; k < 24; ++k) {
 		// x is a vector of the kth member of the circle
@@ -199,12 +244,17 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 		pmt_max = _mm256_max_epu8(pmt_max, pmt_cnt = _mm256_and_si256(_mm256_sub_epi8(pmt_cnt, pmt_accum), pmt_accum));
 	}
 
+	// [SLAM zero-to-hero] A streak > 8, i.e. at least 9 contiguous points, marks a corner. The signed
+	// compare is fine because streaks are at most 24.
 	// 'm' now contains one bit for whether each element
 	// is a corner!
 	m = full ?
 		static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi8(_mm256_max_epu8(ppt_max, pmt_max), consec))) :
 		static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi8(_mm256_max_epu8(ppt_max, pmt_max), consec))) & last_cols_mask;
 
+	// [SLAM zero-to-hero] tzcnt returns the index of the lowest set bit (the next corner's column
+	// offset) and blsr clears that bit, one BMI1 instruction each. The loop body runs once per
+	// corner, not once per lane.
 	// visit each corner in the mask
 	while (m) {
 		const uint32_t x = _tzcnt_u32(m);
@@ -213,6 +263,14 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 			// add it!
 			corners[num_corners++] = j + x;
 
+			// [SLAM zero-to-hero] The score is the smallest threshold at which this pixel would
+			// no longer be a corner: Rosten's fast9_corner_score (the largest threshold at which it
+			// still is) + 1, which ranks neighbours the same way for non-max suppression. Rosten
+			// finds it by binary search, re-running the corner test at each step; KFAST computes it
+			// directly. ring[n] = p - circle[n], in int16 (differences span -255..255). Arc a
+			// covers points a..a+8, so the 9 unaligned loads of 16 int16 at ring + 0, ring + 1, ...,
+			// ring + 8 give lane a exactly the 9 points of arc a. The 16 arcs fill the 16 int16
+			// lanes of a 256-bit register, and min/max across the 9 loads reduce all 16 at once.
 			// --- BEGIN COMPUTE CORNER SCORE ---
 
 			// inlining gives measurably better performance
@@ -270,6 +328,9 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 			minv = _mm256_min_epi16(minv, ringv);
 			maxv = _mm256_max_epi16(maxv, ringv);
 
+			// [SLAM zero-to-hero] Per arc, minv > 0 means the whole arc is darker than p, by at
+			// least minv, and -maxv > 0 means it is brighter, by at least -maxv. A mixed arc gives
+			// no positive value.
 			// minv now has the smallest of [0-8], [1-9], ..., [14-6], [15-7] (all 16 possible regions of 9 pixels)
 			// maxv now has the largest of  [0-8], [1-9], ..., [14-6], [15-7] (all 16 possible regions of 9 pixels)
 
@@ -280,6 +341,10 @@ void processCols(int32_t& num_corners, const uint8_t* __restrict & ptr, int32_t&
 
 			maxv = _mm256_max_epi16(minv, _mm256_sub_epi16(_mm256_setzero_si256(), maxv));
 
+			// [SLAM zero-to-hero] x86 has no horizontal max. phminposuw (SSE4.1, 128-bit only) is its
+			// only horizontal min/max instruction: the min of 8 unsigned words, plus its index. So
+			// the two 128-bit halves are maxed first, and the max of the remaining 8 lanes is
+			// computed as 32767 - min(32767 - x).
 			// The overall single max is now found through a horizontal reduction of 'maxv'.
 			// This score represents the deviation of the most deviant region of 9 pixels.
 			// _mm_minpos_epu16() emits the phminposuw instruction from SSE4. Have to
@@ -320,6 +385,11 @@ void _KFAST(const uint8_t* __restrict const data, const int32_t cols, const int3
 	// will be used for comparing number of consecutive salient pixels - greater than 8 means corner!
 	const __m256i consec = _mm256_set1_epi8(8);
 
+	// [SLAM zero-to-hero] Streaming non-max suppression. A corner is kept if its score beats all 8
+	// neighbours, which needs the rows above and below. Three row buffers rotate (row i uses buffer
+	// i % 3), so row i - 1's corners are decided right after row i is scored. Only 15 bytes per
+	// column (3 rows of uint8 scores + int32 corner columns) are needed, and they stay in cache:
+	// no full-size score map, and no second pass over the image.
 	uint8_t* rawbuf;
 	uint8_t* rowbuf[3];
 	int32_t* cornerbuf[3];
@@ -415,6 +485,11 @@ void _KFAST(const uint8_t* __restrict const data, const int32_t cols, const int3
 	if (nonmax_suppression) _mm_free(rawbuf);
 }
 
+// [SLAM zero-to-hero] multithreading = true starts one std::async task per hardware thread (at
+// least 16 rows each) on every call. Each stripe extends 3 rows (the circle radius), plus 1 with
+// non-max suppression, into its neighbours, and first_thread / last_thread tell _KFAST which edge
+// rows it owns. The exercise runs _KFAST on persistent FastThreadPool workers instead
+// (../README.md, "Multi-threading").
 template <const bool multithreading, const bool nonmax_suppression>
 void KFAST(const uint8_t* __restrict const data, const int32_t cols, const int32_t rows, const int32_t stride,
         std::vector<Keypoint>& keypoints, const uint8_t threshold) {
