@@ -1,12 +1,13 @@
 /**
  * @file rgb2y_benchmark.cpp
- * @brief BGR -> grayscale: plain C++ loop vs OpenCV cv::cvtColor vs komrad36's RGB2Y (AVX2)
+ * @brief BGR -> grayscale: plain C++ loop vs OpenCV cv::cvtColor vs komrad36's RGB2Y (AVX2) or its NEON port
  *
  * This example demonstrates:
  * 1. A plain per-pixel loop built with -O3 (the baseline) and with -O3 -march=native
  * 2. OpenCV cv::cvtColor(COLOR_BGR2GRAY), single-threaded and on OpenCV's own threads
- * 3. komrad36's RGB2Y, single-threaded and split into row stripes on komrad36's
- *    FastThreadPool (include/fast_parallel_for.hpp), for 4, 8, 16, ... threads
+ * 3. komrad36's RGB2Y (x86-64) or its NEON port (AArch64, neon/RGB2Y_neon.h), single-threaded
+ *    and split into row stripes on komrad36's FastThreadPool (include/fast_parallel_for.hpp),
+ *    for 4, 8, 16, ... threads
  * 4. Timing every call with easy_profiler and checking the outputs agree
  *
  * How RGB2Y works:
@@ -15,15 +16,24 @@
  *   with rounding, so no float math is needed
  * - _mm256_shuffle_epi8 (pshufb) gathers the B, G and R products of each pixel
  *   into the same lane, then saturating adds produce 10 gray pixels at once
+ * The NEON port de-interleaves 16 pixels with one vld3q_u8 and rounds with
+ * vqrdmulhq_s16, which computes the same Q15 product as mulhrs.
  */
 
 #include "benchmark_common.hpp"
 #include "fast_parallel_for.hpp"
-#include "komrad36_compat.hpp"
 #include "plain_kernels.hpp"
 #include "profile_summary.hpp"
 
+// komrad36's AVX2 kernel on x86-64, the NEON port on AArch64; both have RGB2Y.h's interface
+#if defined(__aarch64__)
+#include "RGB2Y_neon.h"
+constexpr bool kRowsSpill = false;  // the NEON port writes every row exactly
+#else
+#include "komrad36_compat.hpp"
 #include "RGB2Y/RGB2Y.h"
+constexpr bool kRowsSpill = true;  // see the "Stores" note in RGB2Y.h
+#endif
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -81,14 +91,14 @@ int main(int argc, char** argv) {
     // RGB2Y's 16-byte stores run up to 5 bytes into the next row when cols % 10 is 1..5. Inside a
     // stripe that row is rewritten later by the same thread, but a stripe's last row would spill
     // into the next stripe's first row while another thread owns it. So that row is converted
-    // into a scratch row and copied back.
+    // into a scratch row and copied back. The NEON port needs none of this (kRowsSpill = false).
     int num_stripes = 1;
     std::vector<std::vector<uint8_t>> scratch_rows;
     auto komrad_stripe = [&](int stripe) {
         const int first = rows * stripe / num_stripes;
         const int last = rows * (stripe + 1) / num_stripes;
         if (last <= first) return;
-        if (stripe == num_stripes - 1) {  // the image's last row: its spill lands in the padding
+        if (!kRowsSpill || stripe == num_stripes - 1) {  // the image's last row spills into the padding
             _RGB2Y<true>(bgr.data, cols, first, last - first, cols, gray_k_mt.data);
             return;
         }
@@ -121,16 +131,16 @@ int main(int argc, char** argv) {
 
     simd_bench::warmup(args, komrad_1t);
     for (int i = 0; i < args.iterations; ++i) {
-        EASY_BLOCK("RGB2Y/komrad36_1T", profiler::colors::Orange500);
+        EASY_BLOCK("RGB2Y/" SIMD_VARIANT "_1T", profiler::colors::Orange500);
         komrad_1t();
     }
 
-    // ---- Multi-thread: OpenCV's own threads vs komrad36's RGB2Y on FastThreadPool ----
+    // ---- Multi-thread: OpenCV's own threads vs the SIMD kernel on FastThreadPool ----
     int komrad_mt_differing = 0;
     std::vector<std::pair<int, double>> idle_cores;
     for (const int threads : simd_bench::threadCounts()) {
         const std::string opencv_block = "RGB2Y/OpenCV_MT" + std::to_string(threads);
-        const std::string komrad_block = "RGB2Y/komrad36_MT" + std::to_string(threads);
+        const std::string komrad_block = std::string("RGB2Y/") + SIMD_VARIANT + "_MT" + std::to_string(threads);
 
         cv::setNumThreads(threads);
         simd_bench::warmup(args, [&] { opencv(gray_cv_mt); });
@@ -160,10 +170,11 @@ int main(int argc, char** argv) {
     // ---- Verification against the plain -O3 loop ----
     std::cout << "\nVerification (reference: plain -O3 loop):" << std::endl;
     compareGray("plain native", gray_native, gray_o3);
-    compareGray("komrad36 1T ", gray_k1, gray_o3);
+    compareGray(simd_bench::label(SIMD_VARIANT " 1T"), gray_k1, gray_o3);
     compareGray("OpenCV 1T   ", gray_cv, gray_o3);
     compareGray("OpenCV MT   ", gray_cv_mt, gray_o3);
-    std::cout << "  komrad36 MT : " << komrad_mt_differing << " pixels differ (summed over all thread counts)"
+    std::cout << "  " << simd_bench::label(SIMD_VARIANT " MT") << ": " << komrad_mt_differing
+              << " pixels differ (summed over all thread counts)"
               << std::endl;
     std::cout << "  (OpenCV rounds B*w_b + G*w_g + R*w_r once; the others round each product, so +-1 is expected)"
               << std::endl;

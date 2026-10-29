@@ -1,14 +1,16 @@
 /**
  * @file feature_angle_benchmark.cpp
  * @brief Keypoint orientation (intensity centroid): ORB's IC_Angle loop vs komrad36's FeatureAngle (SSE)
+ *        or its NEON port
  *
  * This example demonstrates:
  * 1. ORB's intensity-centroid angle, the plain loop from OpenCV's orb.cpp (ICAngles,
  *    not public API, so it is reproduced in src/plain_kernels.cpp) with cv::fastAtan2,
  *    built with -O3 (the baseline) and with -O3 -march=native.
  *    OpenCV has no vectorized version: cv::ORB runs exactly this loop.
- * 2. komrad36's featureAngle(): the same moments with 8 x 16-bit SSE lanes, single-threaded
- *    and with the keypoints split over komrad36's FastThreadPool (include/fast_parallel_for.hpp)
+ * 2. komrad36's featureAngle(): the same moments with 8 x 16-bit SSE lanes (x86-64), or its NEON
+ *    port (AArch64, neon/FeatureAngle_neon.h), single-threaded and with the keypoints split over
+ *    komrad36's FastThreadPool (include/fast_parallel_for.hpp)
  * 3. Timing both over all FAST corners of the image with easy_profiler
  *
  * Both compute the angle of (m10, m01) over the circular 7x7 patch KORAL uses
@@ -20,15 +22,21 @@
  *   and adds accumulate m10 and m01 for all columns at once (no branches, no u_max table)
  * - _mm_hadd_epi16 and shuffles reduce the 8 lanes to one sum, and a polynomial
  *   atan2 turns (m10, m01) into radians
+ * The NEON port multiply-accumulates with vmlaq_s16 and sums the lanes with one vaddvq_s16.
  */
 
 #include "benchmark_common.hpp"
 #include "fast_parallel_for.hpp"
-#include "komrad36_compat.hpp"
 #include "plain_kernels.hpp"
 #include "profile_summary.hpp"
 
+// komrad36's SSE kernel on x86-64, the NEON port on AArch64; both have FeatureAngle.h's interface
+#if defined(__aarch64__)
+#include "FeatureAngle_neon.h"
+#else
+#include "komrad36_compat.hpp"
 #include "FeatureAngle/FeatureAngle.h"
+#endif
 
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -133,7 +141,7 @@ int main(int argc, char** argv) {
 
     simd_bench::warmup(args, komrad);
     for (int i = 0; i < args.iterations; ++i) {
-        EASY_BLOCK("Angle/komrad36_1T", profiler::colors::Orange500);
+        EASY_BLOCK("Angle/" SIMD_VARIANT "_1T", profiler::colors::Orange500);
         komrad();
     }
 
@@ -141,7 +149,7 @@ int main(int argc, char** argv) {
     bool mt_identical = true;
     std::vector<std::pair<int, double>> idle_cores;
     for (const int threads : simd_bench::threadCounts()) {
-        const std::string block = "Angle/komrad36_MT" + std::to_string(threads);
+        const std::string block = std::string("Angle/") + SIMD_VARIANT + "_MT" + std::to_string(threads);
         simd_bench::FastParallelFor pool(threads);
         num_stripes = threads;
         auto komrad_mt = [&] { pool.run(num_stripes, komrad_stripe); };
@@ -156,15 +164,17 @@ int main(int argc, char** argv) {
         mt_identical = mt_identical && angles_k_mt == angles_k;
     }
 
-    // ---- Verification: komrad36 returns radians in (-pi, pi], the plain loop degrees in [0, 360) ----
+    // ---- Verification: featureAngle returns radians in [-pi, pi], the plain loop degrees in [0, 360) ----
     std::vector<float> angles_k_deg(n);
     for (size_t i = 0; i < n; ++i) angles_k_deg[i] = static_cast<float>(angles_k[i] * 180.0 / CV_PI);
 
     std::cout << "\nVerification (reference: plain -O3 IC_Angle):" << std::endl;
     compareAngles("plain native", angles_native, angles_o3);
-    compareAngles("komrad36    ", angles_k_deg, angles_o3);
-    std::cout << "  komrad36 MT : " << (mt_identical ? "identical to komrad36 1T at every thread count"
-                                                   : "DIFFERENT from komrad36 1T") << std::endl;
+    compareAngles(simd_bench::label(SIMD_VARIANT), angles_k_deg, angles_o3);
+    std::cout << "  " << simd_bench::label(SIMD_VARIANT " MT") << ": "
+              << (mt_identical ? "identical to " SIMD_VARIANT " 1T at every thread count"
+                               : "DIFFERENT from " SIMD_VARIANT " 1T")
+              << std::endl;
     std::cout << "  (same atan2 polynomial as cv::fastAtan2, in radians instead of degrees: the difference is float rounding)" << std::endl;
 
     std::cout << "\nFastThreadPool workers spin even without work. Cores busy while idle:" << std::endl;

@@ -4,8 +4,8 @@
  *
  * src/plain_kernels.cpp and Rosten's FAST-9 C code are compiled twice, so the
  * benchmarks show what the compiler alone makes of the same code:
- *   plain_o3     : -O3                 portable x86-64 Release build (GCC may use SSE2)
- *   plain_native : -O3 -march=native   GCC may use every extension of the build CPU (AVX2, AVX-512, ...)
+ *   plain_o3     : -O3                 portable Release build (GCC may use SSE2 on x86-64, NEON on AArch64)
+ *   plain_native : -O3 -march=native   GCC may use every extension of the build CPU (AVX2, AVX-512, SVE, ...)
  */
 
 #pragma once

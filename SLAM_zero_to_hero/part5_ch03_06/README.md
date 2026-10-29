@@ -1,28 +1,30 @@
-# SIMD Acceleration Hands-on: Plain C++ vs OpenCV vs komrad36's AVX2/SSE Kernels
+# SIMD Acceleration Hands-on: Plain C++ vs OpenCV vs komrad36's AVX2/SSE Kernels and Their NEON Ports
 
 A feature-based SLAM front-end runs the same three kernels on every frame: convert to grayscale,
 detect FAST corners, and compute each corner's orientation (the first half of ORB). This exercise
 times each kernel with **easy_profiler** in three versions: plain C/C++, OpenCV, and
 [komrad36](https://github.com/komrad36)'s hand-written intrinsics. It then checks that all versions
-produce the same output.
+produce the same output. On an AArch64 CPU such as a Jetson, the same benchmarks run this exercise's
+NEON ports of komrad36's kernels (`neon/`) in place of the AVX2/SSE originals.
 
-| Kernel | Plain C/C++ (baseline) | OpenCV | komrad36 (ISA) |
-|---|---|---|---|
-| BGR → gray | per-pixel loop (the formula of komrad36's `RGB2Y_ref`) | `cv::cvtColor(COLOR_BGR2GRAY)` | [RGB2Y](https://github.com/komrad36/RGB2Y) (AVX2) |
-| FAST-9 + non-max suppression | Rosten's original C code | `cv::FAST(TYPE_9_16)` | [KFAST](https://github.com/komrad36/KFAST) (AVX2 + BMI1) |
-| Orientation (intensity centroid, 7x7) | ORB's `IC_Angle` loop from OpenCV's `orb.cpp` | same loop: `cv::ORB` has no faster version | [FeatureAngle](https://github.com/komrad36/FeatureAngle) (SSE4.1) |
+| Kernel | Plain C/C++ (baseline) | OpenCV | komrad36, x86-64 (ISA) | NEON port, AArch64 |
+|---|---|---|---|---|
+| BGR → gray | per-pixel loop (the formula of komrad36's `RGB2Y_ref`) | `cv::cvtColor(COLOR_BGR2GRAY)` | [RGB2Y](https://github.com/komrad36/RGB2Y) (AVX2) | [`neon/RGB2Y_neon.h`](neon/RGB2Y_neon.h) |
+| FAST-9 + non-max suppression | Rosten's original C code | `cv::FAST(TYPE_9_16)` | [KFAST](https://github.com/komrad36/KFAST) (AVX2 + BMI1) | [`neon/KFAST_neon.h`](neon/KFAST_neon.h) |
+| Orientation (intensity centroid, 7x7) | ORB's `IC_Angle` loop from OpenCV's `orb.cpp` | same loop: `cv::ORB` has no faster version | [FeatureAngle](https://github.com/komrad36/FeatureAngle) (SSE4.1) | [`neon/FeatureAngle_neon.h`](neon/FeatureAngle_neon.h) |
 
 The plain C/C++ code (`src/plain_kernels.cpp` and Rosten's C files) is compiled twice:
 
-- **`plain_O3`** (the `-O3` column), with `-O3`. This is an ordinary portable x86-64 Release build, and it is the
+- **`plain_O3`** (the `-O3` column), with `-O3`. This is an ordinary portable Release build, and it is the
   reference: every table reports speed-ups relative to it. GCC may still auto-vectorize simple
-  loops with SSE2.
+  loops with SSE2 (x86-64) or NEON (AArch64, where NEON is part of the base instruction set).
 - **`plain_native`** (the `-O3 -march=native` column). GCC may use every extension of the build CPU
-  (AVX2, AVX-512, …). This column shows how far the compiler alone gets with the same code. The
-  result depends on the CPU the binary was built on.
+  (AVX2, AVX-512, … on x86-64; e.g. the dot-product instructions or SVE on newer Arm cores). This
+  column shows how far the compiler alone gets with the same code. The result depends on the CPU the
+  binary was built on.
 
 `cv::cvtColor` and `cv::FAST` are not scalar code. OpenCV already vectorizes them with its universal
-intrinsics, dispatched to AVX2 at runtime.
+intrinsics: AVX2, dispatched at runtime, on x86-64, and NEON on AArch64.
 
 Every kernel runs single-threaded (`_1T`) and multi-threaded (`_MT<threads>`, for 4, 8, 16, … up to
 the hardware thread count):
@@ -38,6 +40,10 @@ the hardware thread count):
   kernels' own built-in multi-threaded mode is not used, because it starts new threads on every
   call (see [third_party/komrad36/README.md](third_party/komrad36/README.md#multi-threading)).
 
+On AArch64 the `komrad36` variant is the NEON port: its blocks are named `NEON_1T` and `NEON_MT<n>`,
+and the tables have a `NEON` column. The NEON port of RGB2Y writes each row exactly, so its stripes need
+no scratch row.
+
 ---
 
 ## Project Structure
@@ -46,12 +52,13 @@ the hardware thread count):
 part5_ch03_06/
 ├── README.md
 ├── CMakeLists.txt
-├── Dockerfile
+├── Dockerfile                        # x86-64 image, FROM slam:base
+├── Dockerfile.jetson                 # arm64 image (Jetson, DGX Spark), Ubuntu 22.04 + OpenCV from apt
 ├── data/
 │   ├── img_rgb.png                   # benchmark image (see data/README.md for source and license)
 │   └── README.md
 ├── include/
-│   ├── benchmark_common.hpp          # arguments, padded buffers, AVX2 check
+│   ├── benchmark_common.hpp          # arguments, padded buffers, CPU check, SIMD_VARIANT
 │   ├── fast_parallel_for.hpp         # parallel-for on komrad36's FastThreadPool (_MT variants)
 │   ├── komrad36_compat.hpp           # GCC shims for komrad36's MSVC-era headers
 │   ├── plain_kernels.hpp             # plain C/C++ baselines (plain_o3 / plain_native)
@@ -64,6 +71,10 @@ part5_ch03_06/
 │   ├── kfast_benchmark.cpp           # Rosten vs cv::FAST vs KFAST
 │   ├── feature_angle_benchmark.cpp   # ORB IC_Angle loop vs FeatureAngle
 │   └── prof_summary.cpp              # comparison tables for any .prof file
+├── neon/                             # NEON ports of komrad36's kernels, same interface (AArch64)
+│   ├── RGB2Y_neon.h
+│   ├── KFAST_neon.h
+│   └── FeatureAngle_neon.h
 └── third_party/komrad36/             # komrad36's 4 repos, kernel headers commented (see its README)
 ```
 
@@ -71,10 +82,11 @@ part5_ch03_06/
 
 ## Requirements
 
-- **x86-64 CPU with AVX2 and BMI1** (Intel Haswell / AMD Zen 1 or newer). komrad36's kernels are
-  x86 intrinsics, so ARM boards (Jetson, DGX Spark, Raspberry Pi) cannot run them. Porting a
-  kernel to NEON is one of the exercises below.
-- **OpenCV 4.x** and **easy_profiler**, both included in `slam:base`.
+- **x86-64 CPU with AVX2 and BMI1** (Intel Haswell / AMD Zen 1 or newer) for komrad36's kernels,
+  **or an AArch64 CPU** (Jetson Orin / Xavier, DGX Spark, Raspberry Pi 4/5, …) for the NEON ports.
+  CMake picks the kernels from the CPU it builds on.
+- **OpenCV 4.x** and **easy_profiler**: included in `slam:base` (x86-64) and installed by
+  `Dockerfile.jetson` (arm64).
 
 ---
 
@@ -92,6 +104,25 @@ docker build . -t slam_zero_to_hero:part5_ch03_06
 
 The Dockerfile copies this folder into the image, including komrad36's code in `third_party/komrad36/`.
 Nothing is cloned or downloaded at build time.
+
+**Jetson (or any arm64 Linux machine).** `slam:base` is built for x86-64 only, so `Dockerfile.jetson`
+starts from Ubuntu 22.04 (the userland of JetPack 6), installs OpenCV 4.5.4 from Ubuntu's packages, and
+builds easy_profiler at the commit `slam:base` uses, so `.prof` files move between the two. The image
+uses only the CPU, so it needs no NVIDIA container runtime, and it should work on JetPack 5 as well.
+Build the image on the machine that will run it: `plain_native` is compiled with `-march=native` for the
+CPU it is built on, so an image built on an Orin may not run on a Xavier, and one built under QEMU on an
+x86-64 PC gets no CPU-specific flags at all.
+
+```bash
+# On the Jetson
+docker build -f Dockerfile.jetson -t slam_zero_to_hero:part5_ch03_06-jetson .
+
+# On an x86-64 PC, emulated (needs qemu-user-static; far too slow for timing, fine for checking)
+docker build --platform linux/arm64 -f Dockerfile.jetson -t slam_zero_to_hero:part5_ch03_06-jetson .
+```
+
+A local build on the Jetson works the same way as on x86-64 once OpenCV (`sudo apt install libopencv-dev`)
+and easy_profiler are installed.
 
 ---
 
@@ -253,6 +284,29 @@ Angle         32                   -        16.9 (9.01x)
 Profile saved to: feature_angle_benchmark.prof (open with profiler_gui)
 ```
 
+### 4. On a Jetson: the NEON ports
+
+```bash
+docker run --rm slam_zero_to_hero:part5_ch03_06-jetson ./rgb2y_benchmark
+docker run --rm slam_zero_to_hero:part5_ch03_06-jetson ./kfast_benchmark
+docker run --rm slam_zero_to_hero:part5_ch03_06-jetson ./feature_angle_benchmark
+```
+
+The output has the same layout, with `NEON` in place of `komrad36` / `KFAST`. No Jetson timings are
+recorded in this README yet. The NEON code was checked by cross-compiling it for aarch64 (GCC 11, OpenCV
+4.12) and running it under QEMU. Below is an excerpt of the verification lines it printed, with the
+kernel names added on the left (emulated timings say nothing about a Jetson, so they are left out):
+
+```text
+RGB2Y      plain native: 0 pixels differ (max |diff| = 0)
+           NEON 1T     : 0 pixels differ (max |diff| = 0)
+           NEON MT     : 0 pixels differ (summed over all thread counts)
+FAST       NEON 1T     : 6821 corners, identical to plain -O3
+           NEON MT     : identical to plain -O3 at every thread count
+Angle      NEON        : mean |diff| = 5.12881e-06 deg, max |diff| = 3.05176e-05 deg
+           NEON MT     : identical to NEON 1T at every thread count
+```
+
 ### Other images, other machines
 
 ```bash
@@ -264,7 +318,13 @@ docker run --rm -v "$PWD":/out -w /out slam_zero_to_hero:part5_ch03_06 /workspac
 
 # Print the tables of a .prof again, e.g. one recorded on another machine
 ./build/prof_summary rgb2y_benchmark.prof kfast_benchmark.prof
+
+# On a Jetson: the same demos in the arm64 image, .prof files kept in the current folder
+docker run --rm -v "$PWD":/out -w /out slam_zero_to_hero:part5_ch03_06-jetson /workspace/part5_ch03_06/build/kfast_benchmark
 ```
+
+A `.prof` recorded on the Jetson prints with the x86-64 image's `prof_summary` too (its SIMD column is
+then `NEON`), so the two machines can be compared side by side.
 
 `slam:base` does not include `profiler_gui`. To browse the timeline, build
 [easy_profiler](https://github.com/yse/easy_profiler) with Qt on the host and open the `.prof` file.
@@ -375,13 +435,35 @@ accumulate both moments `m10` and `m01` without branches or a `u_max` table. `_m
 reduces the lanes, and a polynomial `atan2` (the one `cv::fastAtan2` uses) returns radians. ORB's `IC_Angle` walks the same
 circular patch pixel by pixel. It returns the same moments.
 
+### NEON ports (AArch64)
+
+The files in `neon/` keep komrad36's interface and algorithms, so the benchmarks only switch the
+`#include`, and they return the same results: RGB2Y bit for bit, KFAST the same corners and scores, and
+FeatureAngle the same moments. Each file opens with notes on how the x86 design maps to NEON. The main
+differences:
+
+| | komrad36 (x86-64) | NEON port (AArch64) |
+|---|---|---|
+| Register width | 256-bit AVX2 (128-bit SSE for FeatureAngle) | 128-bit: KFAST tests 16 pixels per step instead of 32 |
+| RGB2Y: de-interleave BGR | `packus` + three `pshufb` masks + a cross-half add | `vld3q_u8`: one load splits 16 pixels into B, G and R registers |
+| RGB2Y: Q15 product | `_mm256_mulhrs_epi16` | `vqrdmulhq_s16`, the same rounding |
+| KFAST: unsigned byte compare | XOR both sides with `0x80`, then a signed compare | `vcgtq_u8` / `vcltq_u8` directly |
+| KFAST: which lanes passed? | `movemask` → 32-bit mask, `tzcnt` / `blsr` | `vshrn_n_u16` → 64-bit integer with 4 bits per lane: `!= 0` for "any?", `ctz` / 4 for which |
+| KFAST: max of the 16 arc scores | `32767 - phminposuw(32767 - x)` | `vmaxvq_s16`, one instruction |
+| FeatureAngle: accumulate, sum lanes | `pmullw` + `paddw`; shuffle / `phaddw` / shuffle | `vmlaq_s16`; `vaddvq_s16`, one instruction |
+| Row ends (RGB2Y, KFAST) | full-width loads and stores past the row (needs padding; RGB2Y spills into the next row) | the last step is moved back to end on the last pixel: nothing outside the row is read or written |
+
+The NEON KFAST does not port KFAST's "advance by only 16 when the left half has no candidate"
+shortcut (exercise 5).
+
 ### Things to know before using these kernels
 
-- **They read and write past the end of the image.** Loads and stores are 16 or 32 bytes wide, so
-  the last pixels of the last row pull in bytes beyond the buffer. `createPadded()` in
+- **komrad36's kernels read and write past the end of the image.** Loads and stores are 16 or 32
+  bytes wide, so the last pixels of the last row pull in bytes beyond the buffer. `createPadded()` in
   `include/benchmark_common.hpp` gives every image one spare row for this. Exercise 1 shows what
-  happens without it.
-- **RGB2Y's rows spill into the next row.** It stores 16 bytes for every 10 output pixels, so when
+  happens without it. The NEON ports stay inside the image, except that FeatureAngle (on both
+  architectures) reads one byte right of its 7x7 patch.
+- **komrad36's RGB2Y rows spill into the next row.** It stores 16 bytes for every 10 output pixels, so when
   the width modulo 10 is 1 to 5, each row writes up to 5 zero bytes into the start of the next row.
   One thread overwrites them when it converts that row. When two threads split the image, a
   stripe's last row would clobber the next stripe's first row, so `rgb2y_benchmark` converts that
@@ -396,11 +478,13 @@ circular patch pixel by pixel. It returns the same moments.
 
 ## Exercises
 
-1. **Over-reads under AddressSanitizer.** In `createPadded()`, change `rows + 1` to `rows` and build
+1. **Over-reads under AddressSanitizer (x86-64).** In `createPadded()`, change `rows + 1` to `rows` and build
    with `-fsanitize=address` (`cmake .. -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"`).
    ASan stops `kfast_benchmark` at a 32-byte read past the image in KFAST (`_KFAST`).
    `rgb2y_benchmark` and `feature_angle_benchmark` pass on the 1920x1080 image. Work out how far
    past the last pixel their loads reach at this width, and why `cv::Mat`'s allocator hides it.
+   On AArch64 the NEON RGB2Y and KFAST read nothing past the image (they move their last step back
+   instead), so only FeatureAngle's one extra byte right of the patch is left to find.
 2. **What did the compiler do to the plain loops?** Add `-fopt-info-vec-optimized` to
    `PLAIN_FLAGS_o3` and `PLAIN_FLAGS_native` in `CMakeLists.txt` to see which loops GCC
    vectorized, and with how wide vectors. Then add a third copy built with `-O3 -mavx2`, the
@@ -414,12 +498,16 @@ circular patch pixel by pixel. It returns the same moments.
    only keeps 3), or the patch reads leave the image. `IC_Angle` scales directly. Then write an AVX2 version of
    FeatureAngle for 31 columns. Note that the moments no longer fit in `int16` at that size, so
    accumulate them in 32-bit lanes.
-5. **ARM.** Port FeatureAngle to NEON (`arm_neon.h`). `vmovl_u8`, `vmulq_s16`, and `vaddvq_s16`
-   map closely to the SSE calls. The build is x86-only, so also: drop the x86 check and
-   `SIMD_FLAGS` in `CMakeLists.txt` and build only `feature_angle_benchmark`, replace `_mm_pause()`
-   in `fast_parallel_for.hpp` (e.g. with `std::this_thread::yield()`), and skip
-   `exitIfUnsupportedCpu()`. Run it on a Jetson or DGX Spark, and compare the `.prof` files with
-   `prof_summary`.
+5. **NEON on a Jetson.** Build `Dockerfile.jetson` on a Jetson, run the three benchmarks, and print
+   their `.prof` files next to the x86-64 ones with `prof_summary`. Then try two changes to the
+   NEON ports and compare the medians:
+   - KFAST's shortcut: when the low 8 lanes of a window have no candidate, advance by 8 columns
+     instead of 16. In `neon/KFAST_neon.h`, let `processWindow()` return how far to advance (after
+     its "any candidate?" test) and use that in `_KFAST`'s column loop. Does it pay off with 16 lanes, as
+     it does with 32?
+   - Round once: rewrite `gray16()` in `neon/RGB2Y_neon.h` with `vmull_u8` / `vmlal_u8` on Q8 weights
+     and one `vrshrn_n_u16`. It needs fewer instructions, but like OpenCV's result, it no longer
+     matches the plain loop on every pixel. Check the verification lines.
 
 ---
 
@@ -429,5 +517,7 @@ circular patch pixel by pixel. It returns the same moments.
 - E. Rosten and T. Drummond, [Machine learning for high-speed corner detection](https://www.edwardrosten.com/work/rosten_2006_machine.pdf), ECCV 2006
 - E. Rublee et al., ORB: An efficient alternative to SIFT or SURF, ICCV 2011 (intensity-centroid orientation)
 - [Intel Intrinsics Guide](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html)
+- [Arm Intrinsics reference (NEON)](https://developer.arm.com/architectures/instruction-sets/intrinsics/)
+- Arm, [Porting x86 vector bitmask optimizations to Arm NEON](https://community.arm.com/arm-community-blogs/b/infrastructure-solutions-blog/posts/porting-x86-vector-bitmask-optimizations-to-arm-neon) (the `vshrn` movemask substitute)
 - [easy_profiler](https://github.com/yse/easy_profiler)
 - Benchmark image: LG Electronics, [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) (see [data/README.md](data/README.md))

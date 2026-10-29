@@ -1,0 +1,51 @@
+# Jetson / arm64 image for this exercise: the plain baselines, OpenCV, and the NEON
+# ports of komrad36's kernels (neon/), all on the CPU.
+#
+# slam:base is built for linux/amd64 only, so this image does not start from it.
+# It starts from Ubuntu 22.04, the userland of JetPack 6, and takes OpenCV from
+# Ubuntu's packages (4.5.4) instead of building it. It should work on JetPack 5 and 6
+# (Orin, Xavier), on DGX Spark, and on other arm64 Linux machines. Nothing here uses
+# the GPU, so the NVIDIA container runtime is not needed.
+#
+# Build it on the machine that will run it: plain_native is compiled with
+# -march=native for the build CPU, so an image built on an Orin may not run on a
+# Xavier, and one built under QEMU on an x86-64 PC gets no CPU-specific flags.
+#
+# Build on the Jetson itself:
+#   docker build -f Dockerfile.jetson -t slam_zero_to_hero:part5_ch03_06-jetson .
+# Or, for a functional check only, on an x86-64 PC with qemu-user-static installed (emulated, much slower):
+#   docker build --platform linux/arm64 -f Dockerfile.jetson -t slam_zero_to_hero:part5_ch03_06-jetson .
+# On an x86-64 PC without --platform, the same file builds komrad36's AVX2 kernels instead.
+ARG BASE_IMAGE=ubuntu:jammy
+FROM ${BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates libopencv-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# easy_profiler without the Qt GUI, at the commit slam:base builds, so .prof files
+# recorded here open with the x86-64 image's prof_summary and profiler_gui
+RUN git clone https://github.com/yse/easy_profiler.git /tmp/easy_profiler && \
+    cd /tmp/easy_profiler && \
+    git checkout cc0e154635e5433344c4fb4fe940939a05465701 && \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+        -DEASY_PROFILER_NO_GUI=ON -DEASY_PROFILER_NO_SAMPLES=ON && \
+    cmake --build build -j"$(nproc)" --target install && \
+    ldconfig && \
+    rm -rf /tmp/easy_profiler
+
+WORKDIR /workspace
+
+# komrad36's code (third_party/komrad36) and the NEON ports (neon/) are part of this
+# folder, so they are copied in with the exercise rather than cloned at build time.
+COPY . /workspace/part5_ch03_06
+
+# Build the examples. CMake picks the NEON ports on aarch64.
+RUN cd /workspace/part5_ch03_06 && \
+    mkdir build && cd build && \
+    cmake .. && \
+    make -j"$(nproc)"
+
+WORKDIR /workspace/part5_ch03_06/build

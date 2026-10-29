@@ -131,13 +131,15 @@ public:
             void (*f)() = pHead->m_f;
 
             // L4
-            FastThreadPoolItem* pTail = m_pTail.load(std::memory_order_relaxed);
+            // [SLAM zero-to-hero patch] acquire, was relaxed (also the reload and S8's failure order
+            // below): reading the producer's S5 must make its S4 (pHead->m_next) visible to L5
+            FastThreadPoolItem* pTail = m_pTail.load(std::memory_order_acquire);
 
             do
             {
                 while ((uintptr_t)pTail == ((uintptr_t)pHead | 1))
                 {
-                    pTail = m_pTail.load(std::memory_order_relaxed);
+                    pTail = m_pTail.load(std::memory_order_acquire);
                     Pause();
                 }
 
@@ -148,7 +150,7 @@ public:
 
                 // also L4
                 // S8
-            } while (!m_pTail.compare_exchange_weak(pTail, nullptr, std::memory_order_relaxed, std::memory_order_relaxed));
+            } while (!m_pTail.compare_exchange_weak(pTail, nullptr, std::memory_order_acquire, std::memory_order_acquire));
 
             // L5
             // HAPPENS-BEFORE:L6

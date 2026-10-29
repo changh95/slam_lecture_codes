@@ -1,13 +1,15 @@
 /**
  * @file kfast_benchmark.cpp
- * @brief FAST-9 corners with non-maximum suppression: Rosten's C code vs OpenCV cv::FAST vs komrad36's KFAST (AVX2)
+ * @brief FAST-9 corners with non-maximum suppression: Rosten's C code vs OpenCV cv::FAST vs komrad36's KFAST
+ *        (AVX2) or its NEON port
  *
  * This example demonstrates:
  * 1. Rosten's original FAST-9 (plain C decision tree, the paper's reference code),
  *    built with -O3 (the baseline) and with -O3 -march=native
  * 2. OpenCV cv::FAST(TYPE_9_16, nonmax)
- * 3. komrad36's KFAST, single-threaded and split into row stripes on komrad36's
- *    FastThreadPool (include/fast_parallel_for.hpp), for 4, 8, 16, ... threads
+ * 3. komrad36's KFAST (x86-64) or its NEON port (AArch64, neon/KFAST_neon.h), single-threaded
+ *    and split into row stripes on komrad36's FastThreadPool (include/fast_parallel_for.hpp),
+ *    for 4, 8, 16, ... threads
  * 4. Timing every call with easy_profiler and checking all detectors return the same corners
  *
  * How KFAST works:
@@ -18,15 +20,24 @@
  *   _mm256_movemask_epi8 turns the survivors into a 32-bit mask
  * - Survivors run the full 16-pixel circle test as a branch-free run-length
  *   count, and _tzcnt_u32 / _blsr_u32 (BMI1) visit the set bits of the mask
+ * The NEON port tests 16 pixels per step with unsigned byte compares, and replaces
+ * movemask with a horizontal max (any candidate?) and a narrowing shift (which lanes?).
  */
 
 #include "benchmark_common.hpp"
 #include "fast_parallel_for.hpp"
-#include "komrad36_compat.hpp"
 #include "plain_kernels.hpp"
 #include "profile_summary.hpp"
 
+// komrad36's AVX2 kernel on x86-64, the NEON port on AArch64; both have KFAST.h's interface
+#if defined(__aarch64__)
+#include "KFAST_neon.h"
+constexpr const char* kKfastLabel = "NEON";
+#else
+#include "komrad36_compat.hpp"
 #include "KFAST/KFAST.h"
+constexpr const char* kKfastLabel = "KFAST";
+#endif
 
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -137,7 +148,7 @@ int main(int argc, char** argv) {
 
     simd_bench::warmup(args, kfast_1t);
     for (int i = 0; i < args.iterations; ++i) {
-        EASY_BLOCK("FAST/komrad36_1T", profiler::colors::Orange500);
+        EASY_BLOCK("FAST/" SIMD_VARIANT "_1T", profiler::colors::Orange500);
         kfast_1t();
     }
 
@@ -149,7 +160,7 @@ int main(int argc, char** argv) {
     bool mt_identical = true;
     std::vector<std::pair<int, double>> idle_cores;
     for (const int threads : simd_bench::threadCounts()) {
-        const std::string block = "FAST/komrad36_MT" + std::to_string(threads);
+        const std::string block = std::string("FAST/") + SIMD_VARIANT + "_MT" + std::to_string(threads);
         simd_bench::FastParallelFor pool(threads);
         // KFAST needs a few rows per stripe for its 4-row margins (its own split uses rows / 16 at most)
         num_stripes = std::max(1, std::min(threads, gray.rows / 16));
@@ -179,9 +190,10 @@ int main(int argc, char** argv) {
                                        [](const cv::KeyPoint& k) { return static_cast<int>(k.pt.x); },
                                        [](const cv::KeyPoint& k) { return static_cast<int>(k.pt.y); }),
                    ref);
-    compareCorners("KFAST 1T    ", kfast_corners(kps_k1), ref);
-    std::cout << "  KFAST MT    : " << (mt_identical ? "identical to plain -O3 at every thread count"
-                                                   : "DIFFERENT from plain -O3") << std::endl;
+    compareCorners(simd_bench::label(std::string(kKfastLabel) + " 1T"), kfast_corners(kps_k1), ref);
+    std::cout << "  " << simd_bench::label(std::string(kKfastLabel) + " MT") << ": "
+              << (mt_identical ? "identical to plain -O3 at every thread count" : "DIFFERENT from plain -O3")
+              << std::endl;
 
     std::cout << "\nFastThreadPool workers spin even without work. Cores busy while idle:" << std::endl;
     for (const auto& [threads, cores] : idle_cores)

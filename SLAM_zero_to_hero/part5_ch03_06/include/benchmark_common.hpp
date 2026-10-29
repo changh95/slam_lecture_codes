@@ -18,6 +18,14 @@
 #define SIMD_DATA_DIR "data"
 #endif
 
+// The SIMD variant: komrad36's AVX2/SSE kernels on x86-64, this exercise's NEON ports of them
+// (neon/) on AArch64. It names the easy_profiler blocks, e.g. "RGB2Y/komrad36_1T" or "RGB2Y/NEON_1T".
+#if defined(__aarch64__)
+#define SIMD_VARIANT "NEON"
+#else
+#define SIMD_VARIANT "komrad36"
+#endif
+
 namespace simd_bench {
 
 struct BenchmarkArgs {
@@ -34,23 +42,36 @@ inline BenchmarkArgs parseArgs(int argc, char** argv) {
 }
 
 /**
- * @brief komrad36's kernels need AVX2, and KFAST also needs BMI1 (tzcnt, blsr)
+ * @brief komrad36's kernels need AVX2, and KFAST also needs BMI1 (tzcnt, blsr).
+ *        The NEON ports need nothing beyond AArch64, where NEON is mandatory.
  */
 inline bool cpuSupportsKernels() {
 #if defined(__x86_64__)
     __builtin_cpu_init();
     return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("bmi");
+#elif defined(__aarch64__)
+    return true;
 #else
     return false;
 #endif
 }
 
 /**
+ * @brief Pad a verification label to 12 characters, so the colons line up
+ */
+inline std::string label(std::string name) {
+    if (name.size() < 12) name.resize(12, ' ');
+    return name;
+}
+
+/**
  * @brief Allocate an image with one spare row after the last one
  *
- * SIMD kernels load and store whole registers (16 or 32 bytes), so near the
- * end of the image they read, and in RGB2Y's case write, up to ~31 bytes past
+ * komrad36's kernels load and store whole registers (16 or 32 bytes), so near
+ * the end of the image they read, and in RGB2Y's case write, up to ~31 bytes past
  * the last pixel. The spare row keeps those accesses inside our own buffer.
+ * The NEON ports stay inside the image (FeatureAngle aside, which reads one byte
+ * right of its patch), but the benchmarks use the same buffers on both.
  * rowRange() of a continuous Mat is still continuous, so data/step/cols are
  * exactly those of a plain rows x cols Mat.
  */

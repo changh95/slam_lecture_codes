@@ -100,7 +100,8 @@ inline double median(std::vector<double> values) {
  * @brief Print the two comparison tables: single-threaded and multi-threaded
  *
  * Block names follow "<kernel>/<variant>_<threads>", e.g. "RGB2Y/komrad36_MT8":
- * variant is plain_O3, plain_native, OpenCV or komrad36; threads is 1T or MT<n>.
+ * variant is plain_O3, plain_native, OpenCV, or the SIMD variant (komrad36 in an
+ * x86-64 capture, NEON in an AArch64 one); threads is 1T or MT<n>.
  * Every cell is the median over all calls, in microseconds, with the speed-up
  * over the kernel's single-threaded -O3 block in parentheses.
  */
@@ -109,7 +110,9 @@ inline void printSummary(const std::string& path, const std::vector<BlockTimes>&
     std::vector<std::string> kernels;               // in the order they were run
     std::map<std::string, std::vector<int>> mt_counts;  // kernel -> thread counts of its _MT blocks
     size_t calls = 0;
+    std::string simd = "komrad36";  // the SIMD column: komrad36's kernels, or the NEON ports
     for (const auto& block : blocks) {
+        if (block.name.find("/NEON_") != std::string::npos) simd = "NEON";
         const size_t slash = block.name.find('/');
         const size_t underscore = block.name.rfind('_');
         if (slash == std::string::npos || underscore == std::string::npos || underscore < slash) continue;
@@ -143,18 +146,18 @@ inline void printSummary(const std::string& path, const std::vector<BlockTimes>&
 
     std::cout << "\n[1] Single thread" << std::endl;
     std::cout << std::left << std::setw(8) << "Kernel" << std::right << std::setw(20) << "-O3" << std::setw(20)
-              << "-O3 -march=native" << std::setw(20) << "OpenCV" << std::setw(20) << "komrad36" << std::endl;
+              << "-O3 -march=native" << std::setw(20) << "OpenCV" << std::setw(20) << simd << std::endl;
     std::cout << std::string(88, '-') << std::endl;
     for (const auto& kernel : kernels) {
         std::cout << std::left << std::setw(8) << kernel << std::right;
-        for (const char* variant : {"plain_O3", "plain_native", "OpenCV", "komrad36"})
+        for (const std::string variant : {"plain_O3", "plain_native", "OpenCV", simd.c_str()})
             std::cout << std::setw(20) << cell(kernel, kernel + "/" + variant + "_1T");
         std::cout << std::endl;
     }
 
     std::cout << "\n[2] Multi thread" << std::endl;
     std::cout << std::left << std::setw(8) << "Kernel" << std::right << std::setw(8) << "Threads" << std::setw(20)
-              << "OpenCV" << std::setw(20) << "komrad36" << std::endl;
+              << "OpenCV" << std::setw(20) << simd << std::endl;
     std::cout << std::string(56, '-') << std::endl;
     for (const auto& kernel : kernels) {
         auto counts = mt_counts[kernel];
@@ -163,7 +166,7 @@ inline void printSummary(const std::string& path, const std::vector<BlockTimes>&
             const std::string suffix = "_MT" + std::to_string(n);
             std::cout << std::left << std::setw(8) << kernel << std::right << std::setw(8) << n << std::setw(20)
                       << cell(kernel, kernel + "/OpenCV" + suffix) << std::setw(20)
-                      << cell(kernel, kernel + "/komrad36" + suffix) << std::endl;
+                      << cell(kernel, kernel + "/" + simd + suffix) << std::endl;
         }
     }
 }

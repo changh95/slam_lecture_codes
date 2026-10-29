@@ -19,8 +19,10 @@
 
 #include "FastThreadPool/fast_thread_pool.h"
 
-#include <immintrin.h>
 #include <sys/resource.h>
+#if defined(__x86_64__)
+#include <immintrin.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +32,17 @@
 #include <vector>
 
 namespace simd_bench {
+
+/**
+ * @brief Spin-wait hint: x86 pause, AArch64 yield (FastThreadPool's own Pause() is x86-only)
+ */
+inline void cpuRelax() {
+#if defined(__x86_64__)
+    _mm_pause();
+#elif defined(__aarch64__)
+    __asm__ __volatile__("yield");
+#endif
+}
 
 class FastParallelFor {
 public:
@@ -64,7 +77,7 @@ public:
 
         // The calling thread works too, then waits for stripes still running on the workers
         while (auto task = s_pool.RemoveWork()) task();
-        while (s_remaining.load(std::memory_order_acquire) > 0) _mm_pause();
+        while (s_remaining.load(std::memory_order_acquire) > 0) cpuRelax();
     }
 
 private:
@@ -77,7 +90,7 @@ private:
     void workerLoop() {
         while (!stop_.load(std::memory_order_relaxed)) {
             if (auto task = s_pool.RemoveWork()) task();
-            else _mm_pause();
+            else cpuRelax();
         }
     }
 

@@ -12,6 +12,9 @@ downloaded at build time.
 | `FeatureAngle/` | [komrad36/FeatureAngle@282653c](https://github.com/komrad36/FeatureAngle/tree/282653cedf045abba737bdc2bf3ba989225ed613) | MIT | `FeatureAngle.h`: `feature_angle_benchmark` |
 | `FastThreadPool/` | [komrad36/FastThreadPool@55670cf](https://github.com/komrad36/FastThreadPool/tree/55670cfcc6f11b8994eb5f058b03ab04084d67b1) | MIT | `fast_thread_pool.h`: `include/fast_parallel_for.hpp` (every komrad36 `_MT` variant) |
 
+The NEON ports in [`../../neon/`](../../neon/) (used on AArch64, e.g. a Jetson) are derived from the RGB2Y, KFAST,
+and FeatureAngle headers, under the same MIT license.
+
 Every file the upstream commits track is here except the `.gitignore` files. Those ignore everything (`*`) and
 whitelist upstream's own files, so inside this repository they would silently hide any file added next to them.
 
@@ -37,6 +40,15 @@ GCC needs a few definitions and includes that the kernel headers take from MSVC 
   data races on the item (read of `m_f`, `delete`). With the change, `feature_angle_benchmark` runs clean under
   ThreadSanitizer. On x86 both orderings compile to the same plain store, so the timings are unaffected. On ARM the
   release store is needed. The line is marked `[SLAM zero-to-hero patch]`.
+- **`FastThreadPool/fast_thread_pool.h`, `RemoveWork()`**: the three reads of `m_pTail` (`L4`, its reload in
+  the spin loop, and the failure order of the `S8` compare-exchange) are `memory_order_acquire` instead of
+  `memory_order_relaxed`. When a consumer removes the last item while a producer appends after it, the
+  consumer reads the producer's new tail (`S5`) and then the item's `m_next` (`L5`). With a relaxed read,
+  nothing orders the producer's `m_next` store (`S4`) before `L5`, so on AArch64 `L5` can still see
+  `nullptr`: the new item is lost (and `FastParallelFor::run()` waits forever), or the item is deleted while
+  `S4` writes to it. This was found by reviewing the code against the memory model for the NEON build, not
+  observed: x86 keeps loads in order, and so does QEMU on an x86 host. On x86 the change compiles to the same
+  instructions. Marked `[SLAM zero-to-hero patch]`.
 
 ## Multi-threading
 
