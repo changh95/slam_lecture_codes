@@ -54,11 +54,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 # Give a plain number: the cuobjdump check below looks for sm_<CUDA_ARCH>.
 ARG CUDA_ARCH=120
 
-# rerun C++ SDK, for frontend_rerun: it streams to a viewer on the host. Pinned to the host
-# viewer's version (live gRPC streaming needs the SDK and the viewer to match; `rerun --version`).
-# The Python SDK, for blueprint.py, is pinned to the same version: an slam:base image built
-# earlier may carry an older one. Installed before vilib, so that editing vilib does not
-# rebuild them.
+# rerun C++ SDK, for frontend_rerun: it streams to a Rerun viewer, by default the web viewer
+# that run_frontend_rerun.sh starts in the container. The Python SDK brings that viewer (the
+# `rerun` command) and is what blueprint.py uses. Both are pinned to one version: live gRPC
+# streaming needs the SDK and the viewer to match (`rerun --version`), also with a native viewer
+# on the host, and an slam:base image built earlier may carry an older Python SDK. Installed
+# before vilib, so that editing vilib does not rebuild them.
 RUN cd /tmp && \
     wget -q https://github.com/rerun-io/rerun/releases/download/0.33.0/rerun_cpp_sdk.zip && \
     cmake -E tar xf rerun_cpp_sdk.zip && \
@@ -104,3 +105,7 @@ RUN cd /workspace/part5_ch03_08 && \
     make -j4
 
 WORKDIR /workspace/part5_ch03_08/build
+
+# Default command: frontend_rerun with the Rerun web viewer served from the container. It prints
+# the URL to open in a browser (needs --network=host). Name a benchmark to run that instead.
+CMD ["/workspace/part5_ch03_08/run_frontend_rerun.sh"]

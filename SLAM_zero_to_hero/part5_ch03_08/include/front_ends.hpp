@@ -7,8 +7,9 @@
  * - VilibFrontEnd: vilib's FeatureTrackerGPU with its CUDA FAST
  *
  * Both run the same front end once per frame: track every feature into the new frame,
- * drop the ones that fail, and when fewer than kMinTracks survive, detect FAST corners
- * in the cells that have no feature and add the strongest until there are kMaxFeatures.
+ * drop the ones that fail (KLT does not converge on some pyramid level, or the feature
+ * leaves the image), and when fewer than kMinTracks survive, detect FAST corners in the
+ * cells that have no feature and add the strongest until there are kMaxFeatures.
  */
 
 #pragma once
@@ -59,8 +60,9 @@ struct Feature {
  * @brief The CPU front end: OpenCV's pyramidal KLT plus vilib's CPU FAST in the empty cells
  *
  * Every feature keeps the pyramid of the frame it was detected in as its template.
- * Features detected in the same frame are tracked with one calcOpticalFlowPyrLK call,
- * from their first position, starting at their position in the previous frame.
+ * Features detected in the same frame are tracked together, from their first position,
+ * starting at their position in the previous frame, one pyramid level at a time so that
+ * a feature that does not converge on a level can be dropped there, as vilib does.
  */
 class OpenCvFrontEnd {
 public:
@@ -123,26 +125,55 @@ private:
         int id;
     };
 
-
-    // Track every feature detected in template_frame into the current frame
+    // Track every feature detected in template_frame into the current frame, coarse to fine.
+    // calcOpticalFlowPyrLK does not say whether a feature converged: its status only flags one
+    // that leaves the image or has too little texture, and a feature that runs out of iterations
+    // keeps its last position, often a wrong one. Tracked with one call and no other test, 12% of
+    // the steps on MH_01 landed more than 3 px from a frame-to-frame check (vilib: 1.2%; README,
+    // "What the numbers say", point 5). So each level gets its own call, then one more
+    // Gauss-Newton step from the result: if that step still moves the feature by
+    // kMinUpdateSquared or more, the level has not converged and the track ends, vilib's rule.
     void trackFrom(int template_frame, const std::vector<cv::Mat>& template_pyramid) {
-        from_.clear();
-        to_.clear();
-        for (const Track& t : tracks_) {
-            if (t.template_frame != template_frame) continue;
-            from_.push_back(t.first);
-            to_.push_back(t.current);  // initial guess
-        }
-        if (from_.empty()) return;
-        cv::calcOpticalFlowPyrLK(template_pyramid, cur_pyramid_, from_, to_, status_, error_, window(),
-                                 kPyramidLevels - 1, criteria(), cv::OPTFLOW_USE_INITIAL_FLOW);
-        size_t kept = 0, i = 0;
-        for (Track& t : tracks_) {
-            if (t.template_frame == template_frame) {
-                const bool ok = status_[i] && insideBorder(to_[i]);
-                t.current = to_[i++];
-                if (!ok) continue;
+        active_.clear();
+        for (size_t i = 0; i < tracks_.size(); ++i)
+            if (tracks_[i].template_frame == template_frame) active_.push_back(i);
+        if (active_.empty()) return;
+        lost_.assign(tracks_.size(), false);
+
+        const cv::TermCriteria one_step(cv::TermCriteria::COUNT, 1, 0);
+        for (int level = kPyramidLevels - 1; level >= 0 && !active_.empty(); --level) {
+            // Built with derivatives, the template pyramid holds two Mats per level
+            const std::vector<cv::Mat> templ(template_pyramid.begin() + 2 * level,
+                                             template_pyramid.begin() + 2 * level + 2);
+            const std::vector<cv::Mat> cur{cur_pyramid_[level]};
+            const float scale = static_cast<float>(1 << level);
+            from_.clear();
+            to_.clear();
+            for (size_t i : active_) {
+                from_.push_back(tracks_[i].first / scale);
+                to_.push_back(tracks_[i].current / scale);  // the level above's result, or the previous frame's
             }
+            cv::calcOpticalFlowPyrLK(templ, cur, from_, to_, status_, error_, window(), 0, criteria(),
+                                     cv::OPTFLOW_USE_INITIAL_FLOW);
+            check_ = to_;
+            cv::calcOpticalFlowPyrLK(templ, cur, from_, check_, check_status_, error_, window(), 0, one_step,
+                                     cv::OPTFLOW_USE_INITIAL_FLOW);
+            size_t still = 0;
+            for (size_t j = 0; j < active_.size(); ++j) {
+                tracks_[active_[j]].current = to_[j] * scale;
+                const cv::Point2f step = check_[j] - to_[j];
+                if (status_[j] && check_status_[j] && step.dot(step) < kMinUpdateSquared)
+                    active_[still++] = active_[j];
+                else
+                    lost_[active_[j]] = true;
+            }
+            active_.resize(still);
+        }
+
+        size_t kept = 0;
+        for (size_t i = 0; i < tracks_.size(); ++i) {
+            const Track& t = tracks_[i];
+            if (t.template_frame == template_frame && (lost_[i] || !insideBorder(t.current))) continue;
             tracks_[kept++] = t;
         }
         tracks_.resize(kept);
@@ -184,8 +215,10 @@ private:
     std::vector<cv::Mat> cur_pyramid_;
     int frame_index_ = 0;
     int next_id_ = 0;
-    std::vector<cv::Point2f> from_, to_;
-    std::vector<uchar> status_;
+    std::vector<size_t> active_;  // tracks of the template frame still converging, as indices into tracks_
+    std::vector<bool> lost_;
+    std::vector<cv::Point2f> from_, to_, check_;
+    std::vector<uchar> status_, check_status_;
     std::vector<float> error_;
 };
 

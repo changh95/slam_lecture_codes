@@ -25,6 +25,8 @@
  * With a viewer reachable (default rerun+http://127.0.0.1:9876/proxy, or $RERUN_URL) the
  * recording streams to it, and blueprint.py sends the layout. Without one, or with --save,
  * it is written to an .rrd file and the layout to an .rbl file next to it.
+ * run_frontend_rerun.sh, the image's default command, starts a Rerun web viewer in the
+ * container and points $RERUN_URL at it.
  */
 
 #include "benchmark_common.hpp"
@@ -49,6 +51,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -184,6 +187,15 @@ std::string viewerUrl() {
     return env_url ? env_url : "rerun+http://127.0.0.1:9876/proxy";
 }
 
+/// A new recording id. blueprint.py sends the layout on the same recording: under an id of its
+/// own it would open a second, empty recording, which the viewer shows, being the newest.
+std::string newRecordingId() {
+    std::random_device random;
+    std::ostringstream id;
+    id << "frontend_rerun_" << std::hex << random() << random();
+    return id.str();
+}
+
 /// True when a TCP server accepts connections at the URL's host:port. connect_grpc() never
 /// fails on an absent viewer (it retries in the background), so reachability is probed first.
 bool viewerReachable(const std::string& url) {
@@ -226,9 +238,11 @@ bool viewerReachable(const std::string& url) {
     return ok;
 }
 
-/// Sends the layout (two image views, three plots, the summary) with blueprint.py, or writes
-/// it to an .rbl file. The rerun C++ SDK cannot author blueprints, the Python SDK can.
-void sendBlueprint(const std::string& target_flag, const std::string& target, double playback_speed) {
+/// Sends the layout (two image views, three plots, the summary) with blueprint.py, on the
+/// recording `recording_id`, or writes it to an .rbl file (empty `recording_id`). The rerun C++
+/// SDK cannot author blueprints, the Python SDK can.
+void sendBlueprint(const std::string& target_flag, const std::string& target, double playback_speed,
+                   const std::string& recording_id = "") {
     if (!std::filesystem::exists(FRONTEND_BLUEPRINT)) {
         std::cerr << "Note: " << FRONTEND_BLUEPRINT << " not found, the viewer picks its own layout." << std::endl;
         return;
@@ -236,6 +250,7 @@ void sendBlueprint(const std::string& target_flag, const std::string& target, do
     std::ostringstream command;
     command << "python3 '" << FRONTEND_BLUEPRINT << "' " << target_flag << " '" << target << "' --playback-speed "
             << playback_speed;
+    if (!recording_id.empty()) command << " --recording-id '" << recording_id << "'";
     if (std::system(command.str().c_str()) != 0)
         std::cerr << "Note: blueprint.py failed, the viewer picks its own layout." << std::endl;
 }
@@ -374,7 +389,8 @@ int main(int argc, char** argv) {
     // The stream is set up before CUDA starts, so a missing viewer is reported at once
     const std::string url = viewerUrl();
     std::string save_path = options.save_path;
-    rerun::RecordingStream rec(kAppId);
+    const std::string recording_id = newRecordingId();
+    rerun::RecordingStream rec(kAppId, recording_id);
     const bool streaming = save_path.empty() && viewerReachable(url);
     if (streaming) {
         rec.connect_grpc(url).exit_on_failure();
@@ -420,7 +436,7 @@ int main(int argc, char** argv) {
     const std::string blueprint_path = std::filesystem::path(save_path).replace_extension(".rbl").string();
     rec.flush_blocking().handle();
     if (streaming)
-        sendBlueprint("--connect-url", url, speed);
+        sendBlueprint("--connect-url", url, speed, recording_id);
     else
         sendBlueprint("--save", blueprint_path, speed);
 
@@ -436,7 +452,7 @@ int main(int argc, char** argv) {
 
     if (streaming)
         std::cout << "Done. In the viewer, play the frontend_time timeline from the start (playback speed "
-                  << speed << "x)." << std::endl;
+                  << std::defaultfloat << speed << "x)." << std::endl;
     else
         std::cout << "Saved " << save_path << ". Open it with: rerun " << save_path << " " << blueprint_path
                   << std::endl;

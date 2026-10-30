@@ -8,7 +8,10 @@ on top, the per-frame plots (frames done, time per frame, tracks) and the summar
 below, with the time panel on the frontend_time timeline, where both runs start
 at 0.
 
-frontend_rerun runs it by itself. By hand:
+frontend_rerun runs it by itself, with --recording-id set to its own recording: the
+layout then goes out on that recording. Without it the script opens a recording of
+its own, which stays empty; the viewer shows the newest recording, so by hand run it
+before frontend_rerun, not after:
 
     python3 blueprint.py                                  # viewer on this machine
     python3 blueprint.py --connect-url rerun+http://HOST:PORT/proxy
@@ -73,6 +76,8 @@ def main() -> int:
                     help="write the blueprint to a .rbl file instead of sending it")
     ap.add_argument("--playback-speed", type=float, default=0.1,
                     help="playback speed of the frontend_time timeline (default 0.1)")
+    ap.add_argument("--recording-id", default=None, metavar="ID",
+                    help="send the layout on this recording (frontend_rerun passes its own)")
     args = ap.parse_args()
 
     blueprint = make_blueprint(args.playback_speed)
@@ -87,9 +92,11 @@ def main() -> int:
               "blueprint not sent.", file=sys.stderr)
         return 0  # do not fail the demo over the layout
 
-    rr.init(APP_ID)
-    rr.connect_grpc(args.connect_url)
-    rr.send_blueprint(blueprint)
+    # send_properties=False: the recording's name and start time are frontend_rerun's
+    rec = rr.RecordingStream(APP_ID, recording_id=args.recording_id, send_properties=False)
+    rec.connect_grpc(args.connect_url)
+    rec.send_blueprint(blueprint)
+    rec.flush()
     print(f"Viewer layout sent to {args.connect_url} "
           f"(frontend_time timeline, playback speed {args.playback_speed}x)")
     return 0

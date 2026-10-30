@@ -38,6 +38,7 @@ part5_ch03_08/
 ├── README.md
 ├── CMakeLists.txt
 ├── Dockerfile                    # slam:base + CUDA 12.8 + rerun SDK + vilib from third_party/ (sm_<CUDA_ARCH>)
+├── run_frontend_rerun.sh         # the image's default command: frontend_rerun in a browser
 ├── blueprint.py                  # Rerun viewer layout for frontend_rerun (sent by it automatically)
 ├── include/
 │   ├── benchmark_common.hpp      # arguments, EuRoC loader, GPU check, pinned frames, timing loop
@@ -74,9 +75,10 @@ from [`third_party/vilib`](third_party/vilib) for the GPU given by `CUDA_ARCH`.
   ```
 
 - OpenCV 4.x and easy_profiler come from `slam:base`.
-- **For `frontend_rerun`: a [Rerun](https://rerun.io) viewer 0.33.0 on the host**
-  (`pip install rerun-sdk==0.33.0`, then `rerun &`). Live streaming needs the viewer and the SDK
-  in the image to have the same version; the Dockerfile pins 0.33.0.
+- **For `frontend_rerun`: a web browser.** The image serves the [Rerun](https://rerun.io) web
+  viewer itself. A native viewer on the host works too (`pip install rerun-sdk==0.33.0`, then
+  `rerun &`): live streaming needs the viewer and the SDK in the image to have the same version,
+  and the Dockerfile pins 0.33.0.
 
 ---
 
@@ -122,7 +124,17 @@ mkdir build && cd build && cmake .. && make -j4
 
 ## Run
 
-Mount `MH_01_easy` and pass the GPU to the container:
+Mount `MH_01_easy` and pass the GPU to the container. The image's default command is the Rerun
+demo of [section 4](#4-both-front-ends-on-one-rerun-timeline): both front ends over the whole
+sequence, shown in your browser. It prints the URL to open:
+
+```bash
+docker run --rm -it --gpus all --network=host -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
+    slam_zero_to_hero:part5_ch03_08
+# then open http://localhost:9090/?url=rerun+http://localhost:9877/proxy
+```
+
+The benchmarks of sections 1 to 3 are run by name:
 
 ```bash
 docker run --rm --gpus all -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
@@ -255,7 +267,7 @@ Frames: 500 (752x480, #1000-#1499) from /data/MH_01_easy/mav0/cam0/data
 
 Features per frame (mean)
                  tracked         new   frames with detection
-  OpenCV           140.9         2.7                      12
+  OpenCV           140.8         5.8                      27
   vilib_GPU        140.8         5.5                      26
 
 Verification: every step vilib took (a feature from frame k to k+1), redone on the CPU
@@ -265,22 +277,25 @@ Verification: every step vilib took (a feature from frame k to k+1), redone on t
 
 Tracker                          median us     mean us      vs CPU   calls
 --------------------------------------------------------------------------
-  OpenCV_1T                         1025.9      1094.9       1.00x     500
-  OpenCV_32T                         415.7       462.1       2.47x     500
-  vilib_GPU                           84.9        88.7      12.08x     500
-    - pyramid                         18.3        18.1                 500
-    - track                           66.4        70.2                 500
+  OpenCV_1T                         1364.1      1510.9       1.00x     500
+  OpenCV_32T                         579.6       741.3       2.35x     500
+  vilib_GPU                           86.9       107.7      15.69x     500
+    - pyramid                         19.3        28.1                 500
+    - track                           68.2        79.3                 500
   frame upload, not in the GPU rows:
-    upload                           106.5       106.6                 500
+    upload                           110.5       113.0                 500
 (vs CPU = speed-up of the median over OpenCV_1T; "- " rows are stages of the row above)
 
 Profile saved to: tracker_benchmark.prof
 ```
 
 Both front ends use vilib's default template: a feature is always aligned against its patch in the
-frame where it was detected (as in SVO), starting from its position in the previous frame. The CPU
-side keeps the pyramid of every frame that still has features detected in it, and tracks each group
-with one `cv::calcOpticalFlowPyrLK(..., OPTFLOW_USE_INITIAL_FLOW)` call.
+frame where it was detected (as in SVO), starting from its position in the previous frame, and
+both drop a track by vilib's rule: when KLT does not converge on one of the pyramid levels, or the
+feature leaves the image. The CPU side keeps the pyramid of every frame that still has features
+detected in it, and tracks each group one level at a time, coarse to fine, with
+`cv::calcOpticalFlowPyrLK(..., OPTFLOW_USE_INITIAL_FLOW)` on that level and one more Gauss-Newton
+step to tell whether it converged (point 5 of "What the numbers say" explains why).
 
 - **`vilib_GPU`** starts with the frame on the GPU: vilib's `Frame` constructor uploads it and
   builds its pyramid before the timed block.
@@ -289,9 +304,12 @@ with one `cv::calcOpticalFlowPyrLK(..., OPTFLOW_USE_INITIAL_FLOW)` call.
   - **`track`** is `FeatureTrackerGPU::track()`: KLT for every feature, FAST and grid NMS over
     the frame when fewer than 100 tracks survive (the CPU then keeps corners only in cells without
     a track), and the templates of the new features.
-- **Detection** runs in 26 of the 500 frames on vilib's side and in 12 on OpenCV's. Those frames
-  account for most of the gap between OpenCV's mean and median: 12 CPU detections of about 2.75 ms
-  each add up to 33 ms, close to the (1094.9 - 1025.9) µs x 500 = 34.5 ms between them.
+- **Detection** runs in 26 of the 500 frames on vilib's side and in 27 on OpenCV's. Those frames
+  account for most of the gap between OpenCV's mean and median: 27 CPU detections of about 2.75 ms
+  each add up to 74 ms, close to the (1510.9 - 1364.1) µs x 500 = 73.4 ms between them.
+- **The GPU's mean** sat 17 to 21 µs above its median in three runs, against 4 µs in earlier
+  runs of the same GPU code. The machine was in use at the same time (a remote desktop session and
+  a browser), which is the likely cause; the medians stayed at 83.9–86.9 µs.
 - **Verification** redoes every step vilib took (a feature at vilib's position in frame k, aligned
   in frame k+1) with [`include/klt_reference.hpp`](include/klt_reference.hpp), which follows vilib's
   rules in plain C++. It lands within 0.008 px of the GPU and keeps or drops exactly the same
@@ -302,20 +320,26 @@ with one `cv::calcOpticalFlowPyrLK(..., OPTFLOW_USE_INITIAL_FLOW)` call.
 
 `frontend_rerun` runs the two front ends of `tracker_benchmark`
 ([`include/front_ends.hpp`](include/front_ends.hpp)) over the whole of `MH_01_easy`, all 3682
-frames, and logs both to [Rerun](https://rerun.io) on one timeline, so you can watch the two run.
-Start a viewer on the host first. `--network=host` lets the container reach it:
+frames, and logs both to [Rerun](https://rerun.io) on one timeline, so you can watch the two run
+in a browser. It is the image's default command,
+[`run_frontend_rerun.sh`](run_frontend_rerun.sh): that script starts a Rerun web viewer in the
+container (`rerun --serve-web`), prints its URL, runs `frontend_rerun` against it, and keeps the
+viewer up until Ctrl+C. `--network=host` lets the browser on the host reach the viewer's two
+ports, 9090 (the page) and 9877 (the data):
 
 ```bash
-rerun &
-docker run --rm --gpus all --network=host -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
-    slam_zero_to_hero:part5_ch03_08 ./frontend_rerun
+docker run --rm -it --gpus all --network=host -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
+    slam_zero_to_hero:part5_ch03_08
 ```
 
 ```
+
+  Open in a browser:  http://localhost:9090/?url=rerun+http://localhost:9877/proxy
+
 ========================================
 KLT front end on EuRoC: CPU vs CUDA, one Rerun timeline
 ========================================
-Streaming to the rerun viewer at rerun+http://127.0.0.1:9876/proxy
+Streaming to the rerun viewer at rerun+http://127.0.0.1:9877/proxy
 GPU: NVIDIA GeForce RTX 5090 (sm_120, 170 SMs), CUDA runtime 12.8, driver 13.0
 Frames: 3682 (752x480, #0-#3681) from /data/MH_01_easy/mav0/cam0/data
 5 levels, 16x16 patch, up to 200 features, detect below 100 tracks
@@ -324,20 +348,25 @@ Running the CPU front end...
 Running the GPU front end...
 
   Front end                                                    total   per frame  tracked  detect   vs CPU
-  CPU: OpenCV KLT + Rosten FAST, 1 thread                    4.619 s    1.255 ms    141.9      84    1.00x
-  GPU: vilib FeatureTrackerGPU + FASTGPU (with upload)       0.724 s    0.197 ms    140.4     204    6.38x
+  CPU: OpenCV KLT + Rosten FAST, 1 thread                    5.645 s    1.533 ms    140.9     221    1.00x
+  GPU: vilib FeatureTrackerGPU + FASTGPU (with upload)       0.721 s    0.196 ms    140.4     204    7.83x
   (per frame = mean; tracked = mean tracks carried over; detect = frames with detection)
 
 Logging 3682 frames per run...
-Viewer layout sent to rerun+http://127.0.0.1:9876/proxy (frontend_time timeline, playback speed 0.2x)
+Viewer layout sent to rerun+http://127.0.0.1:9877/proxy (frontend_time timeline, playback speed 0.2x)
 Done. In the viewer, play the frontend_time timeline from the start (playback speed 0.2x).
+
+  The viewer stays up at  http://localhost:9090/?url=rerun+http://localhost:9877/proxy
+  Press Ctrl+C to stop it.
 ```
 
-When the data is in, go to the start of the time panel and press play. Both runs start at
-`frontend_time` = 0, and frame k of each run appears at the moment its front end finished it: the
-sum of the times of frames 0 to k. The GPU view runs ahead and stops at 0.72 s, while the CPU
-view keeps going until 4.62 s. The playback speed is set so that the slower run plays for at
-least 20 s (0.2x here).
+Open the URL in a browser, during the run or after it: the viewer's server keeps the whole
+recording, so a page opened (or reloaded) later still gets all of it. While the data comes in, the
+time panel follows it to the end; when it is in, go to the start of the time panel and press play.
+Both runs start at `frontend_time` = 0, and frame k of each run appears at the moment its front end
+finished it: the sum of the times of frames 0 to k. The GPU view runs ahead and stops at 0.72 s,
+while the CPU view keeps going until 5.65 s. The playback speed is set so that the slower run
+plays for at least 20 s (0.2x here).
 
 - **The views.** Each shows the frame, the features carried over from earlier frames in the color
   of their track with their last 10 positions as a trail, and the features detected in that frame
@@ -345,14 +374,16 @@ least 20 s (0.2x here).
   CPU's spikes are the frames in which it detects: Rosten's FAST on the CPU takes about 2.75 ms),
   the number of tracks, and a summary.
 - **The `frame` timeline** puts frame k of both runs at the same place. Switch to it in the time
-  panel to compare the tracks themselves rather than the speed: vilib detects new features in 204
-  frames, OpenCV in 84 (see point 5 of "What the numbers say").
+  panel to compare the tracks themselves rather than the speed: both keep about 140 tracks, detect
+  in about as many frames (vilib in 204, OpenCV in 221), and their trails follow the same motion.
+  A trail that jumps across the image is a track that went wrong; see point 5 of "What the numbers
+  say" for how the CPU side used to keep many of those.
 - **End to end, with the upload.** Each GPU frame is timed from the frame in host memory to its
   tracks on the host: upload, pyramid, tracking, detection when needed, and the
   `cudaDeviceSynchronize()` that waits for all of it. That is what a VIO pipeline on a desktop GPU
-  waits for. The table in section 3 times the GPU's work alone (84.9 µs median); with the upload
-  (106.5 µs) it comes to about the 197 µs per frame measured here, so the speed-up is
-  6.4x rather than 12x.
+  waits for. The table in section 3 times the GPU's work alone (86.9 µs median); with the upload
+  (110.5 µs) it comes to about the 196 µs per frame measured here, so the speed-up is
+  7.8x rather than 15.7x.
 - **One after the other, not at the same time.** Run together, the two front ends would compete
   for the CPU: the GPU side needs a CPU thread to launch its kernels and to wait for them. They run
   one after the other on the same frames, in memory, and each frame is timed. Nothing is logged
@@ -360,19 +391,42 @@ least 20 s (0.2x here).
 
 `frontend_rerun [cam0/data folder] [frames, 0 = all] [first frame] [--threads N] [--save PATH.rrd]`:
 the defaults are the whole sequence and 1 OpenCV thread for the CPU side; `--threads 0` gives it all
-threads. With no viewer reachable, or with `--save`, the recording is written to an `.rrd` file
-(about 460 MB for all of `MH_01_easy`: every frame is logged twice, as JPEG) and the layout to an
-`.rbl` file next to it. Mount a folder to keep them:
+threads. `run_frontend_rerun.sh` passes its arguments on, so name it to give some (the image's
+working directory is `build/`):
 
 ```bash
-docker run --rm --gpus all -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro -v $PWD/out:/out \
-    slam_zero_to_hero:part5_ch03_08 ./frontend_rerun --save /out/frontend_rerun.rrd
-rerun out/frontend_rerun.rrd out/frontend_rerun.rbl
+docker run --rm -it --gpus all --network=host -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
+    slam_zero_to_hero:part5_ch03_08 ../run_frontend_rerun.sh /data/MH_01_easy/mav0/cam0/data 0 0 --threads 0
 ```
 
-Set `RERUN_URL` (e.g. `-e RERUN_URL='rerun+http://127.0.0.1:9999/proxy'`) to stream somewhere else.
+- **Other ports.** If 9090 or 9877 is taken (another Rerun web viewer, say), the script stops and
+  says so. Pick others with `-e WEB_PORT=8090 -e GRPC_PORT=8877`, and open the URL it prints.
+- **A remote machine.** Forward both ports, then open the same URL on your own machine:
+  `ssh -L 9090:localhost:9090 -L 9877:localhost:9877 user@gpu-host`.
+- **A native viewer on the host** instead of the browser: start it, then run `frontend_rerun`
+  itself, which streams to `rerun+http://127.0.0.1:9876/proxy` (or to `$RERUN_URL`, e.g.
+  `-e RERUN_URL='rerun+http://127.0.0.1:9999/proxy'`):
+
+  ```bash
+  rerun &
+  docker run --rm --gpus all --network=host -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
+      slam_zero_to_hero:part5_ch03_08 ./frontend_rerun
+  ```
+
+- **A file.** With no viewer reachable, or with `--save`, `frontend_rerun` writes the recording to
+  an `.rrd` file (about 460 MB for all of `MH_01_easy`: every frame is logged twice, as JPEG) and
+  the layout to an `.rbl` file next to it. Mount a folder to keep them:
+
+  ```bash
+  docker run --rm --gpus all -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro -v $PWD/out:/out \
+      slam_zero_to_hero:part5_ch03_08 ./frontend_rerun --save /out/frontend_rerun.rrd
+  rerun out/frontend_rerun.rrd out/frontend_rerun.rbl
+  ```
+
 The layout comes from [`blueprint.py`](blueprint.py), which `frontend_rerun` runs itself: the
-Rerun C++ SDK cannot write layouts, the Python SDK can.
+Rerun C++ SDK cannot write layouts, the Python SDK can. `frontend_rerun` passes it its recording
+id, so the layout goes out on the same recording. Under an id of its own, the script would open a
+second, empty recording, and the viewer would show that one, as the newest.
 
 ### Other sequences, other machines
 
@@ -407,7 +461,7 @@ already on the GPU; the speed-up in parentheses is over the first CPU column.
 |---|---:|---:|---:|---|
 | Pyramid, 5 levels | 47.5 (vilib) | 35.3 (1.34x, OpenCV) | 18.5 (2.57x) | 4 kernels |
 | FAST-9 + grid NMS | 2752.8 (Rosten) | 889.8 (3.09x, `cv::FAST`) | 21.2 (130x) | kernels + 5.6 KB of results back |
-| KLT front end | 1025.9 (OpenCV, 1 thread) | 415.7 (2.47x, 32 threads) | 84.9 (12.1x) | 18.3 pyramid + 66.4 track |
+| KLT front end | 1364.1 (OpenCV, 1 thread) | 579.6 (2.35x, 32 threads) | 86.9 (15.7x) | 19.3 pyramid + 68.2 track |
 
 On a desktop, add the upload of each 361 KB frame over PCIe:
 
@@ -418,8 +472,8 @@ On a desktop, add the upload of each 361 KB frame over PCIe:
 | pinned, contiguous, then a 2D copy on the device | 24.4 µs |
 
 Over three runs in a row, the GPU medians of the pyramid and the tracker moved by up to 7% (pyramid
-18.5–19.8 µs, tracker 83.1–84.9 µs). FAST's moved most, 21.2–25.7 µs. The CPU medians moved by up to
-5% (e.g. OpenCV's tracker on one thread at 1006.7–1025.9 µs).
+18.5–19.8 µs, tracker 83.9–86.9 µs). FAST's moved most, 21.2–25.7 µs. The CPU medians moved by up to
+5% (e.g. OpenCV's tracker on one thread at 1364.1–1375.6 µs).
 
 All three GPU results match their CPU reference: the pyramid pixel for pixel, FAST cell for cell
 (up to ties between equally scored corners), and KLT within 0.008 px with the same keep/drop
@@ -439,9 +493,9 @@ decisions.
    126 µs with vilib's upload is 22x faster than Rosten's code and 7x faster than `cv::FAST`. A
    front end uploads each frame once and then runs the pyramid, the detector and KLT on it, which
    is how vilib is built. On a Jetson, whose CPU and GPU share one DRAM, the PCIe copy disappears.
-3. **The GPU front end is 12.1x faster than one CPU thread and 4.9x faster than all 32.** OpenCV
-   spreads the work over its threads and gains 2.5x. With vilib's own upload (106.5 µs) the desktop
-   GPU is still 5.4x faster than one thread and 2.2x faster than 32.
+3. **The GPU front end is 15.7x faster than one CPU thread and 6.7x faster than all 32.** OpenCV
+   spreads the work over its threads and gains 2.4x. With vilib's own upload (110.5 µs) the desktop
+   GPU is still 6.9x faster than one thread and 2.9x faster than 32.
 4. **Small kernels are mostly fixed costs.** The four pyramid kernels read and write about 0.6 MB,
    about 0.3 µs of memory traffic at the RTX 5090's 1.8 TB/s, yet the stage takes 18.5 µs. In a
    side experiment with a 1920x1080 image, 5.7 times as many pixels, the same kernels took 20 µs,
@@ -449,15 +503,26 @@ decisions.
    part of it (one empty kernel plus a wait took 4.7 µs in another side experiment); small grids
    on the coarse levels may be another. For work this small, the number of launches and
    synchronizations matters more than the kernel code.
-5. **The two trackers keep tracks by different rules.** Both track about 141 features per frame,
-   but vilib adds 5.5 new ones per frame and OpenCV 2.7, so vilib loses tracks about twice as
-   often. vilib drops a track as soon as one pyramid level does not converge in 30 iterations
-   (and when it leaves the image on the finest level);
-   OpenCV's status only flags a feature that leaves the image or has too little texture. They also
-   differ in smaller rules: vilib cuts its 16x16 template at integer pixels from x-8 to x+7 and uses
-   central differences for the gradients, OpenCV samples from x-7.5 to x+7.5 and uses a Scharr
-   filter. EuRoC has no per-feature ground truth, so this exercise does not say which one tracks
-   more accurately.
+5. **A KLT tracker has to say when it failed.** vilib drops a track as soon as one pyramid level
+   does not converge in 30 iterations (and when it leaves the image on the finest level).
+   `cv::calcOpticalFlowPyrLK` does not report convergence: its status only flags a feature that
+   leaves the image or has too little texture, and a feature that runs out of iterations keeps its
+   last position. With one such call per group and no other test, the CPU side kept those tracks,
+   and in Rerun many of its trails jumped across the image. Measured over all of `MH_01_easy`
+   against a frame-to-frame KLT with a forward-backward check (steps where the check failed are
+   left out), 12.3% of the CPU's track steps landed more than 3 px away and 7.6% more than 10 px,
+   against 1.2% and 0.4% for vilib. So the CPU side now applies vilib's rule: it calls
+   `calcOpticalFlowPyrLK` one level at a time and then takes one more Gauss-Newton step from the
+   result; a feature that still moves by `kMinUpdateSquared` (0.0005 px²) or more has not converged
+   and its track ends. That brings it to 1.2% and 0.6%, and both trackers now replace tracks at the
+   same rate (5.8 and 5.5 new features per frame, against 2.7 and 5.5 before). It costs CPU time,
+   1.25 → 1.53 ms per frame over the whole sequence on one thread: about two thirds of that comes
+   from five calls per group instead of one (OpenCV's fixed cost per call), one third from the
+   extra step. A comparison of speeds only means something between front ends that do the same
+   work. The two still differ in smaller rules: vilib cuts its 16x16 template at integer pixels from
+   x-8 to x+7 and uses central differences for the gradients, OpenCV samples from x-7.5 to x+7.5
+   and uses a Scharr filter. EuRoC has no per-feature ground truth; the frame-to-frame check finds
+   jumps but does not rank the two by sub-pixel accuracy.
 
 ### Things to know before using vilib
 
