@@ -19,7 +19,8 @@
  * - Each iteration: bilinear samples of the new frame under the patch, residual
  *   r = I - T, update = H^-1 sum(J r), position -= update; stop when |update|^2 < min
  * - A level that does not converge within max_iterations ends the track; a patch
- *   that leaves the image only skips to the next finer level
+ *   that leaves the image skips to the next finer level, and on the finest level
+ *   ends the track
  */
 
 #pragma once

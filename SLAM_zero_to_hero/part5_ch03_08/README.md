@@ -37,20 +37,26 @@ kernels (and, for FAST, the copy of its small result back to the host).
 part5_ch03_08/
 ├── README.md
 ├── CMakeLists.txt
-├── Dockerfile                    # slam:base + CUDA 12.8 + vilib (pinned, 3 build fixes)
+├── Dockerfile                    # slam:base + CUDA 12.8 + rerun SDK + vilib from third_party/ (sm_<CUDA_ARCH>)
+├── blueprint.py                  # Rerun viewer layout for frontend_rerun (sent by it automatically)
 ├── include/
 │   ├── benchmark_common.hpp      # arguments, EuRoC loader, GPU check, pinned frames, timing loop
+│   ├── front_ends.hpp            # the two KLT front ends: OpenCV + Rosten FAST, vilib CUDA
 │   ├── klt_reference.hpp         # vilib's KLT step in plain C++ (checks the CUDA tracker)
 │   └── profile_summary.hpp       # reads a .prof back and prints the comparison table
-└── examples/
-    ├── pyramid_benchmark.cpp     # vilib CPU / cv::resize vs vilib CUDA kernels, three ways to upload
-    ├── fast_benchmark.cpp        # Rosten / cv::FAST vs vilib CUDA FAST, per-cell agreement
-    ├── tracker_benchmark.cpp     # OpenCV KLT front end vs vilib FeatureTrackerGPU
-    └── prof_summary.cpp          # comparison tables for any .prof file
+├── examples/
+│   ├── pyramid_benchmark.cpp     # vilib CPU / cv::resize vs vilib CUDA kernels, three ways to upload
+│   ├── fast_benchmark.cpp        # Rosten / cv::FAST vs vilib CUDA FAST, per-cell agreement
+│   ├── tracker_benchmark.cpp     # OpenCV KLT front end vs vilib FeatureTrackerGPU
+│   ├── frontend_rerun.cpp        # both front ends on a whole EuRoC sequence, one Rerun timeline
+│   └── prof_summary.cpp          # comparison tables for any .prof file
+└── third_party/
+    ├── README.md                 # what is vendored, local changes, where to start reading
+    └── vilib/                    # uzh-rpg/vilib@7a12fe1, 2 build fixes, comments for the course
 ```
 
 The examples are plain C++. Every CUDA kernel lives in `libvilib.so`, which the Dockerfile builds
-for the GPU given by `CUDA_ARCH`.
+from [`third_party/vilib`](third_party/vilib) for the GPU given by `CUDA_ARCH`.
 
 ---
 
@@ -68,6 +74,9 @@ for the GPU given by `CUDA_ARCH`.
   ```
 
 - OpenCV 4.x and easy_profiler come from `slam:base`.
+- **For `frontend_rerun`: a [Rerun](https://rerun.io) viewer 0.33.0 on the host**
+  (`pip install rerun-sdk==0.33.0`, then `rerun &`). Live streaming needs the viewer and the SDK
+  in the image to have the same version; the Dockerfile pins 0.33.0.
 
 ---
 
@@ -81,13 +90,17 @@ docker build . -t slam_zero_to_hero:part5_ch03_08
 docker build . --build-arg CUDA_ARCH=89 -t slam_zero_to_hero:part5_ch03_08
 ```
 
-The Dockerfile clones vilib at its last upstream commit (June 2021) and fixes three things before
-building it (details in the Dockerfile comments):
+vilib is not downloaded at build time. [`third_party/vilib`](third_party/vilib) holds a copy of
+its last upstream commit (June 2021), and the Dockerfile copies it in and builds it before the
+examples, so editing the examples does not rebuild it. Three things had to be fixed for it to
+build here ([`third_party/README.md`](third_party/README.md) lists every local change):
 
 1. vilib compiles with `-Werror`, and GCC 13 warns about `DetectorBase::detect()` being hidden
-   by `FASTGPU`'s overloads. The warning is harmless, so `-Werror` goes.
+   by `FASTGPU`'s overloads. The warning is harmless, so `-Werror` is removed from vilib's
+   `CMakeLists.txt`.
 2. `libvilib.so` uses OpenCV's `imgproc`, `features2d` and `highgui` but links only `core`, so
-   every program that links it fails with undefined references.
+   every program that links it fails with undefined references. Its `CMakeLists.txt` now links
+   them.
 3. Unpatched, vilib silently builds for nvcc's default `sm_52`, whatever
    `-DCMAKE_CUDA_ARCHITECTURES` says. It calls `check_language(CUDA)` before `project()`, when CMake
    has not picked a build tool yet, so the check fails and vilib falls back to the old FindCUDA
@@ -95,7 +108,15 @@ building it (details in the Dockerfile comments):
    at start-up) but is not what we want to time. Passing `-DCMAKE_CUDA_COMPILER` skips the check,
    and `cuobjdump` verifies that the library holds `sm_<CUDA_ARCH>` code.
 
-A local build needs vilib built the same way, then `mkdir build && cd build && cmake .. && make -j4`.
+A local build needs vilib built the same way, then the examples:
+
+```bash
+cmake -S third_party/vilib -B /tmp/vilib-build -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=120 \
+    -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build /tmp/vilib-build -j8 && sudo cmake --install /tmp/vilib-build
+mkdir build && cd build && cmake .. && make -j4
+```
 
 ---
 
@@ -108,13 +129,13 @@ docker run --rm --gpus all -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
     slam_zero_to_hero:part5_ch03_08 ./pyramid_benchmark
 ```
 
-Each demo takes optional arguments: `<demo> [cam0/data folder] [frames] [first frame]`. The defaults
-are `/data/MH_01_easy/mav0/cam0/data`, 500 frames, and frame 1000. All frames are loaded into memory
+Each benchmark takes optional arguments: `<demo> [cam0/data folder] [frames] [first frame]`. The
+defaults are `/data/MH_01_easy/mav0/cam0/data`, 500 frames, and frame 1000. All frames are loaded into memory
 before anything is timed. Every variant runs once per frame after 20 unprofiled warm-up calls. The
 tracker warms up on the first 20 frames, then starts over from frame 0, because it carries tracks
 from one frame to the next.
 
-Each demo records every call in an `EASY_BLOCK`, writes `<demo>.prof` to the current directory,
+Each benchmark records every call in an `EASY_BLOCK`, writes `<demo>.prof` to the current directory,
 reads that file back, and prints:
 
 1. **Verification**: the GPU results compared with a CPU reference over all frames
@@ -265,8 +286,9 @@ with one `cv::calcOpticalFlowPyrLK(..., OPTFLOW_USE_INITIAL_FLOW)` call.
   builds its pyramid before the timed block.
   - **`pyramid`** builds the 5-level pyramid again inside the block. It is the same pyramid, so
     the block times exactly the GPU work of one frame.
-  - **`track`** is `FeatureTrackerGPU::track()`: KLT for every feature, FAST in the empty cells
-    when fewer than 100 tracks survive, and the templates of the new features.
+  - **`track`** is `FeatureTrackerGPU::track()`: KLT for every feature, FAST and grid NMS over
+    the frame when fewer than 100 tracks survive (the CPU then keeps corners only in cells without
+    a track), and the templates of the new features.
 - **Detection** runs in 26 of the 500 frames on vilib's side and in 12 on OpenCV's. Those frames
   account for most of the gap between OpenCV's mean and median: 12 CPU detections of about 2.75 ms
   each add up to 33 ms, close to the (1094.9 - 1025.9) µs x 500 = 34.5 ms between them.
@@ -275,6 +297,82 @@ with one `cv::calcOpticalFlowPyrLK(..., OPTFLOW_USE_INITIAL_FLOW)` call.
   rules in plain C++. It lands within 0.008 px of the GPU and keeps or drops exactly the same
   tracks: the CUDA kernels compute what vilib's algorithm specifies, on every step of this
   sequence.
+
+### 4. Both front ends on one Rerun timeline
+
+`frontend_rerun` runs the two front ends of `tracker_benchmark`
+([`include/front_ends.hpp`](include/front_ends.hpp)) over the whole of `MH_01_easy`, all 3682
+frames, and logs both to [Rerun](https://rerun.io) on one timeline, so you can watch the two run.
+Start a viewer on the host first. `--network=host` lets the container reach it:
+
+```bash
+rerun &
+docker run --rm --gpus all --network=host -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro \
+    slam_zero_to_hero:part5_ch03_08 ./frontend_rerun
+```
+
+```
+========================================
+KLT front end on EuRoC: CPU vs CUDA, one Rerun timeline
+========================================
+Streaming to the rerun viewer at rerun+http://127.0.0.1:9876/proxy
+GPU: NVIDIA GeForce RTX 5090 (sm_120, 170 SMs), CUDA runtime 12.8, driver 13.0
+Frames: 3682 (752x480, #0-#3681) from /data/MH_01_easy/mav0/cam0/data
+5 levels, 16x16 patch, up to 200 features, detect below 100 tracks
+
+Running the CPU front end...
+Running the GPU front end...
+
+  Front end                                                    total   per frame  tracked  detect   vs CPU
+  CPU: OpenCV KLT + Rosten FAST, 1 thread                    4.619 s    1.255 ms    141.9      84    1.00x
+  GPU: vilib FeatureTrackerGPU + FASTGPU (with upload)       0.724 s    0.197 ms    140.4     204    6.38x
+  (per frame = mean; tracked = mean tracks carried over; detect = frames with detection)
+
+Logging 3682 frames per run...
+Viewer layout sent to rerun+http://127.0.0.1:9876/proxy (frontend_time timeline, playback speed 0.2x)
+Done. In the viewer, play the frontend_time timeline from the start (playback speed 0.2x).
+```
+
+When the data is in, go to the start of the time panel and press play. Both runs start at
+`frontend_time` = 0, and frame k of each run appears at the moment its front end finished it: the
+sum of the times of frames 0 to k. The GPU view runs ahead and stops at 0.72 s, while the CPU
+view keeps going until 4.62 s. The playback speed is set so that the slower run plays for at
+least 20 s (0.2x here).
+
+- **The views.** Each shows the frame, the features carried over from earlier frames in the color
+  of their track with their last 10 positions as a trail, and the features detected in that frame
+  as yellow dots. Below: frames done (the slope is the frame rate), the time of each frame (the
+  CPU's spikes are the frames in which it detects: Rosten's FAST on the CPU takes about 2.75 ms),
+  the number of tracks, and a summary.
+- **The `frame` timeline** puts frame k of both runs at the same place. Switch to it in the time
+  panel to compare the tracks themselves rather than the speed: vilib detects new features in 204
+  frames, OpenCV in 84 (see point 5 of "What the numbers say").
+- **End to end, with the upload.** Each GPU frame is timed from the frame in host memory to its
+  tracks on the host: upload, pyramid, tracking, detection when needed, and the
+  `cudaDeviceSynchronize()` that waits for all of it. That is what a VIO pipeline on a desktop GPU
+  waits for. The table in section 3 times the GPU's work alone (84.9 µs median); with the upload
+  (106.5 µs) it comes to about the 197 µs per frame measured here, so the speed-up is
+  6.4x rather than 12x.
+- **One after the other, not at the same time.** Run together, the two front ends would compete
+  for the CPU: the GPU side needs a CPU thread to launch its kernels and to wait for them. They run
+  one after the other on the same frames, in memory, and each frame is timed. Nothing is logged
+  until both are done, so logging slows neither down.
+
+`frontend_rerun [cam0/data folder] [frames, 0 = all] [first frame] [--threads N] [--save PATH.rrd]`:
+the defaults are the whole sequence and 1 OpenCV thread for the CPU side; `--threads 0` gives it all
+threads. With no viewer reachable, or with `--save`, the recording is written to an `.rrd` file
+(about 460 MB for all of `MH_01_easy`: every frame is logged twice, as JPEG) and the layout to an
+`.rbl` file next to it. Mount a folder to keep them:
+
+```bash
+docker run --rm --gpus all -v ~/data/euroc_mav/MH_01_easy:/data/MH_01_easy:ro -v $PWD/out:/out \
+    slam_zero_to_hero:part5_ch03_08 ./frontend_rerun --save /out/frontend_rerun.rrd
+rerun out/frontend_rerun.rrd out/frontend_rerun.rbl
+```
+
+Set `RERUN_URL` (e.g. `-e RERUN_URL='rerun+http://127.0.0.1:9999/proxy'`) to stream somewhere else.
+The layout comes from [`blueprint.py`](blueprint.py), which `frontend_rerun` runs itself: the
+Rerun C++ SDK cannot write layouts, the Python SDK can.
 
 ### Other sequences, other machines
 
@@ -353,7 +451,8 @@ decisions.
    synchronizations matters more than the kernel code.
 5. **The two trackers keep tracks by different rules.** Both track about 141 features per frame,
    but vilib adds 5.5 new ones per frame and OpenCV 2.7, so vilib loses tracks about twice as
-   often. vilib drops a track as soon as one pyramid level does not converge in 30 iterations;
+   often. vilib drops a track as soon as one pyramid level does not converge in 30 iterations
+   (and when it leaves the image on the finest level);
    OpenCV's status only flags a feature that leaves the image or has too little texture. They also
    differ in smaller rules: vilib cuts its 16x16 template at integer pixels from x-8 to x+7 and uses
    central differences for the gradients, OpenCV samples from x-7.5 to x+7.5 and uses a Scharr
@@ -394,14 +493,23 @@ decisions.
 
 ## How vilib's kernels work
 
-The examples call vilib; the kernels are in vilib's `visual_lib/src/**/*.cu`. Each example's header
-comment describes its kernels in more detail.
+The examples call vilib; the kernels are in
+[`third_party/vilib/visual_lib/src`](third_party/vilib/visual_lib/src) (`**/*.cu`). Each example's
+header comment describes its kernels in more detail, and the vilib files themselves carry comments
+for the course, marked `[SLAM zero-to-hero]`: a "Design notes" block at the top of each file and
+notes at each design decision. [`third_party/README.md`](third_party/README.md) suggests an order
+to read them in.
 
 - **Pyramid** (`pyramid_gpu.cu`). Level 0 sits in a pitched buffer (`cudaMallocPitch`), so every
   row starts on an aligned address and the loads of a warp along a row coalesce. Each thread writes
   4 consecutive output pixels (2 or 1 when the width is not a multiple of 4): it reads 4 `uchar2`
   pairs from the top and the bottom input row and computes `(a + b + c + d) >> 2` for each 2x2
-  block. One kernel launch per level, all in one stream.
+  block. One kernel launch per level, all in one stream. The vector types do not survive
+  compilation, though: in this image nvcc turns the loads into 16- and 8-bit loads
+  (`LDG.E.U16`, `LDG.E.U8`) and the stores into single bytes (`STG.E.U8`), as
+  `cuobjdump -sass /usr/local/lib/libvilib.so` shows. Each such load of a warp spans a few
+  consecutive 32-byte sectors, and the following loads find the same sectors in L1, so the cost is
+  mainly extra instructions.
 - **FAST** (`fast_gpu_cuda_tools.cu`). One thread per pixel. A pre-check on two opposite pairs of
   circle pixels rejects most pixels at once. For the rest, the 16 circle pixels form a 16-bit
   "darker" and a 16-bit "brighter" mask, and a precomputed 65536-bit table answers "does this mask
@@ -410,7 +518,8 @@ comment describes its kernels in more detail.
 - **Grid NMS** (`detector_base_gpu_cuda_tools.cu`). One thread block per 32x32 cell. Each thread
   compares its pixels with their 3x3 neighbours using sign arithmetic instead of branches, then
   warp shuffles (`__shfl_down_sync`) and shared memory reduce the cell to its best corner. Only the
-  per-cell results (360 positions and scores) are copied back, not the response image.
+  per-cell results (360 cells of 16 bytes: position, score and level) are copied back, not the
+  response image.
 - **KLT** (`feature_tracker_cuda_tools.cu`). Inverse compositional Lucas-Kanade, one warp per
   feature. A separate kernel cuts the template patch and inverts its 2x2 Hessian once, when the
   feature is detected. Each iteration then only samples the new frame under the patch (8 pixels per
@@ -426,11 +535,12 @@ comment describes its kernels in more detail.
 ## Exercises
 
 1. **A faster upload for the tracker.** vilib's `Frame` uploads through `Subframe::copy_from()`,
-   which ends in `opencv_copy_from_image_common()` (`visual_lib/src/storage/opencv.cpp`) with a
-   `cudaMemcpy2DAsync` from the `cv::Mat`. Change it to copy the frame contiguously into a device
-   staging buffer and then into the pitched buffer, as `upload_pinned_1D` does in
-   `pyramid_benchmark`. Patch vilib in the Dockerfile (with `sed` or a patch file), rebuild, and
-   compare the tracker's `upload` row before and after, with the frames in ordinary memory and in
+   which ends in `opencv_copy_from_image_common()`
+   ([`third_party/vilib/visual_lib/src/storage/opencv.cpp`](third_party/vilib/visual_lib/src/storage/opencv.cpp))
+   with a `cudaMemcpy2DAsync` from the `cv::Mat`. Change it to copy the frame contiguously into a
+   device staging buffer and then into the pitched buffer, as `upload_pinned_1D` does in
+   `pyramid_benchmark`. Edit the file in `third_party/vilib`, rebuild the image (only vilib and
+   the examples are rebuilt), and compare the tracker's `upload` row before and after, with the frames in ordinary memory and in
    pinned memory (`cuda_bench::PinnedFrames`). What is the desktop's end-to-end speed-up
    (GPU row + upload) now?
 2. **compute-sanitizer.** The image includes NVIDIA's `compute-sanitizer`. Run
@@ -458,7 +568,7 @@ comment describes its kernels in more detail.
 ## References
 
 - B. Nagy, P. Foehn and D. Scaramuzza, [Faster than FAST: GPU-Accelerated Frontend for High-Speed VIO](http://rpg.ifi.uzh.ch/docs/IROS20_Nagy.pdf), IROS 2020
-- [vilib](https://github.com/uzh-rpg/vilib) (BSD-3-Clause)
+- [vilib](https://github.com/uzh-rpg/vilib) (BSD-3-Clause), vendored in [`third_party/vilib`](third_party/vilib)
 - M. Burri et al., [The EuRoC micro aerial vehicle datasets](https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets), IJRR 2016
 - S. Baker and I. Matthews, Lucas-Kanade 20 Years On: A Unifying Framework, IJCV 2004 (inverse compositional KLT)
 - E. Rosten and T. Drummond, [Machine learning for high-speed corner detection](https://www.edwardrosten.com/work/rosten_2006_machine.pdf), ECCV 2006

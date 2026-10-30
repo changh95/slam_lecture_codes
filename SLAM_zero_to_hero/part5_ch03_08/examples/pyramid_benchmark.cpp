@@ -9,7 +9,7 @@
  *    frame already on the GPU (it is uploaded before each call, untimed)
  * 3. The upload on its own, which a desktop GPU needs and a Jetson, whose CPU and
  *    GPU share one DRAM, can avoid. Three ways:
- *    - upload: vilib's own, one cudaMemcpy2D from ordinary (pageable) host memory
+ *    - upload: vilib's own, one cudaMemcpy2DAsync from ordinary (pageable) host memory
  *      straight into the pitched device buffer
  *    - upload_pinned: the same copy from pinned host memory
  *    - upload_pinned_1D: one contiguous cudaMemcpy from pinned memory into a

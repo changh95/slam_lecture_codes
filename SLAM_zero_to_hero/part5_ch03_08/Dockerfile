@@ -54,46 +54,47 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 # Give a plain number: the cuobjdump check below looks for sm_<CUDA_ARCH>.
 ARG CUDA_ARCH=120
 
-# vilib (uzh-rpg, BSD-3-Clause), pinned to the last upstream commit (June 2021).
-# It does not build unpatched with GCC 13, and builds for the wrong GPU unless told:
-#  1. -Werror. GCC 13's -Wall includes -Woverloaded-virtual, which flags
-#     DetectorBase::detect() being hidden by FASTGPU's overloads, and vilib
-#     compiles with -Werror -Wfatal-errors. The warning is harmless; the flags go.
-#  2. libvilib.so calls cv::imshow, cv::FastFeatureDetector, cv::circle, ... but
-#     links only opencv_core, so every program that links it fails with undefined
-#     references. The modules it uses are added to its link line.
-#  3. Unpatched, vilib builds for sm_52 without a word. It calls
-#     check_language(CUDA) before project(), when CMake has not picked a build tool
-#     yet, so the check fails and vilib falls back to the old FindCUDA path, which
-#     ignores CMAKE_CUDA_ARCHITECTURES. Passing CMAKE_CUDA_COMPILER skips the check.
-#     sm_52 code still runs on a newer GPU, because the driver compiles the
-#     embedded PTX at start-up, but it is not what we want to time. cuobjdump
-#     verifies the result.
-# CMAKE_CUDA_RUNTIME_LIBRARY=Shared makes libvilib.so use libcudart.so, the same
-# CUDA runtime the examples link, instead of carrying its own static copy.
-RUN git clone https://github.com/uzh-rpg/vilib.git /tmp/vilib && \
-    cd /tmp/vilib && \
-    git checkout 7a12fe1db78ca755876469979394076f10fe577c && \
-    sed -i 's/ -Werror -Wfatal-errors//' CMakeLists.txt && \
-    sed -i 's/find_package(OpenCV REQUIRED COMPONENTS core)/find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d highgui)/' CMakeLists.txt && \
-    sed -i 's/^  opencv_core Eigen3::Eigen/  opencv_core opencv_imgproc opencv_features2d opencv_highgui Eigen3::Eigen/' CMakeLists.txt && \
-    ! grep -q Werror CMakeLists.txt && \
-    grep -q 'COMPONENTS core imgproc features2d highgui)' CMakeLists.txt && \
-    grep -q 'opencv_highgui Eigen3::Eigen' CMakeLists.txt && \
-    cmake -S . -B build \
+# rerun C++ SDK, for frontend_rerun: it streams to a viewer on the host. Pinned to the host
+# viewer's version (live gRPC streaming needs the SDK and the viewer to match; `rerun --version`).
+# The Python SDK, for blueprint.py, is pinned to the same version: an slam:base image built
+# earlier may carry an older one. Installed before vilib, so that editing vilib does not
+# rebuild them.
+RUN cd /tmp && \
+    wget -q https://github.com/rerun-io/rerun/releases/download/0.33.0/rerun_cpp_sdk.zip && \
+    cmake -E tar xf rerun_cpp_sdk.zip && \
+    cmake -S rerun_cpp_sdk -B rerun_cpp_sdk/build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build rerun_cpp_sdk/build -j8 --target install && \
+    ldconfig && \
+    rm -rf rerun_cpp_sdk rerun_cpp_sdk.zip && \
+    pip3 install --break-system-packages rerun-sdk==0.33.0
+
+# vilib (uzh-rpg, BSD-3-Clause) is vendored in third_party/vilib: a copy of the last upstream
+# commit (June 2021) with two build fixes in its CMakeLists.txt and comments for the course (see
+# third_party/README.md). It is copied in and built on its own, before the rest of the exercise,
+# so that editing the examples does not rebuild it.
+#
+# Unpatched, vilib builds for sm_52 without a word. It calls check_language(CUDA) before
+# project(), when CMake has not picked a build tool yet, so the check fails and vilib falls back to
+# the old FindCUDA path, which ignores CMAKE_CUDA_ARCHITECTURES. Passing CMAKE_CUDA_COMPILER skips
+# the check. sm_52 code still runs on a newer GPU, because the driver compiles the embedded PTX at
+# start-up, but it is not what we want to time. cuobjdump verifies the result.
+# CMAKE_CUDA_RUNTIME_LIBRARY=Shared makes libvilib.so use libcudart.so, the same CUDA runtime the
+# examples link, instead of carrying its own static copy.
+WORKDIR /workspace
+COPY third_party/vilib /workspace/part5_ch03_08/third_party/vilib
+RUN cmake -S /workspace/part5_ch03_08/third_party/vilib -B /tmp/vilib-build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    cmake --build build -j8 --target install && \
+    cmake --build /tmp/vilib-build -j8 --target install && \
     (cuobjdump --list-elf /usr/local/lib/libvilib.so | grep -q "sm_${CUDA_ARCH}" || \
         (echo "FATAL: libvilib.so was not built for sm_${CUDA_ARCH}" && \
          cuobjdump --list-elf /usr/local/lib/libvilib.so | head -3 && exit 1)) && \
     ldconfig && \
-    cd / && rm -rf /tmp/vilib
+    rm -rf /tmp/vilib-build
 
-WORKDIR /workspace
 COPY . /workspace/part5_ch03_08
 
 # Build the examples
